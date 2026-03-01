@@ -1,0 +1,8 @@
+node_modules
+.scaffold
+build
+logs
+*.tsbuildinfo
+.env
+pnpm-lock.yaml
+yarn.lock

@@ -1,0 +1,26 @@
+{
+  "name": "zotero-plugin-chatpdf",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Chat with your PDFs using LLMs in Zotero",
+  "config": {
+    "addonName": "ChatPDF",
+    "addonID": "chatpdf@zotero-plugin",
+    "addonRef": "chatpdf",
+    "addonInstance": "ChatPDF",
+    "prefsPrefix": "extensions.zotero.chatpdf"
+  },
+  "scripts": {
+    "start": "zotero-plugin serve",
+    "build": "zotero-plugin build",
+    "release": "zotero-plugin release"
+  },
+  "dependencies": {
+    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "zotero-plugin-scaffold": "^0.8.2",
+    "zotero-types": "^4.1.0-beta.4"
+  }
+}

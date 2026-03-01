@@ -1,0 +1,8 @@
+pref-title = ChatPDF Settings
+pref-mineru-token = MinerU API Token
+pref-llm-api-base = LLM API Base URL
+pref-llm-api-key = LLM API Key
+pref-llm-model = Model Name
+pref-cache-dir = Cache Directory
+pref-max-context = Max Context Characters
+pref-help = { $name } v{ $version }
