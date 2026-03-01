@@ -2,7 +2,9 @@ import { config } from "../../package.json";
 
 export function initLocale() {
   const l10n = new (
-    _globalThis.Localization || Services.localization.constructor
+    typeof Localization === "undefined"
+      ? ztoolkit.getGlobal("Localization")
+      : Localization
   )([`${config.addonRef}-addon.ftl`], true);
   addon.data.locale = { current: l10n };
 }

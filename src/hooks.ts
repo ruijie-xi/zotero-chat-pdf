@@ -10,8 +10,28 @@ async function onStartup() {
   ]);
 
   initLocale();
-  registerChatSection();
-  registerContextMenu();
+
+  try {
+    await Zotero.PreferencePanes.register({
+      pluginID: config.addonID,
+      src: `chrome://${config.addonRef}/content/preferences.xhtml`,
+      label: config.addonName,
+    });
+  } catch (e) {
+    Zotero.log(`[${config.addonName}] Failed to register preferences: ${e}`, "error");
+  }
+
+  try {
+    registerChatSection();
+  } catch (e) {
+    Zotero.log(`[${config.addonName}] Failed to register chat section: ${e}`, "error");
+  }
+
+  try {
+    registerContextMenu();
+  } catch (e) {
+    Zotero.log(`[${config.addonName}] Failed to register context menu: ${e}`, "error");
+  }
 
   await Promise.all(
     Zotero.getMainWindows().map((win: Window) => onMainWindowLoad(win)),
@@ -22,9 +42,8 @@ async function onStartup() {
 
 async function onMainWindowLoad(win: Window) {
   // Insert FTL for main window localization
-  const ftlUri = `chrome://${config.addonRef}/content/locale/${config.addonRef}-mainWindow.ftl`;
   try {
-    (win as any).MozXULElement?.insertFTLIfNeeded?.(ftlUri);
+    (win as any).MozXULElement?.insertFTLIfNeeded?.(`${config.addonRef}-mainWindow.ftl`);
   } catch {
     // FTL may already be inserted or method unavailable
   }
@@ -36,8 +55,12 @@ async function onMainWindowUnload(_win: Window) {
 
 async function onShutdown() {
   addon.data.alive = false;
-  // Unregister section
-  Zotero.ItemPaneManager.unregisterSection("chatpdf-section");
+  try {
+    Zotero.ItemPaneManager.unregisterSection("chatpdf-section");
+  } catch { /* ignore */ }
+  try {
+    Zotero.MenuManager.unregisterMenu("chatpdf-item-menu");
+  } catch { /* ignore */ }
   ztoolkit.unregisterAll();
 }
 

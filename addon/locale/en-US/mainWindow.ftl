@@ -1,4 +1,6 @@
-item-section-chatpdf-head-text =
+chatpdf-item-section-chatpdf-head-text =
     .label = ChatPDF
-item-section-chatpdf-sidenav-tooltip =
+chatpdf-item-section-chatpdf-sidenav-tooltip =
     .tooltiptext = Chat with your PDFs using AI
+chatpdf-menuitem-addtochatpdf =
+    .label = Add to ChatPDF

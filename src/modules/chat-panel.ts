@@ -97,6 +97,7 @@ async function convertSource(
     session.setSourceReady(source.key, markdown);
     onProgress?.("Ready");
   } catch (err: any) {
+    Zotero.debug(`[ChatPDF] convertSource error: ${err.message}\n${err.stack}`);
     session.setSourceStatus(source.key, "error", err.message);
     onProgress?.(err.message);
     throw err;
@@ -131,19 +132,25 @@ export function registerChatSection() {
     onItemChange: ({
       body,
       item,
+      setEnabled,
     }: {
       body: HTMLElement;
       item: Zotero.Item;
+      setEnabled: (enabled: boolean) => void;
       setSectionSummary: (summary: string) => void;
     }) => {
-      // Auto-add the selected item as a source
-      const root = body.querySelector("#chatpdf-root") as HTMLElement;
-      if (!root || !item) return;
+      // Show section for items with PDF attachments
+      const pdf = item ? getPdfAttachment(item) : null;
+      setEnabled(!!pdf);
 
-      const pdf = getPdfAttachment(item);
-      if (pdf && !session.getSource(pdf.key)) {
+      // Auto-add the selected item as a source
+      const root = body?.querySelector("#chatpdf-root") as HTMLElement;
+      if (!root || !item || !pdf) return true;
+
+      if (!session.getSource(pdf.key)) {
         addItemToSession(item).then(() => refreshSourceList(root));
       }
+      return true;
     },
   });
 }
@@ -428,22 +435,27 @@ async function handleSend(root: HTMLElement) {
 }
 
 export function registerContextMenu() {
-  ztoolkit.Menu.register("item", {
-    tag: "menuitem",
-    label: "Add to ChatPDF",
-    commandListener: async (ev: Event) => {
-      const items = Zotero.getActiveZoteroPane()?.getSelectedItems();
-      if (!items) return;
-      for (const item of items) {
-        await addItemToSession(item);
-      }
-      // Trigger a UI refresh if the panel is visible
-      const doc = (ev.target as Element)?.ownerDocument;
-      if (doc) {
-        const root = doc.querySelector("#chatpdf-root") as HTMLElement;
-        if (root) refreshSourceList(root);
-      }
-    },
+  Zotero.MenuManager.registerMenu({
+    menuID: "chatpdf-item-menu",
+    pluginID: config.addonID,
+    target: "main/library/item",
+    menus: [{
+      menuType: "menuitem",
+      l10nID: "chatpdf-menuitem-addtochatpdf",
+      onCommand: async (_event: Event, context: _ZoteroTypes.MenuManager.LibraryMenuContext) => {
+        const items = context.items ?? [];
+        for (const item of items) {
+          await addItemToSession(item);
+        }
+        const wins = Zotero.getMainWindows();
+        for (const win of wins) {
+          const root = (win as any).document?.querySelector(
+            "#chatpdf-root",
+          ) as HTMLElement | null;
+          if (root) refreshSourceList(root);
+        }
+      },
+    }],
   });
 }
 
