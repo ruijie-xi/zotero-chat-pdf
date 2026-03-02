@@ -110,12 +110,18 @@ export class ChatSession {
     }
 
     if (readySources.length === 0) {
-      return "You are a helpful research assistant. The user has not added any PDF documents yet. Ask them to add documents to chat about.";
+      return "You are a helpful research assistant. The user has not added any PDF documents yet. Ask them to add documents to chat about. Always reply in the same language the user uses.";
     }
 
     let prompt =
       "You are a helpful research assistant. Answer questions based on the following document(s). " +
-      "Cite specific sections when possible. If the answer is not in the documents, say so.\n\n";
+      "Cite specific sections when possible. If the answer is not in the documents, say so.\n\n" +
+      "IMPORTANT formatting rules:\n" +
+      "- Always reply in the same language the user uses. If the user writes in Chinese, reply in Chinese. If in English, reply in English.\n" +
+      "- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).\n" +
+      "- For mathematical expressions, use LaTeX syntax with dollar sign delimiters: $...$ for inline math and $$...$$ for display math.\n" +
+      "  For example: The equation $E = mc^2$ or a display formula:\n" +
+      "  $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$\n\n";
 
     for (const source of readySources) {
       prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;
