@@ -92,6 +92,18 @@ export class ChatSession {
     this.history = [];
   }
 
+  /** Remove all messages from the given index onwards (inclusive). */
+  truncateHistoryAt(index: number): void {
+    if (index >= 0 && index < this.history.length) {
+      this.history.splice(index);
+      this.updatedAt = Date.now();
+    }
+  }
+
+  getHistoryLength(): number {
+    return this.history.length;
+  }
+
   toSavedSession(): SavedSession {
     const sources = this.getSources();
     return {

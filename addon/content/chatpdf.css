@@ -145,6 +145,127 @@ item-pane-custom-section linkset {
   min-width: 0;
 }
 
+/* -- Edit button on user messages -- */
+
+.chatpdf-msg-row-user {
+  position: relative;
+}
+
+.chatpdf-edit-btn {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: none;
+  background: var(--fill-senary, #f0f0f0);
+  color: var(--fill-tertiary, #999);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+  user-select: none;
+  -moz-user-select: none;
+  z-index: 1;
+}
+
+.chatpdf-msg-row-user:hover .chatpdf-edit-btn {
+  opacity: 1;
+}
+
+.chatpdf-edit-btn:hover {
+  color: var(--fill-primary, #333);
+  background: var(--fill-quinary, #e0e0e0);
+}
+
+/* Edit mode on user message */
+.chatpdf-edit-area {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 200px;
+}
+
+.chatpdf-edit-textarea {
+  width: 100%;
+  min-height: 36px;
+  max-height: 120px;
+  border: 1px solid var(--color-accent, #4285f4);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.4;
+  resize: none;
+  outline: none;
+  background: var(--material-background, white);
+  color: var(--fill-primary, #333);
+  box-sizing: border-box;
+}
+
+.chatpdf-edit-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.chatpdf-edit-actions button {
+  border: none;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+
+.chatpdf-edit-save-btn {
+  background: var(--color-accent, #4285f4);
+  color: white;
+}
+.chatpdf-edit-save-btn:hover { opacity: 0.85; }
+
+.chatpdf-edit-cancel-btn {
+  background: var(--fill-senary, #f0f0f0);
+  color: var(--fill-primary, #333);
+}
+.chatpdf-edit-cancel-btn:hover {
+  background: var(--fill-quinary, #e0e0e0);
+}
+
+/* -- Copy button on assistant messages -- */
+
+.chatpdf-msg-row-assistant {
+  position: relative;
+}
+
+.chatpdf-copy-btn {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  border: none;
+  background: var(--fill-senary, #f0f0f0);
+  color: var(--fill-tertiary, #999);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+  user-select: none;
+  -moz-user-select: none;
+  z-index: 1;
+}
+
+.chatpdf-msg-row-assistant:hover .chatpdf-copy-btn {
+  opacity: 1;
+}
+
+.chatpdf-copy-btn:hover {
+  color: var(--fill-primary, #333);
+  background: var(--fill-quinary, #e0e0e0);
+}
+
 /* -- Thinking indicator -- */
 
 .chatpdf-thinking {
@@ -291,14 +412,42 @@ item-pane-custom-section linkset {
 
 /* ===== Source Chips Area ===== */
 
-.chatpdf-sources {
+/* Resize handle between messages and sources */
+.chatpdf-resize-handle {
+  height: 6px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  background: transparent;
   border-top: 1px solid var(--fill-quinary, #e0e0e0);
+  position: relative;
+  user-select: none;
+  -moz-user-select: none;
+}
+
+.chatpdf-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--fill-quaternary, #ccc);
+  transition: background 0.12s;
+}
+
+.chatpdf-resize-handle:hover::after {
+  background: var(--fill-tertiary, #999);
+}
+
+.chatpdf-sources {
   padding: 6px 8px;
   min-height: 32px;
+  height: 80px;
   flex-shrink: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  max-height: 120px;
   box-sizing: border-box;
   width: 100%;
 }
@@ -444,6 +593,18 @@ item-pane-custom-section linkset {
 .chatpdf-chip-remove-btn:hover {
   color: #d32f2f;
   background: rgba(211, 47, 47, 0.08);
+}
+
+/* ===== Send Warning ===== */
+
+.chatpdf-send-warning {
+  background: rgba(255, 59, 48, 0.08);
+  color: #c62828;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  animation: chatpdf-fade-in 0.15s ease-out;
 }
 
 .chatpdf-source-drop-hint {

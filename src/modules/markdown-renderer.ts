@@ -31,7 +31,7 @@ function renderMarkdownUnsafe(text: string): string {
   const mathBlocks: { placeholder: string; html: string }[] = [];
   let counter = 0;
 
-  // Display math first ($$...$$) — must come before inline
+  // Display math: $$...$$ and \[...\]
   let processed = text.replace(/\$\$([\s\S]+?)\$\$/g, (_match, latex) => {
     const placeholder = `%%MATH_BLOCK_${counter++}%%`;
     try {
@@ -47,7 +47,22 @@ function renderMarkdownUnsafe(text: string): string {
     return placeholder;
   });
 
-  // Inline math ($...$) — avoid matching $$ or escaped \$
+  processed = processed.replace(/\\\[([\s\S]+?)\\\]/g, (_match, latex) => {
+    const placeholder = `%%MATH_BLOCK_${counter++}%%`;
+    try {
+      const html = katex.renderToString(latex.trim(), {
+        displayMode: true,
+        output: "html",
+        throwOnError: false,
+      });
+      mathBlocks.push({ placeholder, html: `<div class="chatpdf-math-display">${html}</div>` });
+    } catch {
+      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">\\[${escapeXml(latex)}\\]</code>` });
+    }
+    return placeholder;
+  });
+
+  // Inline math: $...$ and \(...\)
   processed = processed.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_match, latex) => {
     const placeholder = `%%MATH_BLOCK_${counter++}%%`;
     try {
@@ -59,6 +74,21 @@ function renderMarkdownUnsafe(text: string): string {
       mathBlocks.push({ placeholder, html });
     } catch {
       mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">$${escapeXml(latex)}$</code>` });
+    }
+    return placeholder;
+  });
+
+  processed = processed.replace(/\\\((.+?)\\\)/g, (_match, latex) => {
+    const placeholder = `%%MATH_BLOCK_${counter++}%%`;
+    try {
+      const html = katex.renderToString(latex.trim(), {
+        displayMode: false,
+        output: "html",
+        throwOnError: false,
+      });
+      mathBlocks.push({ placeholder, html });
+    } catch {
+      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">\\(${escapeXml(latex)}\\)</code>` });
     }
     return placeholder;
   });

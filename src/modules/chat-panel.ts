@@ -164,9 +164,6 @@ export function registerChatSection() {
       setEnabled(!!pdf);
       const root = body?.querySelector("#chatpdf-root") as HTMLElement;
       if (!root || !item || !pdf) return true;
-      if (!session.getSource(pdf.key)) {
-        addItemToSession(item).then(() => refreshSourceChips(root));
-      }
       return true;
     },
   });
@@ -224,10 +221,34 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   const historyList = h(doc, "div", { className: "chatpdf-history-list", id: "chatpdf-history-list", style: "display:none" });
   root.appendChild(historyList);
 
-  // 2. Source chips area (above input)
+  // 2. Resize handle + Source chips area (above input)
+  const resizeHandle = h(doc, "div", { className: "chatpdf-resize-handle" });
+  root.appendChild(resizeHandle);
+
   const sourceArea = h(doc, "div", { className: "chatpdf-sources", id: "chatpdf-sources" });
   const chipContainer = h(doc, "div", { className: "chatpdf-source-chips", id: "chatpdf-source-chips" });
   sourceArea.appendChild(chipContainer);
+
+  // Resize handle drag logic
+  resizeHandle.addEventListener("mousedown", (e: Event) => {
+    const me = e as MouseEvent;
+    me.preventDefault();
+    const startY = me.clientY;
+    const startHeight = sourceArea.getBoundingClientRect().height;
+    const win = doc.defaultView!;
+
+    function onMouseMove(ev: Event) {
+      const delta = startY - (ev as MouseEvent).clientY;
+      const newHeight = Math.min(300, Math.max(32, startHeight + delta));
+      sourceArea.style.height = newHeight + "px";
+    }
+    function onMouseUp() {
+      win.removeEventListener("mousemove", onMouseMove, true);
+      win.removeEventListener("mouseup", onMouseUp, true);
+    }
+    win.addEventListener("mousemove", onMouseMove, true);
+    win.addEventListener("mouseup", onMouseUp, true);
+  });
 
   // Drag-and-drop on source area
   sourceArea.addEventListener("dragover", (e: Event) => {
@@ -342,12 +363,8 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   newChatBtn.addEventListener("click", handleNewChat);
   newChatBtnHeader.addEventListener("click", handleNewChat);
 
-  // Auto-add current item
-  if (item) {
-    addItemToSession(item).then(() => refreshSourceChips(root));
-  }
-
   renderChatHistory(root);
+  refreshSourceChips(root);
 }
 
 // ---- History View ----
@@ -355,12 +372,14 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
 function showHistoryView(root: HTMLElement) {
   showingHistory = true;
   const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
+  const resizeEl = root.querySelector(".chatpdf-resize-handle") as HTMLElement;
   const sourcesEl = root.querySelector("#chatpdf-sources") as HTMLElement;
   const inputEl = root.querySelector("#chatpdf-input-area") as HTMLElement;
   const headerEl = root.querySelector("#chatpdf-history-header") as HTMLElement;
   const listEl = root.querySelector("#chatpdf-history-list") as HTMLElement;
 
   if (messagesEl) messagesEl.style.display = "none";
+  if (resizeEl) resizeEl.style.display = "none";
   if (sourcesEl) sourcesEl.style.display = "none";
   if (inputEl) inputEl.style.display = "none";
   if (headerEl) headerEl.style.display = "";
@@ -373,12 +392,14 @@ function showHistoryView(root: HTMLElement) {
 function hideHistoryView(root: HTMLElement) {
   showingHistory = false;
   const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
+  const resizeEl = root.querySelector(".chatpdf-resize-handle") as HTMLElement;
   const sourcesEl = root.querySelector("#chatpdf-sources") as HTMLElement;
   const inputEl = root.querySelector("#chatpdf-input-area") as HTMLElement;
   const headerEl = root.querySelector("#chatpdf-history-header") as HTMLElement;
   const listEl = root.querySelector("#chatpdf-history-list") as HTMLElement;
 
   if (messagesEl) messagesEl.style.display = "";
+  if (resizeEl) resizeEl.style.display = "";
   if (sourcesEl) sourcesEl.style.display = "";
   if (inputEl) inputEl.style.display = "";
   if (headerEl) headerEl.style.display = "none";
@@ -528,14 +549,32 @@ function renderChatHistory(root: HTMLElement) {
     // Remove welcome message when there's history
     const welcome = messagesEl.querySelector(".chatpdf-welcome");
     if (welcome) welcome.remove();
+    let msgIndex = 0;
     for (const msg of history) {
       if (msg.role === "system") continue;
-      appendMessage(root, msg.role as "user" | "assistant", msg.content);
+      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex);
+      msgIndex++;
     }
   }
 }
 
-function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string): HTMLElement {
+function createCopyButton(doc: Document, rawMarkdown: string): HTMLElement {
+  const btn = h(doc, "button", { className: "chatpdf-copy-btn", title: "Copy as Markdown" }, "Copy");
+  btn.addEventListener("click", (e: Event) => {
+    e.stopPropagation();
+    const win = doc.defaultView!;
+    (win as any).navigator.clipboard.writeText(rawMarkdown).then(() => {
+      btn.textContent = "Copied!";
+      win.setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+    }).catch(() => {
+      btn.textContent = "Failed";
+      win.setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+    });
+  });
+  return btn;
+}
+
+function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number): HTMLElement {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return root;
   const doc = root.ownerDocument!;
@@ -545,6 +584,9 @@ function appendMessage(root: HTMLElement, role: "user" | "assistant", content: s
   if (welcome) welcome.remove();
 
   const row = h(doc, "div", { className: `chatpdf-msg-row chatpdf-msg-row-${role}` });
+  if (msgIndex !== undefined) {
+    row.dataset.msgIndex = String(msgIndex);
+  }
 
   if (role === "assistant") {
     // Avatar
@@ -560,14 +602,115 @@ function appendMessage(root: HTMLElement, role: "user" | "assistant", content: s
     } catch {
       bubble.textContent = content;
     }
+    // Copy button for assistant messages
+    row.appendChild(createCopyButton(doc, content));
   } else {
     bubble.textContent = content;
+    // Edit button for user messages
+    const editBtn = h(doc, "button", { className: "chatpdf-edit-btn", title: "Edit" }, "\u270E");
+    editBtn.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
+      enterEditMode(root, row, bubble, content);
+    });
+    row.appendChild(editBtn);
   }
 
   row.appendChild(bubble);
   messagesEl.appendChild(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return bubble;
+}
+
+/** Enter inline edit mode for a user message bubble. */
+function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement, originalText: string) {
+  const doc = root.ownerDocument!;
+
+  // Hide the original bubble and edit button
+  bubble.style.display = "none";
+  const editBtn = row.querySelector(".chatpdf-edit-btn") as HTMLElement;
+  if (editBtn) editBtn.style.display = "none";
+
+  // Create edit area
+  const editArea = h(doc, "div", { className: "chatpdf-edit-area" });
+  const editTextarea = h(doc, "textarea", { className: "chatpdf-edit-textarea" }) as HTMLTextAreaElement;
+  editTextarea.value = originalText;
+  editArea.appendChild(editTextarea);
+
+  const actions = h(doc, "div", { className: "chatpdf-edit-actions" });
+  const cancelBtn = h(doc, "button", { className: "chatpdf-edit-cancel-btn" }, "Cancel");
+  const saveBtn = h(doc, "button", { className: "chatpdf-edit-save-btn" }, "Send");
+  actions.appendChild(cancelBtn);
+  actions.appendChild(saveBtn);
+  editArea.appendChild(actions);
+
+  row.appendChild(editArea);
+
+  // Auto-resize
+  editTextarea.style.height = "auto";
+  editTextarea.style.height = Math.min(editTextarea.scrollHeight, 120) + "px";
+  editTextarea.focus();
+  editTextarea.addEventListener("input", () => {
+    editTextarea.style.height = "auto";
+    editTextarea.style.height = Math.min(editTextarea.scrollHeight, 120) + "px";
+  });
+
+  function exitEdit() {
+    editArea.remove();
+    bubble.style.display = "";
+    if (editBtn) editBtn.style.display = "";
+  }
+
+  cancelBtn.addEventListener("click", (e: Event) => {
+    e.stopPropagation();
+    exitEdit();
+  });
+
+  saveBtn.addEventListener("click", (e: Event) => {
+    e.stopPropagation();
+    const newText = editTextarea.value.trim();
+    if (!newText) { exitEdit(); return; }
+
+    const msgIndex = parseInt(row.dataset.msgIndex || "-1", 10);
+
+    // Truncate session history from this message index onwards
+    if (msgIndex >= 0) {
+      session.truncateHistoryAt(msgIndex);
+    }
+
+    // Remove this row and all subsequent message rows from DOM
+    const messagesEl = root.querySelector("#chatpdf-messages");
+    if (messagesEl) {
+      const allRows = Array.from(messagesEl.querySelectorAll(".chatpdf-msg-row"));
+      const rowIdx = allRows.indexOf(row);
+      if (rowIdx >= 0) {
+        for (let i = allRows.length - 1; i >= rowIdx; i--) {
+          allRows[i].remove();
+        }
+      }
+    }
+
+    // Re-send with edited text by putting it in the textarea and calling handleSend
+    const textarea = root.querySelector("#chatpdf-textarea") as HTMLTextAreaElement;
+    if (textarea) {
+      textarea.value = newText;
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
+    }
+    handleSend(root);
+  });
+
+  // Allow Enter to send, Shift+Enter for newline
+  editTextarea.addEventListener("keydown", (e: Event) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === "Enter" && !ke.shiftKey) {
+      ke.preventDefault();
+      saveBtn.click();
+    }
+    if (ke.key === "Escape") {
+      ke.preventDefault();
+      exitEdit();
+    }
+  });
 }
 
 // ---- Chat handling ----
@@ -580,9 +723,29 @@ async function handleSend(root: HTMLElement) {
   const userText = textarea.value.trim();
   if (!userText) return;
 
+  // Block sending when any source is pending or converting
+  const notReady = session.getSources().filter((s) => s.status === "pending" || s.status === "converting");
+  if (notReady.length > 0) {
+    // Show ephemeral warning without clearing the textarea
+    const existing = root.querySelector(".chatpdf-send-warning");
+    if (existing) existing.remove();
+    const doc = root.ownerDocument!;
+    const warning = h(doc, "div", { className: "chatpdf-send-warning" },
+      `Cannot send: ${notReady.length} source${notReady.length > 1 ? "s" : ""} still pending or converting. Please convert or remove them first.`);
+    const inputArea = root.querySelector("#chatpdf-input-area");
+    if (inputArea) inputArea.insertBefore(warning, inputArea.firstChild);
+    // Auto-dismiss after 4 seconds
+    const win = doc.defaultView!;
+    win.setTimeout(() => warning.remove(), 4000);
+    return;
+  }
+
   textarea.value = "";
   textarea.style.height = "auto";
-  appendMessage(root, "user", userText);
+
+  // Track message index: current history length is the index for this new user message
+  const userMsgIndex = session.getHistoryLength();
+  appendMessage(root, "user", userText, userMsgIndex);
 
   textarea.disabled = true;
   sendBtn.disabled = true;
@@ -592,9 +755,11 @@ async function handleSend(root: HTMLElement) {
     const messages = session.buildMessages(userText);
     session.addUserMessage(userText);
 
+    const assistantMsgIndex = session.getHistoryLength(); // index for the upcoming assistant message
     const doc = root.ownerDocument!;
     const row = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
     row.className = "chatpdf-msg-row chatpdf-msg-row-assistant";
+    row.dataset.msgIndex = String(assistantMsgIndex);
 
     const avatar = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
     avatar.className = "chatpdf-avatar chatpdf-avatar-assistant";
@@ -649,6 +814,9 @@ async function handleSend(root: HTMLElement) {
         if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
       }
     });
+
+    // Add copy button after streaming completes
+    row.appendChild(createCopyButton(doc, fullResponse));
 
     session.addAssistantMessage(fullResponse);
     // Auto-save after assistant message
