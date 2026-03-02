@@ -12,7 +12,7 @@ marked.setOptions({
 /**
  * Render a markdown string (with LaTeX math) to HTML.
  * Math delimiters: $...$ for inline, $$...$$ for display.
- * LaTeX is converted to MathML (native Firefox rendering, no CSS/fonts needed).
+ * LaTeX is converted to HTML via KaTeX (requires katex.css + fonts).
  */
 export function renderMarkdown(text: string): string {
   // Step 1: Extract and replace math blocks with placeholders
@@ -25,7 +25,7 @@ export function renderMarkdown(text: string): string {
     try {
       const html = katex.renderToString(latex.trim(), {
         displayMode: true,
-        output: "mathml",
+        output: "html",
         throwOnError: false,
       });
       mathBlocks.push({ placeholder, html: `<div class="chatpdf-math-display">${html}</div>` });
@@ -41,7 +41,7 @@ export function renderMarkdown(text: string): string {
     try {
       const html = katex.renderToString(latex.trim(), {
         displayMode: false,
-        output: "mathml",
+        output: "html",
         throwOnError: false,
       });
       mathBlocks.push({ placeholder, html });

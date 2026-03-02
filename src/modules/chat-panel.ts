@@ -123,9 +123,12 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   const doc = root.ownerDocument;
 
   // Inject CSS once
+  const headTarget = doc.head || doc.documentElement;
+  if (!doc.querySelector(`link[href*="katex"]`)) {
+    headTarget.appendChild(h(doc, "link", { rel: "stylesheet", href: `chrome://${config.addonRef}/content/katex.css` }));
+  }
   if (!doc.querySelector(`link[href*="${config.addonRef}"]`)) {
-    const link = h(doc, "link", { rel: "stylesheet", href: `chrome://${config.addonRef}/content/chatpdf.css` });
-    (doc.head || doc.documentElement).appendChild(link);
+    headTarget.appendChild(h(doc, "link", { rel: "stylesheet", href: `chrome://${config.addonRef}/content/chatpdf.css` }));
   }
 
   root.innerHTML = "";
@@ -252,6 +255,15 @@ function refreshSourceChips(root: HTMLElement) {
 
     // Title
     chip.appendChild(h(doc, "span", { className: "chatpdf-chip-title" }, source.title));
+
+    // Status text label (for non-pending states)
+    if (source.status === "converting") {
+      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-status-label chatpdf-chip-status-label-converting" }, "Converting..."));
+    } else if (source.status === "ready") {
+      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-status-label chatpdf-chip-status-label-ready" }, "Ready"));
+    } else if (source.status === "error") {
+      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-status-label chatpdf-chip-status-label-error", title: source.errorMessage || "" }, "Error"));
+    }
 
     // Action button: convert (for pending) or remove
     if (source.status === "pending") {
