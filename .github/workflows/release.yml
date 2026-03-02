@@ -41,12 +41,25 @@ jobs:
             echo "tag=$TAG" >> $GITHUB_OUTPUT
           fi
 
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Extract the section for this version from CHANGELOG.md
+          BODY=$(awk "/^## ${VERSION}$/{ found=1; next } /^## /{ if(found) exit } found" CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            BODY="Release v${VERSION}"
+          fi
+          # Write to file to avoid escaping issues
+          echo "$BODY" > .release-body.md
+
       - name: Release
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ steps.version.outputs.tag }}
           name: v${{ steps.version.outputs.version }}
+          bodyFile: .release-body.md
           draft: false
           prerelease: false
           artifacts: ".scaffold/build/chat-pdf.xpi"
