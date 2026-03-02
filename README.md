@@ -78,6 +78,43 @@ For development with hot-reload:
 npm start
 ```
 
+## System Prompt
+
+The system prompt sent to the LLM is constructed dynamically based on the sources in your session. Here is the exact template:
+
+**When no sources are ready:**
+
+```
+You are a helpful research assistant. The user has not added any PDF documents yet. Ask them to add documents to chat about.
+```
+
+**When one or more sources are ready:**
+
+```
+You are a helpful research assistant. Answer questions based on the following document(s). Cite specific sections when possible. If the answer is not in the documents, say so.
+
+--- BEGIN DOCUMENT: <Paper Title> ---
+<Full Markdown content of the PDF>
+--- END DOCUMENT: <Paper Title> ---
+
+--- BEGIN DOCUMENT: <Another Paper Title> ---
+<Full Markdown content of the PDF>
+--- END DOCUMENT: <Another Paper Title> ---
+```
+
+All ready sources are concatenated into the system prompt, separated by document markers. The user's chat history is appended after the system prompt, with older messages truncated if the total exceeds the **Max Context Characters** setting.
+
+### Customizing the prompt
+
+To modify the system prompt, edit `src/modules/chat-session.ts` — specifically the `buildSystemPrompt()` method in the `ChatSession` class. After making changes, rebuild the plugin with `npm run build`.
+
+Key customization points:
+
+- **Role instruction** — The opening sentence (`"You are a helpful research assistant..."`) defines the LLM's persona and behavior.
+- **Citation instruction** — `"Cite specific sections when possible"` can be changed to match your preferred citation style.
+- **Document delimiters** — The `--- BEGIN/END DOCUMENT ---` markers separate multiple papers. You can change these to XML tags, numbered sections, etc.
+- **No-answer behavior** — `"If the answer is not in the documents, say so"` controls what happens when the LLM can't find relevant content.
+
 ## How it works
 
 ```

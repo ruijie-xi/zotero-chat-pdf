@@ -1,13 +1,20 @@
 /* ===== ChatPDF Panel ===== */
 
+/* Hide linkset injected via bodyXHTML */
+#chatpdf-root ~ linkset,
+item-pane-custom-section linkset {
+  display: none;
+}
+
 #chatpdf-root {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: var(--chatpdf-panel-height, 450px);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   color: var(--fill-primary);
   overflow: hidden;
+  background: var(--material-background, #fff);
 }
 
 /* ===== Messages Area ===== */
@@ -15,19 +22,49 @@
 .chatpdf-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  min-height: 120px;
+  gap: 4px;
+  min-height: 0;
 }
 
-/* -- Message bubbles -- */
+/* -- Welcome screen -- */
 
-.chatpdf-message {
-  max-width: 92%;
-  line-height: 1.5;
-  font-size: 13px;
+.chatpdf-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 8px;
+  padding: 32px 16px;
+  color: var(--fill-tertiary, #999);
+}
+
+.chatpdf-welcome-icon {
+  opacity: 0.4;
+  margin-bottom: 4px;
+}
+
+.chatpdf-welcome-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fill-secondary, #666);
+}
+
+.chatpdf-welcome-hint {
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.4;
+  max-width: 240px;
+}
+
+/* -- Message rows -- */
+
+.chatpdf-msg-row {
+  display: flex;
+  gap: 8px;
   animation: chatpdf-fade-in 0.15s ease-out;
 }
 
@@ -36,24 +73,83 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+.chatpdf-msg-row-user {
+  justify-content: flex-end;
+  padding-left: 32px;
+}
+
+.chatpdf-msg-row-assistant {
+  align-items: flex-start;
+  padding-right: 12px;
+}
+
+/* -- Avatar -- */
+
+.chatpdf-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.chatpdf-avatar-assistant {
+  background: var(--color-accent, #4285f4);
+  color: white;
+}
+
+/* -- Message bubbles -- */
+
+.chatpdf-message {
+  max-width: 100%;
+  line-height: 1.55;
+  font-size: 13px;
+}
+
 .chatpdf-message-user {
-  align-self: flex-end;
   background: var(--color-accent, #4285f4);
   color: white;
   padding: 8px 12px;
-  border-radius: 12px 12px 2px 12px;
+  border-radius: 14px 14px 4px 14px;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
 
 .chatpdf-message-assistant {
-  align-self: flex-start;
   background: transparent;
   color: var(--fill-primary, #333);
   padding: 4px 0;
-  border-radius: 0;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
+/* -- Thinking indicator -- */
+
+.chatpdf-thinking {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.chatpdf-thinking span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fill-tertiary, #bbb);
+  animation: chatpdf-bounce 1.2s ease-in-out infinite;
+}
+
+.chatpdf-thinking span:nth-child(2) { animation-delay: 0.15s; }
+.chatpdf-thinking span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes chatpdf-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
 }
 
 /* -- Markdown content inside assistant bubbles -- */
@@ -175,73 +271,74 @@
 .chatpdf-sources {
   border-top: 1px solid var(--fill-quinary, #e0e0e0);
   padding: 8px 12px;
-  min-height: 32px;
+  min-height: 36px;
+  flex-shrink: 0;
 }
 
 .chatpdf-sources.chatpdf-drop-active {
-  background: var(--color-accent10, rgba(66, 133, 244, 0.08));
+  background: var(--color-accent10, rgba(66, 133, 244, 0.06));
   outline: 2px dashed var(--color-accent, #4285f4);
   outline-offset: -2px;
 }
 
 .chatpdf-source-chips {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .chatpdf-source-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  max-width: 260px;
-  padding: 4px 6px 4px 8px;
+  gap: 8px;
+  padding: 6px 8px;
   border-radius: 6px;
-  font-size: 11.5px;
-  background: var(--fill-senary, #f0f0f0);
-  border: 1px solid var(--fill-quinary, #e0e0e0);
-  cursor: default;
-  transition: background 0.15s;
-}
-.chatpdf-source-chip:hover {
-  background: var(--fill-quinary, #e8e8e8);
+  font-size: 12px;
+  background: var(--fill-senary, #f5f5f5);
+  border: 1px solid var(--fill-quinary, #e8e8e8);
+  transition: background 0.12s, border-color 0.12s;
 }
 
-/* Status dot */
-.chatpdf-chip-dot {
-  width: 7px;
-  height: 7px;
+.chatpdf-source-chip:hover {
+  background: var(--fill-quinary, #eee);
+  border-color: var(--fill-quaternary, #ddd);
+}
+
+.chatpdf-source-chip-ready {
+  border-left: 3px solid #34c759;
+}
+
+.chatpdf-source-chip-converting {
+  border-left: 3px solid #f5a623;
+}
+
+.chatpdf-source-chip-error {
+  border-left: 3px solid #ff3b30;
+}
+
+.chatpdf-source-chip-pending {
+  border-left: 3px solid var(--fill-tertiary, #ccc);
+}
+
+/* Status indicator dot */
+.chatpdf-chip-indicator {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
-.chatpdf-chip-dot-pending  { background: var(--fill-tertiary, #bbb); }
-.chatpdf-chip-dot-converting {
+
+.chatpdf-chip-indicator-pending  { background: var(--fill-tertiary, #bbb); }
+.chatpdf-chip-indicator-converting {
   background: #f5a623;
   animation: chatpdf-pulse 1s ease-in-out infinite;
 }
-.chatpdf-chip-dot-ready    { background: #34c759; }
-.chatpdf-chip-dot-error    { background: #ff3b30; }
+.chatpdf-chip-indicator-ready    { background: #34c759; }
+.chatpdf-chip-indicator-error    { background: #ff3b30; }
 
 @keyframes chatpdf-pulse {
   0%, 100% { opacity: 1; }
-  50%      { opacity: 0.4; }
-}
-
-/* Status text label (shown alongside dot) */
-.chatpdf-chip-status-label {
-  font-size: 10px;
-  flex-shrink: 0;
-  font-weight: 500;
-}
-.chatpdf-chip-status-label-converting {
-  color: #b07800;
-}
-.chatpdf-chip-status-label-ready {
-  color: #1d8a38;
-}
-.chatpdf-chip-status-label-error {
-  color: #d32f2f;
+  50%      { opacity: 0.35; }
 }
 
 .chatpdf-chip-title {
@@ -250,34 +347,78 @@
   white-space: nowrap;
   flex: 1;
   min-width: 0;
+  font-weight: 450;
+  color: var(--fill-primary, #333);
 }
 
-.chatpdf-chip-action {
+/* Status badge */
+.chatpdf-chip-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.chatpdf-chip-badge-converting {
+  color: #8a6200;
+  background: rgba(245, 166, 35, 0.15);
+}
+
+.chatpdf-chip-badge-ready {
+  color: #1a7d32;
+  background: rgba(52, 199, 89, 0.12);
+}
+
+.chatpdf-chip-badge-error {
+  color: #c62828;
+  background: rgba(255, 59, 48, 0.1);
+}
+
+/* Action buttons */
+.chatpdf-chip-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.chatpdf-source-chip:hover .chatpdf-chip-actions {
+  opacity: 1;
+}
+
+.chatpdf-chip-action-btn {
   border: none;
   background: none;
   color: var(--fill-tertiary, #999);
-  font-size: 10px;
   cursor: pointer;
-  padding: 0 2px;
-  line-height: 1;
-  flex-shrink: 0;
-  border-radius: 50%;
-  width: 16px;
-  height: 16px;
+  padding: 2px;
+  border-radius: 4px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background 0.12s, color 0.12s;
 }
-.chatpdf-chip-action:hover {
-  background: rgba(0, 0, 0, 0.1);
+
+.chatpdf-chip-action-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
   color: var(--fill-primary, #333);
+}
+
+.chatpdf-chip-remove-btn:hover {
+  color: #d32f2f;
 }
 
 .chatpdf-source-drop-hint {
   color: var(--fill-tertiary, #aaa);
   font-size: 11px;
   font-style: italic;
-  padding: 2px 0;
+  padding: 4px 0;
+  text-align: center;
 }
 
 /* ===== Input Area ===== */
@@ -285,6 +426,8 @@
 .chatpdf-input-area {
   border-top: 1px solid var(--fill-quinary, #e0e0e0);
   padding: 8px 12px 10px;
+  flex-shrink: 0;
+  background: var(--material-background, #fff);
 }
 
 .chatpdf-input-wrapper {
@@ -297,10 +440,11 @@
   border-radius: 10px;
   padding: 6px 6px 6px 12px;
   background: var(--material-background, white);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .chatpdf-input-wrapper:focus-within {
   border-color: var(--color-accent, #4285f4);
+  box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.12);
 }
 
 .chatpdf-textarea {
@@ -313,7 +457,7 @@
   font-size: 13px;
   font-family: inherit;
   line-height: 1.4;
-  min-height: 36px;
+  min-height: 20px;
   max-height: 120px;
   background: transparent;
   color: var(--fill-primary, #333);
@@ -330,8 +474,8 @@
 }
 
 .chatpdf-send-btn {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border: none;
   border-radius: 8px;
   background: var(--color-accent, #4285f4);
@@ -342,45 +486,54 @@
   justify-content: center;
   flex-shrink: 0;
   transition: opacity 0.15s;
-  font-size: 14px;
 }
 .chatpdf-send-btn:hover {
   opacity: 0.85;
 }
 .chatpdf-send-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
-/* ===== Bottom toolbar ===== */
+/* ===== Toolbar ===== */
 
 .chatpdf-toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 0 0;
+  gap: 4px;
+  padding: 0 0 6px;
   font-size: 11px;
 }
 
-.chatpdf-toolbar-link {
+.chatpdf-toolbar-btn {
   color: var(--fill-tertiary, #999);
   cursor: pointer;
   border: none;
   background: none;
   font-size: 11px;
-  padding: 2px 4px;
-  border-radius: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.12s, background 0.12s;
 }
-.chatpdf-toolbar-link:hover {
+.chatpdf-toolbar-btn:hover {
   color: var(--fill-primary, #333);
   background: var(--fill-senary, #f0f0f0);
 }
 
-/* ===== Status bar ===== */
+/* ===== Scrollbar ===== */
 
-.chatpdf-status {
-  padding: 3px 12px;
-  font-size: 11px;
-  color: var(--fill-tertiary, #999);
-  min-height: 14px;
+.chatpdf-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chatpdf-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chatpdf-messages::-webkit-scrollbar-thumb {
+  background: var(--fill-quinary, #ddd);
+  border-radius: 3px;
+}
+
+.chatpdf-messages::-webkit-scrollbar-thumb:hover {
+  background: var(--fill-quaternary, #ccc);
 }

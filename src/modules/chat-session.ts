@@ -99,9 +99,15 @@ export class ChatSession {
   }
 
   private buildSystemPrompt(): string {
-    const readySources = Array.from(this.sources.values()).filter(
+    const allSources = Array.from(this.sources.values());
+    const readySources = allSources.filter(
       (s) => s.status === "ready" && s.markdown,
     );
+
+    Zotero.debug(`[ChatPDF] buildSystemPrompt: ${allSources.length} total sources, ${readySources.length} ready`);
+    for (const s of allSources) {
+      Zotero.debug(`[ChatPDF]   source "${s.title}" status=${s.status} hasMarkdown=${!!s.markdown} mdLen=${s.markdown?.length ?? 0}`);
+    }
 
     if (readySources.length === 0) {
       return "You are a helpful research assistant. The user has not added any PDF documents yet. Ask them to add documents to chat about.";
@@ -117,6 +123,7 @@ export class ChatSession {
       prompt += `\n--- END DOCUMENT: ${source.title} ---\n\n`;
     }
 
+    Zotero.debug(`[ChatPDF] System prompt length: ${prompt.length} chars, includes ${readySources.length} documents`);
     return prompt;
   }
 }

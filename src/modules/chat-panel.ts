@@ -84,6 +84,18 @@ async function convertSource(source: SourceItem, onProgress?: (msg: string) => v
   }
 }
 
+// ---- Full-height helper (pattern from zotero-pdf-translate) ----
+
+function updatePanelHeight(body: HTMLElement) {
+  const details = body.closest("item-details");
+  const head = body.closest("item-pane-custom-section")?.querySelector(".head");
+  if (!details || !head) return;
+  const container = details.querySelector(".zotero-view-item") as HTMLElement | null;
+  if (!container) return;
+  const height = container.clientHeight - head.clientHeight - 8;
+  body.style.setProperty("--chatpdf-panel-height", `${height}px`);
+}
+
 // ---- Section registration ----
 
 export function registerChatSection() {
@@ -98,11 +110,41 @@ export function registerChatSection() {
       l10nID: `${config.addonRef}-item-section-chatpdf-sidenav-tooltip`,
       icon: `chrome://${config.addonRef}/content/icons/favicon@0.5x.png`,
     },
-    bodyXHTML: `<html:div id="chatpdf-root" xmlns:html="http://www.w3.org/1999/xhtml" />`,
+    bodyXHTML: `
+      <linkset>
+        <html:link rel="stylesheet" href="chrome://${config.addonRef}/content/katex.css" />
+        <html:link rel="stylesheet" href="chrome://${config.addonRef}/content/chatpdf.css" />
+      </linkset>
+      <html:div id="chatpdf-root" xmlns:html="http://www.w3.org/1999/xhtml" />
+    `,
+    sectionButtons: [
+      {
+        type: "fullHeight",
+        icon: "chrome://zotero/skin/16/universal/maximize.svg",
+        l10nID: `${config.addonRef}-item-section-chatpdf-fullheight`,
+        onClick: ({ body }: { body: HTMLElement }) => {
+          updatePanelHeight(body);
+          const details = body.closest("item-details") as any;
+          if (details?.scrollToPane) {
+            details.scrollToPane(`${config.addonID}-chatpdf-section`);
+          }
+        },
+      },
+    ],
+    onInit: ({ body, refresh }: { body: HTMLElement; refresh: () => Promise<void> }) => {
+      const uid = Zotero.Utilities.randomString(8);
+      body.dataset.paneUid = uid;
+      // Store refresh function for external updates
+      (body as any)._chatpdfRefresh = refresh;
+    },
+    onDestroy: ({ body }: { body: HTMLElement }) => {
+      delete (body as any)._chatpdfRefresh;
+    },
     onRender: ({ body, item }: { body: HTMLElement; item: Zotero.Item; setSectionSummary: (s: string) => void }) => {
       const root = body.querySelector("#chatpdf-root") as HTMLElement;
       if (!root) return;
       buildChatUI(root, item);
+      updatePanelHeight(body);
     },
     onItemChange: ({ body, item, setEnabled }: { body: HTMLElement; item: Zotero.Item; setEnabled: (e: boolean) => void; setSectionSummary: (s: string) => void }) => {
       const pdf = item ? getPdfAttachment(item) : null;
@@ -120,28 +162,27 @@ export function registerChatSection() {
 // ---- UI Building ----
 
 function buildChatUI(root: HTMLElement, item: Zotero.Item) {
-  const doc = root.ownerDocument;
-
-  // Inject CSS once
-  const headTarget = doc.head || doc.documentElement;
-  if (!doc.querySelector(`link[href*="katex"]`)) {
-    headTarget.appendChild(h(doc, "link", { rel: "stylesheet", href: `chrome://${config.addonRef}/content/katex.css` }));
-  }
-  if (!doc.querySelector(`link[href*="${config.addonRef}"]`)) {
-    headTarget.appendChild(h(doc, "link", { rel: "stylesheet", href: `chrome://${config.addonRef}/content/chatpdf.css` }));
-  }
-
+  const doc = root.ownerDocument!;
   root.innerHTML = "";
 
   // 1. Messages area (top, scrollable)
   const messagesArea = h(doc, "div", { className: "chatpdf-messages", id: "chatpdf-messages" });
+
+  // Welcome message
+  const welcome = h(doc, "div", { className: "chatpdf-welcome" });
+  welcome.innerHTML = `
+    <div class="chatpdf-welcome-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </div>
+    <div class="chatpdf-welcome-text">Ask questions about your documents</div>
+    <div class="chatpdf-welcome-hint">Drop PDFs into the sources area or use the right-click menu to add papers</div>
+  `;
+  messagesArea.appendChild(welcome);
   root.appendChild(messagesArea);
 
-  // 2. Status bar
-  const statusBar = h(doc, "div", { className: "chatpdf-status", id: "chatpdf-status" });
-  root.appendChild(statusBar);
-
-  // 3. Source chips area (above input)
+  // 2. Source chips area (above input)
   const sourceArea = h(doc, "div", { className: "chatpdf-sources", id: "chatpdf-sources" });
   const chipContainer = h(doc, "div", { className: "chatpdf-source-chips", id: "chatpdf-source-chips" });
   sourceArea.appendChild(chipContainer);
@@ -167,8 +208,17 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   });
   root.appendChild(sourceArea);
 
-  // 4. Input area (bottom)
+  // 3. Input area (bottom)
   const inputArea = h(doc, "div", { className: "chatpdf-input-area" });
+
+  // Toolbar row (above input)
+  const toolbar = h(doc, "div", { className: "chatpdf-toolbar" });
+  const clearLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Clear chat");
+  const convertAllLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Convert all");
+  toolbar.appendChild(clearLink);
+  toolbar.appendChild(convertAllLink);
+  inputArea.appendChild(toolbar);
+
   const inputWrapper = h(doc, "div", { className: "chatpdf-input-wrapper" });
 
   const textarea = h(doc, "textarea", {
@@ -178,21 +228,12 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
     rows: "1",
   }) as HTMLTextAreaElement;
 
-  // Arrow SVG for send button
   const sendBtn = h(doc, "button", { className: "chatpdf-send-btn", id: "chatpdf-send", title: "Send" });
-  sendBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`;
+  sendBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>`;
 
   inputWrapper.appendChild(textarea);
   inputWrapper.appendChild(sendBtn);
   inputArea.appendChild(inputWrapper);
-
-  // Toolbar row
-  const toolbar = h(doc, "div", { className: "chatpdf-toolbar" });
-  const clearLink = h(doc, "button", { className: "chatpdf-toolbar-link" }, "Clear chat");
-  const convertAllLink = h(doc, "button", { className: "chatpdf-toolbar-link" }, "Convert all");
-  toolbar.appendChild(clearLink);
-  toolbar.appendChild(convertAllLink);
-  inputArea.appendChild(toolbar);
 
   root.appendChild(inputArea);
 
@@ -215,7 +256,11 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   clearLink.addEventListener("click", () => {
     session.clearHistory();
     const msgs = root.querySelector("#chatpdf-messages");
-    if (msgs) msgs.innerHTML = "";
+    if (msgs) {
+      msgs.innerHTML = "";
+      // Re-add welcome
+      msgs.appendChild(welcome);
+    }
   });
 
   convertAllLink.addEventListener("click", () => {
@@ -237,7 +282,7 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
 function refreshSourceChips(root: HTMLElement) {
   const container = root.querySelector("#chatpdf-source-chips");
   if (!container) return;
-  const doc = root.ownerDocument;
+  const doc = root.ownerDocument!;
   container.innerHTML = "";
 
   const sources = session.getSources();
@@ -247,45 +292,51 @@ function refreshSourceChips(root: HTMLElement) {
   }
 
   for (const source of sources) {
-    const chip = h(doc, "span", { className: "chatpdf-source-chip", title: `${source.title}\n[${source.status}]${source.errorMessage ? "\n" + source.errorMessage : ""}` });
+    const chip = h(doc, "div", { className: `chatpdf-source-chip chatpdf-source-chip-${source.status}`, title: source.errorMessage || "" });
 
-    // Status dot
-    const dot = h(doc, "span", { className: `chatpdf-chip-dot chatpdf-chip-dot-${source.status}` });
-    chip.appendChild(dot);
+    // Status indicator
+    const statusIndicator = h(doc, "span", { className: `chatpdf-chip-indicator chatpdf-chip-indicator-${source.status}` });
+    chip.appendChild(statusIndicator);
 
     // Title
-    chip.appendChild(h(doc, "span", { className: "chatpdf-chip-title" }, source.title));
+    const titleEl = h(doc, "span", { className: "chatpdf-chip-title" }, source.title);
+    chip.appendChild(titleEl);
 
-    // Status text label (for non-pending states)
-    if (source.status === "converting") {
-      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-status-label chatpdf-chip-status-label-converting" }, "Converting..."));
-    } else if (source.status === "ready") {
-      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-status-label chatpdf-chip-status-label-ready" }, "Ready"));
-    } else if (source.status === "error") {
-      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-status-label chatpdf-chip-status-label-error", title: source.errorMessage || "" }, "Error"));
+    // Status badge
+    if (source.status !== "pending") {
+      const statusLabels: Record<string, string> = {
+        converting: "Converting...",
+        ready: "Ready",
+        error: "Error",
+      };
+      const badge = h(doc, "span", { className: `chatpdf-chip-badge chatpdf-chip-badge-${source.status}` }, statusLabels[source.status] || "");
+      chip.appendChild(badge);
     }
 
-    // Action button: convert (for pending) or remove
+    // Actions
+    const actions = h(doc, "span", { className: "chatpdf-chip-actions" });
+
     if (source.status === "pending") {
-      const convertBtn = h(doc, "button", { className: "chatpdf-chip-action", title: "Convert" });
-      convertBtn.textContent = "\u25B6"; // ▶
+      const convertBtn = h(doc, "button", { className: "chatpdf-chip-action-btn", title: "Convert" });
+      convertBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>`;
       convertBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         convertSource(source, () => refreshSourceChips(root)).catch(() => refreshSourceChips(root));
         refreshSourceChips(root);
       });
-      chip.appendChild(convertBtn);
+      actions.appendChild(convertBtn);
     }
 
-    const removeBtn = h(doc, "button", { className: "chatpdf-chip-action", title: "Remove" });
-    removeBtn.textContent = "\u00D7"; // ×
+    const removeBtn = h(doc, "button", { className: "chatpdf-chip-action-btn chatpdf-chip-remove-btn", title: "Remove" });
+    removeBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
     removeBtn.addEventListener("click", (e: Event) => {
       e.stopPropagation();
       session.removeSource(source.key);
       refreshSourceChips(root);
     });
-    chip.appendChild(removeBtn);
+    actions.appendChild(removeBtn);
 
+    chip.appendChild(actions);
     container.appendChild(chip);
   }
 }
@@ -295,17 +346,35 @@ function refreshSourceChips(root: HTMLElement) {
 function renderHistory(root: HTMLElement) {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return;
-  messagesEl.innerHTML = "";
-  for (const msg of session.getHistory()) {
-    if (msg.role === "system") continue;
-    appendMessage(root, msg.role as "user" | "assistant", msg.content);
+  const history = session.getHistory();
+  if (history.length > 0) {
+    // Remove welcome message when there's history
+    const welcome = messagesEl.querySelector(".chatpdf-welcome");
+    if (welcome) welcome.remove();
+    for (const msg of history) {
+      if (msg.role === "system") continue;
+      appendMessage(root, msg.role as "user" | "assistant", msg.content);
+    }
   }
 }
 
 function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string): HTMLElement {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return root;
-  const doc = root.ownerDocument;
+  const doc = root.ownerDocument!;
+
+  // Remove welcome message on first real message
+  const welcome = messagesEl.querySelector(".chatpdf-welcome");
+  if (welcome) welcome.remove();
+
+  const row = h(doc, "div", { className: `chatpdf-msg-row chatpdf-msg-row-${role}` });
+
+  if (role === "assistant") {
+    // Avatar
+    const avatar = h(doc, "div", { className: "chatpdf-avatar chatpdf-avatar-assistant" });
+    avatar.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`;
+    row.appendChild(avatar);
+  }
 
   const bubble = h(doc, "div", { className: `chatpdf-message chatpdf-message-${role}` });
 
@@ -315,7 +384,8 @@ function appendMessage(root: HTMLElement, role: "user" | "assistant", content: s
     bubble.textContent = content;
   }
 
-  messagesEl.appendChild(bubble);
+  row.appendChild(bubble);
+  messagesEl.appendChild(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return bubble;
 }
@@ -332,54 +402,63 @@ async function handleSend(root: HTMLElement) {
 
   textarea.value = "";
   textarea.style.height = "auto";
-  session.addUserMessage(userText);
   appendMessage(root, "user", userText);
 
   textarea.disabled = true;
   sendBtn.disabled = true;
-  const statusEl = root.querySelector("#chatpdf-status");
 
   try {
+    // Build messages BEFORE adding to history to avoid duplication
     const messages = session.buildMessages(userText);
-    const bubble = appendMessage(root, "assistant", "");
-    bubble.innerHTML = "";
-    if (statusEl) statusEl.textContent = "Thinking...";
+    session.addUserMessage(userText);
+
+    const doc = root.ownerDocument!;
+    const row = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+    row.className = "chatpdf-msg-row chatpdf-msg-row-assistant";
+
+    const avatar = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+    avatar.className = "chatpdf-avatar chatpdf-avatar-assistant";
+    avatar.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`;
+    row.appendChild(avatar);
+
+    const bubble = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+    bubble.className = "chatpdf-message chatpdf-message-assistant";
+
+    // Thinking indicator
+    bubble.innerHTML = `<div class="chatpdf-thinking"><span></span><span></span><span></span></div>`;
+
+    row.appendChild(bubble);
+    const messagesEl = root.querySelector("#chatpdf-messages");
+    messagesEl?.appendChild(row);
+    if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 
     let fullText = "";
-    // Debounce markdown re-renders during streaming
-    // Use window's setTimeout since plugin bootstrap scope lacks it
-    const win = root.ownerDocument.defaultView!;
+    const win = doc.defaultView!;
     let renderTimer: number | null = null;
 
     const fullResponse = await llmChat(messages, (chunk: string, done: boolean) => {
       if (!done) {
         fullText += chunk;
-        // Throttle rendering to every 80ms
         if (!renderTimer) {
           renderTimer = win.setTimeout(() => {
             renderTimer = null;
             bubble.innerHTML = renderMarkdown(fullText);
-            const messagesEl = root.querySelector("#chatpdf-messages");
             if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
           }, 80);
         }
       } else {
-        // Final render
         if (renderTimer) {
           win.clearTimeout(renderTimer);
           renderTimer = null;
         }
         bubble.innerHTML = renderMarkdown(fullText);
-        const messagesEl = root.querySelector("#chatpdf-messages");
         if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
       }
     });
 
     session.addAssistantMessage(fullResponse);
-    if (statusEl) statusEl.textContent = "";
   } catch (err: any) {
     appendMessage(root, "assistant", `Error: ${err.message}`);
-    if (statusEl) statusEl.textContent = `Error: ${err.message}`;
   } finally {
     textarea.disabled = false;
     sendBtn.disabled = false;
