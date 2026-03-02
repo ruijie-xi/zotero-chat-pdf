@@ -7,9 +7,13 @@ export interface ChatMessage {
 
 export type StreamCallback = (chunk: string, done: boolean) => void;
 
+/** Callback for reasoning/thinking tokens (e.g. DeepSeek R1). */
+export type ThinkingCallback = (chunk: string, done: boolean) => void;
+
 export async function chat(
   messages: ChatMessage[],
   onStream?: StreamCallback,
+  onThinking?: ThinkingCallback,
 ): Promise<string> {
   const apiBase = getPref("llmApiBase") || "https://api.deepseek.com/v1";
   const apiKey = getPref("llmApiKey");
@@ -50,6 +54,30 @@ export async function chat(
   const decoder = new TextDecoder();
   let fullText = "";
   let buffer = "";
+  let thinkingDone = false;
+
+  function processChunk(parsed: any) {
+    const delta = parsed.choices?.[0]?.delta;
+    if (!delta) return;
+
+    // Reasoning/thinking content (DeepSeek R1, QwQ, etc.)
+    const reasoning = delta.reasoning_content;
+    if (reasoning && onThinking) {
+      onThinking(reasoning, false);
+    }
+
+    // Regular content
+    const content = delta.content;
+    if (content) {
+      // If we were receiving thinking and now get content, signal thinking done
+      if (!thinkingDone && onThinking) {
+        thinkingDone = true;
+        onThinking("", true);
+      }
+      fullText += content;
+      onStream!(content, false);
+    }
+  }
 
   while (true) {
     const { done, value } = await reader.read();
@@ -66,17 +94,15 @@ export async function chat(
 
       const data = trimmed.slice(6);
       if (data === "[DONE]") {
+        if (!thinkingDone && onThinking) {
+          onThinking("", true);
+        }
         onStream!("", true);
         return fullText;
       }
 
       try {
-        const parsed = JSON.parse(data);
-        const content = parsed.choices?.[0]?.delta?.content;
-        if (content) {
-          fullText += content;
-          onStream!(content, false);
-        }
+        processChunk(JSON.parse(data));
       } catch {
         // Skip malformed JSON lines
       }
@@ -88,18 +114,16 @@ export async function chat(
     const trimmed = buffer.trim();
     if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
       try {
-        const parsed = JSON.parse(trimmed.slice(6));
-        const content = parsed.choices?.[0]?.delta?.content;
-        if (content) {
-          fullText += content;
-          onStream!(content, false);
-        }
+        processChunk(JSON.parse(trimmed.slice(6)));
       } catch {
         // Skip
       }
     }
   }
 
+  if (!thinkingDone && onThinking) {
+    onThinking("", true);
+  }
   onStream?.("", true);
   return fullText;
 }

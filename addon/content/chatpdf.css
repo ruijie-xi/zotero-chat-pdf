@@ -290,6 +290,98 @@ item-pane-custom-section linkset {
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* -- Reasoning/Thinking block -- */
+
+.chatpdf-reasoning-block {
+  margin-bottom: 6px;
+  border-radius: 6px;
+  border: 1px solid var(--fill-quinary, #e8e8e8);
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.chatpdf-reasoning-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--fill-senary, #f7f7f7);
+  cursor: pointer;
+  user-select: none;
+  -moz-user-select: none;
+  border: none;
+  width: 100%;
+  font-size: 12px;
+  color: var(--fill-secondary, #666);
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.chatpdf-reasoning-toggle:hover {
+  background: var(--fill-quinary, #eee);
+}
+
+.chatpdf-reasoning-chevron {
+  font-size: 10px;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.chatpdf-reasoning-block.chatpdf-reasoning-expanded .chatpdf-reasoning-chevron {
+  transform: rotate(90deg);
+}
+
+.chatpdf-reasoning-label {
+  font-weight: 500;
+  color: var(--fill-secondary, #666);
+}
+
+.chatpdf-reasoning-timer {
+  color: var(--fill-tertiary, #999);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.chatpdf-reasoning-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--fill-quaternary, #ccc);
+  border-top-color: var(--color-accent, #4285f4);
+  border-radius: 50%;
+  animation: chatpdf-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes chatpdf-spin {
+  to { transform: rotate(360deg); }
+}
+
+.chatpdf-reasoning-content {
+  display: none;
+  padding: 6px 10px;
+  border-top: 1px solid var(--fill-quinary, #e8e8e8);
+  color: var(--fill-tertiary, #888);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--material-background, #fff);
+}
+
+.chatpdf-reasoning-block.chatpdf-reasoning-expanded .chatpdf-reasoning-content {
+  display: block;
+}
+
+.chatpdf-reasoning-content::-webkit-scrollbar {
+  width: 4px;
+}
+.chatpdf-reasoning-content::-webkit-scrollbar-thumb {
+  background: var(--fill-quinary, #ddd);
+  border-radius: 2px;
+}
+
 /* -- Markdown content inside assistant bubbles -- */
 
 .chatpdf-message-assistant p {

@@ -3,7 +3,7 @@ import { ChatSession, SourceItem } from "./chat-session";
 import * as MDCache from "./md-cache";
 import * as ChatHistory from "./chat-history";
 import { convertPdf } from "./mineru-client";
-import { chat as llmChat, StreamCallback } from "./llm-client";
+import { chat as llmChat, StreamCallback, ThinkingCallback } from "./llm-client";
 import { renderMarkdown } from "./markdown-renderer";
 
 let session = new ChatSession();
@@ -769,27 +769,135 @@ async function handleSend(root: HTMLElement) {
     const bubble = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
     bubble.className = "chatpdf-message chatpdf-message-assistant";
 
-    // Thinking indicator
-    const thinking = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
-    thinking.className = "chatpdf-thinking";
+    // Initial thinking indicator (bouncing dots — shown before any tokens arrive)
+    const thinkingDots = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+    thinkingDots.className = "chatpdf-thinking";
     for (let i = 0; i < 3; i++) {
-      thinking.appendChild(doc.createElementNS("http://www.w3.org/1999/xhtml", "span"));
+      thinkingDots.appendChild(doc.createElementNS("http://www.w3.org/1999/xhtml", "span"));
     }
-    bubble.appendChild(thinking);
+    bubble.appendChild(thinkingDots);
 
     row.appendChild(bubble);
     const messagesEl = root.querySelector("#chatpdf-messages");
     messagesEl?.appendChild(row);
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 
-    let fullText = "";
     const win = doc.defaultView!;
+
+    // ---- Reasoning/Thinking block ----
+    let reasoningBlock: HTMLElement | null = null;
+    let reasoningContent: HTMLElement | null = null;
+    let reasoningLabel: HTMLElement | null = null;
+    let reasoningTimer: HTMLElement | null = null;
+    let reasoningSpinner: HTMLElement | null = null;
+    let fullReasoning = "";
+    let thinkingStartTime = 0;
+    let thinkingTimerInterval: number | null = null;
+    let reasoningRenderTimer: number | null = null;
+
+    function createReasoningBlock() {
+      reasoningBlock = h(doc, "div", { className: "chatpdf-reasoning-block" });
+
+      const toggle = h(doc, "button", { className: "chatpdf-reasoning-toggle" });
+      const chevron = h(doc, "span", { className: "chatpdf-reasoning-chevron" }, "\u25B6");
+      reasoningLabel = h(doc, "span", { className: "chatpdf-reasoning-label" }, "Thinking");
+      reasoningSpinner = h(doc, "span", { className: "chatpdf-reasoning-spinner" });
+      reasoningTimer = h(doc, "span", { className: "chatpdf-reasoning-timer" }, "0s");
+
+      toggle.appendChild(chevron);
+      toggle.appendChild(reasoningSpinner);
+      toggle.appendChild(reasoningLabel);
+      toggle.appendChild(reasoningTimer);
+
+      toggle.addEventListener("click", () => {
+        reasoningBlock!.classList.toggle("chatpdf-reasoning-expanded");
+      });
+
+      reasoningContent = h(doc, "div", { className: "chatpdf-reasoning-content" });
+
+      reasoningBlock.appendChild(toggle);
+      reasoningBlock.appendChild(reasoningContent);
+
+      // Insert at the top of the bubble (before any content)
+      bubble.insertBefore(reasoningBlock, bubble.firstChild);
+
+      // Start timer
+      thinkingStartTime = Date.now();
+      thinkingTimerInterval = win.setInterval(() => {
+        const elapsed = Math.floor((Date.now() - thinkingStartTime) / 1000);
+        if (reasoningTimer) reasoningTimer.textContent = `${elapsed}s`;
+      }, 1000) as unknown as number;
+    }
+
+    // Thinking callback
+    const onThinking: ThinkingCallback = (chunk: string, done: boolean) => {
+      if (!done) {
+        // Remove initial dots on first thinking token
+        if (thinkingDots.parentNode) thinkingDots.remove();
+
+        if (!reasoningBlock) createReasoningBlock();
+
+        fullReasoning += chunk;
+        // Throttle rendering at 80ms
+        if (!reasoningRenderTimer) {
+          reasoningRenderTimer = win.setTimeout(() => {
+            reasoningRenderTimer = null;
+            if (reasoningContent) reasoningContent.textContent = fullReasoning;
+            if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+          }, 80) as unknown as number;
+        }
+      } else {
+        // Thinking done
+        if (thinkingTimerInterval) {
+          win.clearInterval(thinkingTimerInterval);
+          thinkingTimerInterval = null;
+        }
+        if (reasoningRenderTimer) {
+          win.clearTimeout(reasoningRenderTimer);
+          reasoningRenderTimer = null;
+        }
+        if (reasoningContent) reasoningContent.textContent = fullReasoning;
+        if (reasoningSpinner) reasoningSpinner.remove();
+
+        // Update label with final time
+        const elapsed = thinkingStartTime ? Math.floor((Date.now() - thinkingStartTime) / 1000) : 0;
+        if (reasoningLabel && elapsed > 0) {
+          reasoningLabel.textContent = "Thought";
+        }
+        if (reasoningTimer && elapsed > 0) {
+          reasoningTimer.textContent = `${elapsed}s`;
+        }
+
+        // Collapse the block when thinking finishes
+        if (reasoningBlock) {
+          reasoningBlock.classList.remove("chatpdf-reasoning-expanded");
+        }
+      }
+    };
+
+    // ---- Content streaming ----
+    let fullText = "";
     let renderTimer: number | null = null;
 
     /** Safely set bubble content; fall back to plain text on XHTML parse errors. */
     function setBubbleHtml(text: string) {
       try {
-        bubble.innerHTML = renderMarkdown(text);
+        // Build HTML: keep reasoning block, replace rest
+        const rendered = renderMarkdown(text);
+        // Remove dots if still present
+        if (thinkingDots.parentNode) thinkingDots.remove();
+        // Replace only content after reasoning block
+        const existingBlock = bubble.querySelector(".chatpdf-reasoning-block");
+        if (existingBlock) {
+          // Remove all content after the reasoning block
+          while (existingBlock.nextSibling) existingBlock.nextSibling.remove();
+          // Add new content wrapper
+          const contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+          contentWrap.innerHTML = rendered;
+          bubble.appendChild(contentWrap);
+        } else {
+          bubble.innerHTML = rendered;
+        }
       } catch {
         bubble.textContent = text;
       }
@@ -797,6 +905,9 @@ async function handleSend(root: HTMLElement) {
 
     const fullResponse = await llmChat(messages, (chunk: string, done: boolean) => {
       if (!done) {
+        // Remove dots on first content token (for non-thinking models)
+        if (thinkingDots.parentNode) thinkingDots.remove();
+
         fullText += chunk;
         if (!renderTimer) {
           renderTimer = win.setTimeout(() => {
@@ -813,7 +924,10 @@ async function handleSend(root: HTMLElement) {
         setBubbleHtml(fullText);
         if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
       }
-    });
+    }, onThinking);
+
+    // Clean up any lingering timers
+    if (thinkingTimerInterval) win.clearInterval(thinkingTimerInterval);
 
     // Add copy button after streaming completes
     row.appendChild(createCopyButton(doc, fullResponse));
