@@ -175,18 +175,36 @@ export class ChatSession {
     const allUserMessages = [...this.history, { role: "user" as const, content: userMessage }];
     let totalChars = systemPrompt.length;
 
+    Zotero.debug(`[ChatPDF] buildMessages: systemPrompt=${systemPrompt.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}, newMsg="${userMessage.slice(0, 80)}..."`);
+
+    if (systemPrompt.length >= maxChars) {
+      Zotero.debug(`[ChatPDF] WARNING: System prompt alone (${systemPrompt.length} chars) exceeds maxContextChars (${maxChars})! Only the user message will be added.`);
+    }
+
     // Work backwards to keep most recent messages
     const recentMessages: ChatMessage[] = [];
+    let droppedCount = 0;
     for (let i = allUserMessages.length - 1; i >= 0; i--) {
       const msg = allUserMessages[i];
       if (totalChars + msg.content.length > maxChars) {
+        droppedCount = i + 1;
         break;
       }
       totalChars += msg.content.length;
       recentMessages.unshift(msg);
     }
 
+    if (droppedCount > 0) {
+      Zotero.debug(`[ChatPDF] Context truncation: dropped ${droppedCount} oldest messages to fit within ${maxChars} chars`);
+    }
+
     messages.push(...recentMessages);
+
+    Zotero.debug(`[ChatPDF] Final message array: ${messages.length} messages, ${totalChars} total chars`);
+    for (const m of messages) {
+      Zotero.debug(`[ChatPDF]   [${m.role}] ${m.content.length} chars — "${m.content.slice(0, 60).replace(/\n/g, "\\n")}..."`);
+    }
+
     return messages;
   }
 

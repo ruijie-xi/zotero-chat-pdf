@@ -5,6 +5,8 @@ import * as ChatHistory from "./chat-history";
 import { convertPdf } from "./mineru-client";
 import { chat as llmChat, StreamCallback, ThinkingCallback } from "./llm-client";
 import { renderMarkdown } from "./markdown-renderer";
+import { logLLMRequest, logLLMResponse } from "./debug-log";
+import { getPref } from "../utils/prefs";
 
 let session = new ChatSession();
 let showingHistory = false;
@@ -761,6 +763,10 @@ async function handleSend(root: HTMLElement) {
     const messages = session.buildMessages(userText);
     session.addUserMessage(userText);
 
+    // Debug: log full request
+    const model = (getPref("llmModel") as string) || "deepseek-chat";
+    logLLMRequest(messages, model).catch(() => {});
+
     const assistantMsgIndex = session.getHistoryLength(); // index for the upcoming assistant message
     const doc = root.ownerDocument!;
     const row = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
@@ -937,6 +943,9 @@ async function handleSend(root: HTMLElement) {
 
     // Add copy button after streaming completes
     row.appendChild(createCopyButton(doc, fullResponse));
+
+    // Debug: log full response
+    logLLMResponse(fullResponse, fullReasoning || undefined).catch(() => {});
 
     session.addAssistantMessage(fullResponse);
     // Auto-save after assistant message
