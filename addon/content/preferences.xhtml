@@ -45,14 +45,15 @@
     <hbox align="center" style="margin-bottom: 4px;">
       <html:label data-l10n-id="pref-system-prompt" style="font-weight: 600;"></html:label>
       <html:span style="flex: 1;" />
-      <html:select id="zotero-prefpane-__addonRef__-promptLang" style="font-size: 12px; padding: 1px 4px;">
-        <html:option value="en">English</html:option>
-        <html:option value="cn">中文</html:option>
-      </html:select>
-      <html:button id="zotero-prefpane-__addonRef__-promptReset" style="font-size: 12px; margin-left: 4px; padding: 1px 8px;">Reset</html:button>
+      <html:button id="zotero-prefpane-__addonRef__-promptResetEN" style="font-size: 11px; padding: 1px 8px; cursor: pointer;">English Default</html:button>
+      <html:button id="zotero-prefpane-__addonRef__-promptResetCN" style="font-size: 11px; margin-left: 4px; padding: 1px 8px; cursor: pointer;">中文默认</html:button>
     </hbox>
-    <html:textarea id="zotero-prefpane-__addonRef__-systemPrompt" preference="systemPrompt"
+    <html:textarea id="zotero-prefpane-__addonRef__-systemPrompt"
       style="width: 100%; min-height: 120px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
       rows="6"></html:textarea>
+    <hbox pack="end" style="margin-top: 4px;">
+      <html:span id="zotero-prefpane-__addonRef__-promptStatus" style="font-size: 11px; color: #34c759; margin-right: 8px; align-self: center;"></html:span>
+      <html:button id="zotero-prefpane-__addonRef__-promptSave" style="font-size: 12px; padding: 2px 16px; cursor: pointer; font-weight: 500;">Save</html:button>
+    </hbox>
   </vbox>
 </groupbox>

@@ -8,7 +8,7 @@ const PREF_PREFIX = config.prefsPrefix;
 const ADDON_REF = config.addonRef;
 
 function getPrefFull(key: string): string {
-  return Zotero.Prefs.get(`${PREF_PREFIX}.${key}`, true) as string ?? "";
+  return (Zotero.Prefs.get(`${PREF_PREFIX}.${key}`, true) as string) ?? "";
 }
 
 function setPrefFull(key: string, value: string): void {
@@ -19,42 +19,57 @@ function initPromptUI() {
   const textarea = document.getElementById(
     `zotero-prefpane-${ADDON_REF}-systemPrompt`,
   ) as HTMLTextAreaElement | null;
-  const langSelect = document.getElementById(
-    `zotero-prefpane-${ADDON_REF}-promptLang`,
-  ) as HTMLSelectElement | null;
-  const resetBtn = document.getElementById(
-    `zotero-prefpane-${ADDON_REF}-promptReset`,
+  const resetENBtn = document.getElementById(
+    `zotero-prefpane-${ADDON_REF}-promptResetEN`,
   ) as HTMLButtonElement | null;
+  const resetCNBtn = document.getElementById(
+    `zotero-prefpane-${ADDON_REF}-promptResetCN`,
+  ) as HTMLButtonElement | null;
+  const saveBtn = document.getElementById(
+    `zotero-prefpane-${ADDON_REF}-promptSave`,
+  ) as HTMLButtonElement | null;
+  const statusEl = document.getElementById(
+    `zotero-prefpane-${ADDON_REF}-promptStatus`,
+  ) as HTMLElement | null;
 
-  if (!textarea || !langSelect || !resetBtn) return;
+  if (!textarea || !resetENBtn || !resetCNBtn || !saveBtn) return;
 
-  // Initialize: if pref is empty, show EN default as placeholder
+  // Initialize: always show the current prompt (default EN if empty)
   const current = getPrefFull("systemPrompt");
+  textarea.value = current || DEFAULT_SYSTEM_PROMPT_EN;
+
+  // If pref was empty, persist the default so it's explicit
   if (!current) {
-    // Detect which default matches better for initial lang selection
-    langSelect.value = "en";
-  } else {
-    // Detect language from content
-    langSelect.value =
-      current.includes("你是") || current.includes("文档") || current.includes("用户")
-        ? "cn"
-        : "en";
+    setPrefFull("systemPrompt", DEFAULT_SYSTEM_PROMPT_EN);
   }
 
-  // Language selector: load default for selected language
-  langSelect.addEventListener("change", () => {
-    const lang = langSelect.value;
-    const prompt = lang === "cn" ? DEFAULT_SYSTEM_PROMPT_CN : DEFAULT_SYSTEM_PROMPT_EN;
-    textarea.value = prompt;
-    setPrefFull("systemPrompt", prompt);
+  function showStatus(msg: string) {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    setTimeout(() => {
+      statusEl.textContent = "";
+    }, 2000);
+  }
+
+  // Reset to English default
+  resetENBtn.addEventListener("click", () => {
+    textarea.value = DEFAULT_SYSTEM_PROMPT_EN;
+    setPrefFull("systemPrompt", DEFAULT_SYSTEM_PROMPT_EN);
+    showStatus("Reset to English default");
   });
 
-  // Reset button: reset to default for current language
-  resetBtn.addEventListener("click", () => {
-    const lang = langSelect.value;
-    const prompt = lang === "cn" ? DEFAULT_SYSTEM_PROMPT_CN : DEFAULT_SYSTEM_PROMPT_EN;
-    textarea.value = prompt;
-    setPrefFull("systemPrompt", prompt);
+  // Reset to Chinese default
+  resetCNBtn.addEventListener("click", () => {
+    textarea.value = DEFAULT_SYSTEM_PROMPT_CN;
+    setPrefFull("systemPrompt", DEFAULT_SYSTEM_PROMPT_CN);
+    showStatus("已重置为中文默认");
+  });
+
+  // Save button: persist the current textarea content
+  saveBtn.addEventListener("click", () => {
+    const value = textarea.value.trim();
+    setPrefFull("systemPrompt", value);
+    showStatus("Saved!");
   });
 }
 
