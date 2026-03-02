@@ -12,7 +12,7 @@ declare namespace _ZoteroTypes {
       "llmApiKey": string;
       "llmModel": string;
       "cacheDir": string;
-      "maxContextChars": number;
+      "maxDocumentChars": number;
       "systemPrompt": string;
     };
   }

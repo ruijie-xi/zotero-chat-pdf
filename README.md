@@ -54,7 +54,7 @@ After installing, go to **Edit > Settings > ChatPDF** (or **Zotero > Settings > 
 | **LLM API Base URL** | `https://api.deepseek.com/v1` | Base URL of the LLM's chat completions endpoint. |
 | **Model Name** | `deepseek-chat` | Model identifier to use for chat. |
 | **Cache Directory** | `~/.chatpdf-cache` | Where converted Markdown files and chat history are stored. |
-| **Max Context Characters** | `100000` | Maximum total characters sent to the LLM per request. This includes all document text plus conversation history. Older messages are dropped when the limit is reached. |
+| **Max Document Characters** | `300000` | Maximum character budget for document content in the LLM system prompt. When total document text exceeds this limit, each document is proportionally truncated. Source chips show per-document size and a total usage summary. Older conversation messages are also dropped if context is full. |
 
 ### Provider examples
 

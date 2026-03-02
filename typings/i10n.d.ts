@@ -13,7 +13,7 @@ export type FluentMessageId =
   | 'pref-llm-api-base'
   | 'pref-llm-api-key'
   | 'pref-llm-model'
-  | 'pref-max-context'
+  | 'pref-max-document-chars'
   | 'pref-mineru-token'
   | 'pref-system-prompt'
   | 'pref-title'

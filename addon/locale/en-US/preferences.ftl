@@ -4,6 +4,6 @@ pref-llm-api-base = LLM API Base URL
 pref-llm-api-key = LLM API Key
 pref-llm-model = Model Name
 pref-cache-dir = Cache Directory
-pref-max-context = Max Context Characters
+pref-max-document-chars = Max Document Characters
 pref-system-prompt = System Prompt
 pref-help = { $name } v{ $version }

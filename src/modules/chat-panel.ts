@@ -481,6 +481,12 @@ async function loadHistoryList(root: HTMLElement) {
 
 // ---- Source Chips ----
 
+function formatChars(n: number): string {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(0) + "K";
+  return String(n);
+}
+
 function refreshSourceChips(root: HTMLElement) {
   const container = root.querySelector("#chatpdf-source-chips");
   if (!container) return;
@@ -504,11 +510,21 @@ function refreshSourceChips(root: HTMLElement) {
     const titleEl = h(doc, "span", { className: "chatpdf-chip-title" }, source.title);
     chip.appendChild(titleEl);
 
-    // Status badge
-    if (source.status !== "pending") {
+    // Size badge for ready sources (always shown)
+    if (source.status === "ready" && source.markdown) {
+      const charLen = source.markdown.length;
+      const sizeText = formatChars(charLen);
+      const isTruncated = source.contextRatio !== undefined && source.contextRatio < 1.0;
+      const badgeClass = isTruncated ? "chatpdf-chip-badge-truncated" : "chatpdf-chip-badge-ready";
+      const label = isTruncated
+        ? `${sizeText} (${Math.round(source.contextRatio! * 100)}%)`
+        : sizeText;
+      const badge = h(doc, "span", { className: `chatpdf-chip-badge ${badgeClass}` }, label);
+      chip.appendChild(badge);
+    } else if (source.status !== "pending" && source.status !== "ready") {
+      // Converting / error badges
       const statusLabels: Record<string, string> = {
         converting: "Converting...",
-        ready: "Ready",
         error: "Error",
       };
       const badge = h(doc, "span", { className: `chatpdf-chip-badge chatpdf-chip-badge-${source.status}` }, statusLabels[source.status] || "");
@@ -538,6 +554,18 @@ function refreshSourceChips(root: HTMLElement) {
 
     chip.appendChild(actions);
     container.appendChild(chip);
+  }
+
+  // Total usage summary bar
+  const readySources = sources.filter((s) => s.status === "ready" && s.markdown);
+  if (readySources.length > 0) {
+    const totalChars = readySources.reduce((sum, s) => sum + (s.markdown?.length ?? 0), 0);
+    const maxDocChars = (getPref("maxDocumentChars") as number) || 300000;
+    const exceeds = totalChars > maxDocChars;
+    const summaryClass = exceeds ? "chatpdf-source-summary chatpdf-source-summary-over" : "chatpdf-source-summary";
+    const summary = h(doc, "div", { className: summaryClass },
+      `${formatChars(totalChars)} / ${formatChars(maxDocChars)} chars`);
+    container.appendChild(summary);
   }
 }
 
@@ -948,6 +976,8 @@ async function handleSend(root: HTMLElement) {
     logLLMResponse(fullResponse, fullReasoning || undefined).catch(() => {});
 
     session.addAssistantMessage(fullResponse);
+    // Refresh source chips to show context usage ratios from truncation
+    refreshSourceChips(root);
     // Auto-save after assistant message
     await autoSaveSession();
   } catch (err: any) {

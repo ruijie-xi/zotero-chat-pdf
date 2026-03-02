@@ -656,6 +656,24 @@ item-pane-custom-section linkset {
   background: rgba(255, 59, 48, 0.1);
 }
 
+.chatpdf-chip-badge-truncated {
+  color: #8a6200;
+  background: rgba(245, 166, 35, 0.15);
+}
+
+/* Total usage summary */
+.chatpdf-source-summary {
+  font-size: 10px;
+  color: var(--fill-tertiary, #999);
+  text-align: right;
+  padding: 2px 2px 0;
+  margin-top: 1px;
+}
+
+.chatpdf-source-summary-over {
+  color: #c62828;
+}
+
 /* Text-based action buttons */
 .chatpdf-chip-actions {
   display: flex;

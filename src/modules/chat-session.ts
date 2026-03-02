@@ -34,6 +34,7 @@ export interface SourceItem {
   markdown?: string; // Loaded markdown content
   status: "pending" | "converting" | "ready" | "error";
   errorMessage?: string;
+  contextRatio?: number; // 0-1, how much of the document is included after truncation
 }
 
 export class ChatSession {
@@ -163,7 +164,7 @@ export class ChatSession {
   }
 
   buildMessages(userMessage: string): ChatMessage[] {
-    const maxChars = getPref("maxContextChars") || 100000;
+    const maxChars = getPref("maxDocumentChars") || 300000;
     const systemPrompt = this.buildSystemPrompt();
 
     // Start with system prompt + current user message (always included)
@@ -177,7 +178,7 @@ export class ChatSession {
     Zotero.debug(`[ChatPDF] buildMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
 
     if (systemPrompt.length + userMessage.length > maxChars) {
-      Zotero.debug(`[ChatPDF] WARNING: System prompt (${systemPrompt.length}) + user message (${userMessage.length}) = ${systemPrompt.length + userMessage.length} chars exceeds maxContextChars (${maxChars}). No history will be included.`);
+      Zotero.debug(`[ChatPDF] WARNING: System prompt (${systemPrompt.length}) + user message (${userMessage.length}) = ${systemPrompt.length + userMessage.length} chars exceeds maxDocumentChars (${maxChars}). No history will be included.`);
     }
 
     // Add history messages (oldest to newest), only older ones can be dropped
@@ -231,13 +232,85 @@ export class ChatSession {
       return DEFAULT_NO_DOCS_PROMPT_EN;
     }
 
+    const maxDocChars = getPref("maxDocumentChars") || 300000;
     const customPrompt = (getPref("systemPrompt") as string) || "";
-    let prompt = (customPrompt || DEFAULT_SYSTEM_PROMPT_EN) + "\n\n";
+    const instructionText = (customPrompt || DEFAULT_SYSTEM_PROMPT_EN) + "\n\n";
 
+    // Calculate budget for document content
+    const docBudget = maxDocChars - instructionText.length;
+    if (docBudget <= 0) {
+      Zotero.debug(`[ChatPDF] WARNING: Instruction text (${instructionText.length}) exceeds maxDocumentChars (${maxDocChars}). No documents included.`);
+      for (const source of readySources) {
+        source.contextRatio = 0;
+      }
+      return instructionText;
+    }
+
+    // Calculate total raw size of all documents (including delimiters)
+    const docSizes: { source: SourceItem; rawLen: number; delimLen: number }[] = [];
+    let totalRawLen = 0;
     for (const source of readySources) {
-      prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;
-      prompt += source.markdown!;
-      prompt += `\n--- END DOCUMENT: ${source.title} ---\n\n`;
+      const delimLen = `--- BEGIN DOCUMENT: ${source.title} ---\n`.length
+        + `\n--- END DOCUMENT: ${source.title} ---\n\n`.length;
+      const rawLen = source.markdown!.length;
+      docSizes.push({ source, rawLen, delimLen });
+      totalRawLen += rawLen + delimLen;
+    }
+
+    let prompt = instructionText;
+
+    if (totalRawLen <= docBudget) {
+      // Everything fits — include all documents in full
+      for (const { source, rawLen } of docSizes) {
+        source.contextRatio = 1.0;
+        prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;
+        prompt += source.markdown!;
+        prompt += `\n--- END DOCUMENT: ${source.title} ---\n\n`;
+      }
+    } else {
+      // Need to truncate — distribute budget proportionally by raw markdown length
+      // First subtract delimiter overhead from budget
+      let delimTotal = 0;
+      for (const d of docSizes) delimTotal += d.delimLen;
+      const contentBudget = docBudget - delimTotal;
+
+      if (contentBudget <= 0) {
+        Zotero.debug(`[ChatPDF] WARNING: Document delimiter overhead (${delimTotal}) exceeds docBudget (${docBudget}). No document content included.`);
+        for (const { source } of docSizes) {
+          source.contextRatio = 0;
+        }
+        return instructionText;
+      }
+
+      // Proportional allocation based on raw markdown length
+      const totalContentLen = docSizes.reduce((sum, d) => sum + d.rawLen, 0);
+
+      for (const { source, rawLen } of docSizes) {
+        const allocation = Math.floor(contentBudget * (rawLen / totalContentLen));
+        let content: string;
+        if (rawLen <= allocation) {
+          content = source.markdown!;
+          source.contextRatio = 1.0;
+        } else {
+          const truncMarker = `\n\n[... content truncated (${Math.round((allocation / rawLen) * 100)}% of original included) ...]`;
+          const availableForContent = allocation - truncMarker.length;
+          if (availableForContent <= 0) {
+            content = truncMarker;
+            source.contextRatio = 0;
+          } else {
+            content = source.markdown!.slice(0, availableForContent) + truncMarker;
+            source.contextRatio = availableForContent / rawLen;
+          }
+        }
+        prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;
+        prompt += content;
+        prompt += `\n--- END DOCUMENT: ${source.title} ---\n\n`;
+      }
+
+      Zotero.debug(`[ChatPDF] Document truncation applied: budget=${docBudget}, totalRaw=${totalRawLen}`);
+      for (const { source } of docSizes) {
+        Zotero.debug(`[ChatPDF]   "${source.title}" contextRatio=${source.contextRatio?.toFixed(2)}`);
+      }
     }
 
     Zotero.debug(`[ChatPDF] System prompt length: ${prompt.length} chars, includes ${readySources.length} documents`);

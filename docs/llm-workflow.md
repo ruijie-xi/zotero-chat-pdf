@@ -56,7 +56,8 @@ handleSend(root)
   ├── 6. llmChat(messages, streamCallback)   ← calls the LLM API
   ├── 7. Stream chunks into the bubble (80ms throttle)
   ├── 8. session.addAssistantMessage(fullResponse)
-  └── 9. autoSaveSession()                   ← persist to disk
+  ├── 9. refreshSourceChips()                ← update context usage indicators
+  └── 10. autoSaveSession()                  ← persist to disk
 ```
 
 **Important ordering:** `buildMessages()` is called BEFORE `addUserMessage()`. This is because `buildMessages()` includes the current user message in its output. If we added to history first, the message would appear twice (once from history, once as the new message).
@@ -88,19 +89,32 @@ IMPORTANT formatting rules:
   $$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$
 
 --- BEGIN DOCUMENT: {Paper Title 1} ---
-{Full Markdown content of paper 1}
+{Markdown content of paper 1 — possibly truncated}
 --- END DOCUMENT: {Paper Title 1} ---
 
 --- BEGIN DOCUMENT: {Paper Title 2} ---
-{Full Markdown content of paper 2}
+{Markdown content of paper 2 — possibly truncated}
 --- END DOCUMENT: {Paper Title 2} ---
 ```
+
+**Document truncation (`maxDocumentChars` budget):**
+
+The `buildSystemPrompt()` method enforces a character budget for document content:
+
+1. `docBudget = maxDocumentChars - instructionText.length`
+2. Delimiter overhead (BEGIN/END markers) is subtracted from the budget
+3. The remaining content budget is distributed **proportionally** across sources by their raw markdown length
+4. Documents that fit within their allocation are included in full (`contextRatio = 1.0`)
+5. Documents that exceed their allocation are truncated with a marker:
+   `[... content truncated (X% of original included) ...]`
+6. Each source's `contextRatio` field (0–1) is set, and the UI displays this
 
 **Key points about the system prompt:**
 - All document content is embedded directly in the system prompt as plain text
 - Documents are wrapped with `--- BEGIN DOCUMENT: {title} ---` / `--- END DOCUMENT: {title} ---` delimiters
 - Only sources with `status === "ready"` AND a non-empty `.markdown` field are included
 - The prompt instructs the LLM to respond in the user's language and use Markdown + LaTeX formatting
+- Large documents are truncated to fit within `maxDocumentChars` rather than silently omitted
 
 #### 3b. Conversation History (context window management)
 
@@ -123,23 +137,23 @@ for (let i = allUserMessages.length - 1; i >= 0; i--) {
 ```
 
 **How the truncation works:**
-1. Start with `totalChars = systemPrompt.length`
+1. Start with `totalChars = systemPrompt.length` (already capped by `maxDocumentChars`)
 2. Iterate through all messages **from newest to oldest**
-3. Keep adding messages as long as `totalChars` stays under `maxContextChars` (default: 100,000)
+3. Keep adding messages as long as `totalChars` stays under `maxDocumentChars` (default: 300,000)
 4. Once a message would exceed the limit, **stop** — all older messages are dropped
 5. The kept messages are re-ordered chronologically
 
 **This means:**
-- The system prompt (with all documents) is always included and counts toward the limit
+- The system prompt (with truncated documents) is always included and counts toward the limit
 - The most recent messages are always preserved
 - Older conversation turns are silently dropped when the context gets too long
-- If your PDFs are very large, fewer conversation turns fit in context
+- Document truncation ensures there is always room for conversation history
 
 #### 3c. Final Message Array Structure
 
 ```
 [
-  { role: "system",    content: "<system prompt with all documents>" },
+  { role: "system",    content: "<system prompt with documents (possibly truncated)>" },
   { role: "user",      content: "<older user message (if fits)>" },
   { role: "assistant", content: "<older assistant reply (if fits)>" },
   ...
@@ -151,12 +165,12 @@ for (let i = allUserMessages.length - 1; i >= 0; i--) {
 
 #### Configuration (from plugin preferences)
 
-| Preference       | Default                         | Description                  |
-|------------------|---------------------------------|------------------------------|
-| `llmApiBase`     | `https://api.deepseek.com/v1`  | Base URL of the API          |
-| `llmApiKey`      | (empty — required)              | Bearer token                 |
-| `llmModel`       | `deepseek-chat`                 | Model identifier             |
-| `maxContextChars`| `100000`                        | Max chars for context window |
+| Preference        | Default                         | Description                          |
+|-------------------|---------------------------------|--------------------------------------|
+| `llmApiBase`      | `https://api.deepseek.com/v1`  | Base URL of the API                  |
+| `llmApiKey`       | (empty — required)              | Bearer token                         |
+| `llmModel`        | `deepseek-chat`                 | Model identifier                     |
+| `maxDocumentChars`| `300000`                        | Max chars for documents + context    |
 
 #### HTTP Request
 
@@ -236,8 +250,9 @@ If rendering throws (e.g. malformed XHTML), it falls back to `bubble.textContent
 ### 6. After the Response
 
 1. `session.addAssistantMessage(fullResponse)` — stores in history
-2. `autoSaveSession()` — persists the session to `~/.chatpdf-cache/history/{id}.json`
-3. UI is re-enabled (textarea + send button)
+2. `refreshSourceChips(root)` — updates context usage indicators on source chips
+3. `autoSaveSession()` — persists the session to `~/.chatpdf-cache/history/{id}.json`
+4. UI is re-enabled (textarea + send button)
 
 ---
 
@@ -275,14 +290,15 @@ If rendering throws (e.g. malformed XHTML), it falls back to `bubble.textContent
 
 All preferences are stored under the plugin's pref prefix (accessed via `getPref(key)`):
 
-| Key              | Type   | Default                        | Used by          |
-|------------------|--------|--------------------------------|------------------|
-| `mineruToken`    | string | `""`                           | mineru-client.ts |
-| `llmApiBase`     | string | `"https://api.deepseek.com/v1"`| llm-client.ts    |
-| `llmApiKey`      | string | `""`                           | llm-client.ts    |
-| `llmModel`       | string | `"deepseek-chat"`              | llm-client.ts    |
-| `cacheDir`       | string | `""` (→ `~/.chatpdf-cache/`)   | md-cache.ts      |
-| `maxContextChars`| number | `100000`                       | chat-session.ts  |
+| Key               | Type   | Default                        | Used by          |
+|-------------------|--------|--------------------------------|------------------|
+| `mineruToken`     | string | `""`                           | mineru-client.ts |
+| `llmApiBase`      | string | `"https://api.deepseek.com/v1"`| llm-client.ts    |
+| `llmApiKey`       | string | `""`                           | llm-client.ts    |
+| `llmModel`        | string | `"deepseek-chat"`              | llm-client.ts    |
+| `cacheDir`        | string | `""` (→ `~/.chatpdf-cache/`)   | md-cache.ts      |
+| `maxDocumentChars`| number | `300000`                       | chat-session.ts  |
+| `systemPrompt`    | string | `""`                           | chat-session.ts  |
 
 ---
 
@@ -300,7 +316,7 @@ Just change `llmApiBase`, `llmApiKey`, and `llmModel` in preferences.
 
 ## Potential Improvement Areas
 
-1. **No token counting** — context truncation uses raw character count, not tokens. A 100K char limit is ~25K-50K tokens depending on language. Could use a tokenizer for accuracy.
+1. **No token counting** — context truncation uses raw character count, not tokens. A 300K char limit is ~75-150K tokens depending on language. Could use a tokenizer for accuracy.
 2. **No parameters exposed** — temperature, max_tokens, top_p, etc. are not configurable. The model's defaults are used.
 3. **Entire documents in system prompt** — every API call re-sends all document text. For very large documents, this is expensive. RAG (retrieval-augmented generation) with chunking + embeddings would reduce cost.
 4. **No error retry** — if the API call fails, the error is shown once and the user must retry manually.
