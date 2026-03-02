@@ -675,16 +675,22 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
     // Truncate session history from this message index onwards
     if (msgIndex >= 0) {
       session.truncateHistoryAt(msgIndex);
+      // Save truncated state immediately so stale messages don't persist on disk
+      autoSaveSession();
     }
 
-    // Remove this row and all subsequent message rows from DOM
+    // Clear all messages from DOM and re-render the remaining history
     const messagesEl = root.querySelector("#chatpdf-messages");
     if (messagesEl) {
-      const allRows = Array.from(messagesEl.querySelectorAll(".chatpdf-msg-row"));
-      const rowIdx = allRows.indexOf(row);
-      if (rowIdx >= 0) {
-        for (let i = allRows.length - 1; i >= rowIdx; i--) {
-          allRows[i].remove();
+      messagesEl.innerHTML = "";
+      // Re-render the truncated history (messages before the edited one)
+      const remaining = session.getHistory();
+      if (remaining.length > 0) {
+        let idx = 0;
+        for (const msg of remaining) {
+          if (msg.role === "system") continue;
+          appendMessage(root, msg.role as "user" | "assistant", msg.content, idx);
+          idx++;
         }
       }
     }
