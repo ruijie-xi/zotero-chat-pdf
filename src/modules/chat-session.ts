@@ -1,5 +1,6 @@
 import { ChatMessage } from "./llm-client";
 import { getPref } from "../utils/prefs";
+import { SavedSession } from "./chat-history";
 
 export interface SourceItem {
   key: string; // Zotero attachment key
@@ -10,8 +11,18 @@ export interface SourceItem {
 }
 
 export class ChatSession {
+  id: string;
+  title: string = "";
+  createdAt: number;
+  updatedAt: number;
   private history: ChatMessage[] = [];
   private sources: Map<string, SourceItem> = new Map();
+
+  constructor() {
+    this.id = crypto.randomUUID?.() ?? Zotero.Utilities.randomString(32);
+    this.createdAt = Date.now();
+    this.updatedAt = Date.now();
+  }
 
   addSource(key: string, title: string): SourceItem {
     if (this.sources.has(key)) {
@@ -19,11 +30,13 @@ export class ChatSession {
     }
     const item: SourceItem = { key, title, status: "pending" };
     this.sources.set(key, item);
+    this.updatedAt = Date.now();
     return item;
   }
 
   removeSource(key: string): void {
     this.sources.delete(key);
+    this.updatedAt = Date.now();
   }
 
   getSource(key: string): SourceItem | undefined {
@@ -58,16 +71,57 @@ export class ChatSession {
     return [...this.history];
   }
 
+  hasMessages(): boolean {
+    return this.history.length > 0;
+  }
+
   addUserMessage(content: string): void {
     this.history.push({ role: "user", content });
+    if (!this.title) {
+      this.title = content.slice(0, 50).replace(/\n/g, " ");
+    }
+    this.updatedAt = Date.now();
   }
 
   addAssistantMessage(content: string): void {
     this.history.push({ role: "assistant", content });
+    this.updatedAt = Date.now();
   }
 
   clearHistory(): void {
     this.history = [];
+  }
+
+  toSavedSession(): SavedSession {
+    const sources = this.getSources();
+    return {
+      id: this.id,
+      title: this.title,
+      sourceKeys: sources.map((s) => s.key),
+      sourceTitles: sources.map((s) => s.title),
+      messages: this.history.map((m) => ({ role: m.role, content: m.content })),
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+    };
+  }
+
+  static fromSavedSession(data: SavedSession): ChatSession {
+    const session = new ChatSession();
+    session.id = data.id;
+    session.title = data.title;
+    session.createdAt = data.createdAt;
+    session.updatedAt = data.updatedAt;
+    for (let i = 0; i < data.sourceKeys.length; i++) {
+      session.addSource(data.sourceKeys[i], data.sourceTitles[i] || "Untitled");
+    }
+    for (const msg of data.messages) {
+      if (msg.role === "user") {
+        session.history.push({ role: "user", content: msg.content });
+      } else if (msg.role === "assistant") {
+        session.history.push({ role: "assistant", content: msg.content });
+      }
+    }
+    return session;
   }
 
   buildMessages(userMessage: string): ChatMessage[] {

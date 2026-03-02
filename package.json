@@ -5,7 +5,7 @@
   "description": "Chat with your PDFs using LLMs in Zotero",
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/zotero-chatpdf.git"
+    "url": "https://github.com/ruijie-xi/zotero-chat-pdf.git"
   },
   "config": {
     "addonName": "ChatPDF",

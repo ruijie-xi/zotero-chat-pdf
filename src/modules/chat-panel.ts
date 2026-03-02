@@ -1,11 +1,13 @@
 import { config } from "../../package.json";
 import { ChatSession, SourceItem } from "./chat-session";
 import * as MDCache from "./md-cache";
+import * as ChatHistory from "./chat-history";
 import { convertPdf } from "./mineru-client";
 import { chat as llmChat, StreamCallback } from "./llm-client";
 import { renderMarkdown } from "./markdown-renderer";
 
 let session = new ChatSession();
+let showingHistory = false;
 
 // ---- Helpers ----
 
@@ -84,6 +86,17 @@ async function convertSource(source: SourceItem, onProgress?: (msg: string) => v
   }
 }
 
+// ---- Auto-save ----
+
+async function autoSaveSession(): Promise<void> {
+  if (!session.hasMessages()) return;
+  try {
+    await ChatHistory.saveSession(session.toSavedSession());
+  } catch (err: any) {
+    Zotero.debug(`[ChatPDF] autoSaveSession error: ${err.message}`);
+  }
+}
+
 // ---- Full-height helper (pattern from zotero-pdf-translate) ----
 
 function updatePanelHeight(body: HTMLElement) {
@@ -104,11 +117,11 @@ export function registerChatSection() {
     pluginID: config.addonID,
     header: {
       l10nID: `${config.addonRef}-item-section-chatpdf-head-text`,
-      icon: `chrome://${config.addonRef}/content/icons/favicon@0.5x.png`,
+      icon: `chrome://${config.addonRef}/content/icons/chat.svg`,
     },
     sidenav: {
       l10nID: `${config.addonRef}-item-section-chatpdf-sidenav-tooltip`,
-      icon: `chrome://${config.addonRef}/content/icons/favicon@0.5x.png`,
+      icon: `chrome://${config.addonRef}/content/icons/chat.svg`,
     },
     bodyXHTML: `
       <linkset>
@@ -159,11 +172,32 @@ export function registerChatSection() {
   });
 }
 
+// ---- Date formatting ----
+
+function formatRelativeDate(timestamp: number): string {
+  const now = new Date();
+  const date = new Date(timestamp);
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) {
+    // Check if actually same calendar day
+    if (now.toDateString() === date.toDateString()) return "Today";
+    return "Yesterday";
+  }
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return `${diffDays} days ago`;
+
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${months[date.getMonth()]} ${date.getDate()}`;
+}
+
 // ---- UI Building ----
 
 function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   const doc = root.ownerDocument!;
   root.innerHTML = "";
+  showingHistory = false;
 
   // 1. Messages area (top, scrollable)
   const messagesArea = h(doc, "div", { className: "chatpdf-messages", id: "chatpdf-messages" });
@@ -178,6 +212,17 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   welcome.appendChild(welcomeHint);
   messagesArea.appendChild(welcome);
   root.appendChild(messagesArea);
+
+  // History view (hidden by default)
+  const historyHeader = h(doc, "div", { className: "chatpdf-header-bar", id: "chatpdf-history-header", style: "display:none" });
+  const historyTitle = h(doc, "span", { className: "chatpdf-header-title" }, "Chat History");
+  const newChatBtnHeader = h(doc, "button", { className: "chatpdf-header-btn" }, "+ New Chat");
+  historyHeader.appendChild(historyTitle);
+  historyHeader.appendChild(newChatBtnHeader);
+  root.appendChild(historyHeader);
+
+  const historyList = h(doc, "div", { className: "chatpdf-history-list", id: "chatpdf-history-list", style: "display:none" });
+  root.appendChild(historyList);
 
   // 2. Source chips area (above input)
   const sourceArea = h(doc, "div", { className: "chatpdf-sources", id: "chatpdf-sources" });
@@ -206,12 +251,16 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   root.appendChild(sourceArea);
 
   // 3. Input area (bottom)
-  const inputArea = h(doc, "div", { className: "chatpdf-input-area" });
+  const inputArea = h(doc, "div", { className: "chatpdf-input-area", id: "chatpdf-input-area" });
 
   // Toolbar row (above input)
   const toolbar = h(doc, "div", { className: "chatpdf-toolbar" });
+  const historyBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{1F4CB} History");
+  const newChatBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{2795} New Chat");
   const clearLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Clear chat");
   const convertAllLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Convert all");
+  toolbar.appendChild(historyBtn);
+  toolbar.appendChild(newChatBtn);
   toolbar.appendChild(clearLink);
   toolbar.appendChild(convertAllLink);
   inputArea.appendChild(toolbar);
@@ -265,12 +314,146 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
     }
   });
 
+  // History button: toggle history view
+  historyBtn.addEventListener("click", () => {
+    if (showingHistory) {
+      hideHistoryView(root);
+    } else {
+      showHistoryView(root);
+    }
+  });
+
+  // New Chat buttons (toolbar + header)
+  const handleNewChat = async () => {
+    await autoSaveSession();
+    session = new ChatSession();
+    if (item) {
+      await addItemToSession(item);
+    }
+    hideHistoryView(root);
+    // Rebuild chat area
+    const msgs = root.querySelector("#chatpdf-messages");
+    if (msgs) {
+      msgs.innerHTML = "";
+      msgs.appendChild(welcome);
+    }
+    refreshSourceChips(root);
+  };
+  newChatBtn.addEventListener("click", handleNewChat);
+  newChatBtnHeader.addEventListener("click", handleNewChat);
+
   // Auto-add current item
   if (item) {
     addItemToSession(item).then(() => refreshSourceChips(root));
   }
 
-  renderHistory(root);
+  renderChatHistory(root);
+}
+
+// ---- History View ----
+
+function showHistoryView(root: HTMLElement) {
+  showingHistory = true;
+  const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
+  const sourcesEl = root.querySelector("#chatpdf-sources") as HTMLElement;
+  const inputEl = root.querySelector("#chatpdf-input-area") as HTMLElement;
+  const headerEl = root.querySelector("#chatpdf-history-header") as HTMLElement;
+  const listEl = root.querySelector("#chatpdf-history-list") as HTMLElement;
+
+  if (messagesEl) messagesEl.style.display = "none";
+  if (sourcesEl) sourcesEl.style.display = "none";
+  if (inputEl) inputEl.style.display = "none";
+  if (headerEl) headerEl.style.display = "";
+  if (listEl) listEl.style.display = "";
+
+  // Load history items
+  loadHistoryList(root);
+}
+
+function hideHistoryView(root: HTMLElement) {
+  showingHistory = false;
+  const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
+  const sourcesEl = root.querySelector("#chatpdf-sources") as HTMLElement;
+  const inputEl = root.querySelector("#chatpdf-input-area") as HTMLElement;
+  const headerEl = root.querySelector("#chatpdf-history-header") as HTMLElement;
+  const listEl = root.querySelector("#chatpdf-history-list") as HTMLElement;
+
+  if (messagesEl) messagesEl.style.display = "";
+  if (sourcesEl) sourcesEl.style.display = "";
+  if (inputEl) inputEl.style.display = "";
+  if (headerEl) headerEl.style.display = "none";
+  if (listEl) listEl.style.display = "none";
+}
+
+async function loadHistoryList(root: HTMLElement) {
+  const listEl = root.querySelector("#chatpdf-history-list");
+  if (!listEl) return;
+  const doc = root.ownerDocument!;
+  listEl.innerHTML = "";
+
+  try {
+    const sessions = await ChatHistory.listSessions();
+    if (sessions.length === 0) {
+      const empty = h(doc, "div", { className: "chatpdf-history-empty" }, "No chat history yet");
+      listEl.appendChild(empty);
+      return;
+    }
+
+    for (const meta of sessions) {
+      const item = h(doc, "div", { className: "chatpdf-history-item" });
+
+      const info = h(doc, "div", { className: "chatpdf-history-item-info" });
+      const titleEl = h(doc, "div", { className: "chatpdf-history-item-title" }, meta.title || "Untitled chat");
+      const details = h(doc, "div", { className: "chatpdf-history-item-details" });
+      const dateEl = h(doc, "span", {}, formatRelativeDate(meta.updatedAt));
+      const sourceCount = h(doc, "span", {}, `${meta.sourceTitles.length} source${meta.sourceTitles.length !== 1 ? "s" : ""}`);
+      details.appendChild(dateEl);
+      details.appendChild(doc.createTextNode(" \u00B7 "));
+      details.appendChild(sourceCount);
+      info.appendChild(titleEl);
+      info.appendChild(details);
+
+      const deleteBtn = h(doc, "button", { className: "chatpdf-history-delete-btn", title: "Delete" }, "\u00D7");
+
+      item.appendChild(info);
+      item.appendChild(deleteBtn);
+
+      // Click to load session
+      info.addEventListener("click", async () => {
+        await autoSaveSession();
+        const saved = await ChatHistory.loadSession(meta.id);
+        if (saved) {
+          session = ChatSession.fromSavedSession(saved);
+          // Reload markdown for sources from cache
+          for (const source of session.getSources()) {
+            if (await MDCache.has(source.key)) {
+              const md = await MDCache.read(source.key);
+              session.setSourceReady(source.key, md);
+            }
+          }
+          hideHistoryView(root);
+          // Re-render messages
+          const msgs = root.querySelector("#chatpdf-messages");
+          if (msgs) msgs.innerHTML = "";
+          renderChatHistory(root);
+          refreshSourceChips(root);
+        }
+      });
+
+      // Delete button
+      deleteBtn.addEventListener("click", async (e: Event) => {
+        e.stopPropagation();
+        await ChatHistory.deleteSession(meta.id);
+        loadHistoryList(root);
+      });
+
+      listEl.appendChild(item);
+    }
+  } catch (err: any) {
+    Zotero.debug(`[ChatPDF] loadHistoryList error: ${err.message}`);
+    const errEl = h(doc, "div", { className: "chatpdf-history-empty" }, "Failed to load history");
+    listEl.appendChild(errEl);
+  }
 }
 
 // ---- Source Chips ----
@@ -337,7 +520,7 @@ function refreshSourceChips(root: HTMLElement) {
 
 // ---- Messages ----
 
-function renderHistory(root: HTMLElement) {
+function renderChatHistory(root: HTMLElement) {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return;
   const history = session.getHistory();
@@ -468,6 +651,8 @@ async function handleSend(root: HTMLElement) {
     });
 
     session.addAssistantMessage(fullResponse);
+    // Auto-save after assistant message
+    await autoSaveSession();
   } catch (err: any) {
     appendMessage(root, "assistant", `Error: ${err.message}`);
   } finally {

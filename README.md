@@ -1,143 +1,170 @@
-# ChatPDF - Zotero 7 Plugin
+# ChatPDF for Zotero
 
-Chat with your PDFs using LLMs directly inside Zotero. PDFs are converted to Markdown via the MinerU API and cached locally. The converted text serves as context for LLM conversations. DeepSeek is the default provider, but any OpenAI-compatible API works (OpenAI, Claude proxy, Ollama, etc.).
+Chat with your research papers using LLMs, directly inside Zotero 7.
+
+PDFs are converted to Markdown via the [MinerU](https://mineru.net) API and cached locally. The full text is sent as context to any OpenAI-compatible LLM (DeepSeek, OpenAI, Ollama, etc.) for Q&A, summarization, and analysis.
 
 ## Features
 
-- **PDF to Markdown conversion** via MinerU API with local caching
-- **Streaming chat** with any OpenAI-compatible LLM
-- **Multi-source sessions** — add multiple PDFs to a single conversation
-- **Drag-and-drop** — drag Zotero items onto the chat panel to add them as sources
-- **Right-click context menu** — "Add to ChatPDF" on any item with a PDF attachment
-- **Item pane integration** — chat section appears in Zotero's item pane sidebar
-- **Configurable** — swap LLM providers, models, and cache location from preferences
+- **Chat with PDFs** — ask questions, get answers grounded in your papers
+- **Multi-source sessions** — add multiple papers to a single conversation
+- **Chat history** — conversations are saved and can be resumed across sessions
+- **Streaming responses** — see answers appear in real time
+- **Markdown & math** — responses are rendered with full Markdown and LaTeX math (KaTeX)
+- **Drag-and-drop** — drag items from the library onto the sources area
+- **Right-click menu** — "Add to ChatPDF" on any item with a PDF
+- **Any LLM provider** — works with DeepSeek, OpenAI, Ollama, OpenRouter, and more
+- **Auto-update** — get new versions automatically through Zotero's update mechanism
 
 ## Requirements
 
-- Zotero 7
-- A [MinerU](https://mineru.net) API token (for PDF-to-Markdown conversion)
-- An API key for an OpenAI-compatible LLM service
+- **Zotero 7** (version 7.0 or later)
+- A **MinerU API token** — sign up at [mineru.net](https://mineru.net) (free tier available)
+- An **API key** for an OpenAI-compatible LLM service
 
 ## Installation
 
-1. Download the latest `.xpi` file from the [Releases](https://github.com/user/zotero-chatpdf/releases) page.
-2. In Zotero, go to **Tools → Add-ons**.
-3. Click the gear icon and select **Install Add-on From File…**, then choose the `.xpi` file.
+### From GitHub Releases (recommended)
 
-## Configuration
+1. Go to the [Releases](https://github.com/ruijie-xi/zotero-chat-pdf/releases) page.
+2. Download the latest `chat-pdf.xpi` file.
+3. In Zotero, go to **Tools > Add-ons**.
+4. Click the gear icon and select **Install Add-on From File...**, then choose the downloaded `.xpi` file.
+5. Restart Zotero.
 
-Open **Edit → Settings → ChatPDF** and fill in:
+### Auto-update
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| MinerU API Token | Bearer token from [mineru.net](https://mineru.net) | — |
-| LLM API Base URL | Base URL for the chat completions endpoint | `https://api.deepseek.com/v1` |
-| LLM API Key | API key for your LLM provider | — |
-| Model Name | Model identifier to use | `deepseek-chat` |
-| Cache Directory | Where converted Markdown files are stored | `~/.chatpdf-cache` |
-| Max Context Characters | Maximum characters sent to the LLM | `100000` |
+Once installed, Zotero will automatically check for new versions of ChatPDF. When an update is available, Zotero will download and install it on the next restart — no manual action needed.
+
+## Setup
+
+After installing, go to **Edit > Settings > ChatPDF** (or **Zotero > Settings > ChatPDF** on macOS) to configure:
+
+### Required settings
+
+| Setting | Description |
+|---------|-------------|
+| **MinerU API Token** | Your API token from [mineru.net](https://mineru.net). Needed to convert PDFs to text. |
+| **LLM API Key** | API key for your LLM provider (DeepSeek, OpenAI, etc.). |
+
+### Optional settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **LLM API Base URL** | `https://api.deepseek.com/v1` | Base URL of the LLM's chat completions endpoint. |
+| **Model Name** | `deepseek-chat` | Model identifier to use for chat. |
+| **Cache Directory** | `~/.chatpdf-cache` | Where converted Markdown files and chat history are stored. |
+| **Max Context Characters** | `100000` | Maximum total characters sent to the LLM per request. This includes all document text plus conversation history. Older messages are dropped when the limit is reached. |
 
 ### Provider examples
 
-| Provider | API Base URL | Model |
-|----------|-------------|-------|
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o` |
-| Ollama (local) | `http://localhost:11434/v1` | `llama3` |
+| Provider | API Base URL | Model | Notes |
+|----------|-------------|-------|-------|
+| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` | Default. Good and cheap. |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o` | |
+| Ollama (local) | `http://localhost:11434/v1` | `llama3` | Free, runs locally. No API key needed (enter any value). |
+| OpenRouter | `https://openrouter.ai/api/v1` | `anthropic/claude-sonnet-4` | Aggregator for many models. |
 
 ## Usage
 
-1. **Select an item** in Zotero that has a PDF attachment. The ChatPDF panel appears in the item pane sidebar.
-2. The selected item is automatically added as a source. If its PDF hasn't been converted yet, click **Convert** next to it.
-3. Once the status shows **Ready**, type a question in the text box and press **Enter** or click **Send**.
-4. The LLM responds with streaming output based on the PDF content.
+### Basic workflow
 
-### Adding multiple sources
+1. **Select a paper** in Zotero. The ChatPDF panel appears in the right sidebar.
+2. The selected paper is automatically added as a source. Click **Convert** to extract its text (takes ~30s).
+3. Once the source shows **Ready**, type a question and press **Enter**.
+4. The LLM responds based on the paper's content, with streaming output.
 
-- **Drag and drop** items from the Zotero library onto the sources area.
-- **Right-click** one or more items and select **Add to ChatPDF**.
-- Use **Convert All** to batch-convert all unconverted sources.
+### Managing sources
 
-### Managing a session
+- **Drag and drop** items from the library onto the sources area to add more papers.
+- **Right-click** items in the library and select **Add to ChatPDF**.
+- Click **Convert all** to batch-convert all pending sources.
+- Click **Remove** on a source chip to remove it from the conversation.
 
-- Click **×** next to a source to remove it from the conversation.
-- Click **Clear Chat** to reset the message history (sources are kept).
+### Chat history
 
-## Building from source
+- Click **History** in the toolbar to view past conversations.
+- Click any conversation to resume it.
+- Click **New Chat** to start a fresh session (the current one is saved automatically).
+- Conversations are auto-saved after each response.
+
+### Tips
+
+- Click the **expand** button (top-right of the section) for a full-height chat panel.
+- Use **Clear chat** to reset the conversation while keeping the same sources.
+- The LLM responds in the same language you use — write in Chinese and it replies in Chinese.
+
+## How it works
+
+```
+PDF file  ──▶  MinerU API  ──▶  Markdown text  ──▶  Local cache
+                                                         │
+User question + document text + chat history  ──▶  LLM API  ──▶  Streamed response
+```
+
+1. **PDF conversion**: PDFs are uploaded to MinerU's cloud API, which extracts text, tables, and math into Markdown format. Results are cached locally so each PDF only needs to be converted once.
+2. **Chat**: The full document text is embedded in the LLM's system prompt. Your question and conversation history are appended. The LLM responds based on the document content.
+3. **Rendering**: Responses are rendered as Markdown with LaTeX math support (via KaTeX).
+
+For a detailed technical reference, see [`docs/llm-workflow.md`](docs/llm-workflow.md).
+
+## Development
+
+### Building from source
 
 ```bash
+git clone https://github.com/ruijie-xi/zotero-chat-pdf.git
+cd zotero-chat-pdf
 npm install
 npm run build
 ```
 
-The built plugin is output to `.scaffold/build/chat-pdf.xpi`.
+The built plugin is at `.scaffold/build/chat-pdf.xpi`.
 
-For development with hot-reload:
+### Development with hot-reload
 
 ```bash
 npm start
 ```
 
-## System Prompt
+This launches Zotero with the plugin loaded and watches for file changes.
 
-The system prompt sent to the LLM is constructed dynamically based on the sources in your session. Here is the exact template:
+### Creating a release
 
-**When no sources are ready:**
+Releases are automated via GitHub Actions. To publish a new version:
 
-```
-You are a helpful research assistant. The user has not added any PDF documents yet.
-Ask them to add documents to chat about. Always reply in the same language the user uses.
-```
+```bash
+# Bump version and create a git tag
+npm run release -- patch   # or: minor, major
 
-**When one or more sources are ready:**
-
-```
-You are a helpful research assistant. Answer questions based on the following document(s).
-Cite specific sections when possible. If the answer is not in the documents, say so.
-
-IMPORTANT formatting rules:
-- Always reply in the same language the user uses. If the user writes in Chinese,
-  reply in Chinese. If in English, reply in English.
-- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).
-- For mathematical expressions, use LaTeX syntax with dollar sign delimiters:
-  $...$ for inline math and $$...$$ for display math.
-  For example: The equation $E = mc^2$ or a display formula:
-  $$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$
-
---- BEGIN DOCUMENT: <Paper Title> ---
-<Full Markdown content of the PDF>
---- END DOCUMENT: <Paper Title> ---
-
---- BEGIN DOCUMENT: <Another Paper Title> ---
-<Full Markdown content of the PDF>
---- END DOCUMENT: <Another Paper Title> ---
+# Push the tag to trigger the release workflow
+git push origin --tags
 ```
 
-All ready sources are concatenated into the system prompt, separated by document markers. The user's chat history is appended after the system prompt, with older messages truncated if the total exceeds the **Max Context Characters** setting.
+The GitHub Actions workflow will:
+1. Build the plugin
+2. Create a GitHub Release with the `.xpi` file
+3. Update the `update.json` manifest so existing users get the update automatically
 
-### Customizing the prompt
-
-To modify the system prompt, edit `src/modules/chat-session.ts` — specifically the `buildSystemPrompt()` method in the `ChatSession` class. After making changes, rebuild the plugin with `npm run build`.
-
-Key customization points:
-
-- **Role instruction** — The opening sentence (`"You are a helpful research assistant..."`) defines the LLM's persona and behavior.
-- **Citation instruction** — `"Cite specific sections when possible"` can be changed to match your preferred citation style.
-- **Document delimiters** — The `--- BEGIN/END DOCUMENT ---` markers separate multiple papers. You can change these to XML tags, numbered sections, etc.
-- **No-answer behavior** — `"If the answer is not in the documents, say so"` controls what happens when the LLM can't find relevant content.
-
-## How it works
+### Project structure
 
 ```
-Select item → Check cache → [Not cached] → MinerU API converts PDF to Markdown → Cache locally
-                           → [Cached]    → Load Markdown from disk
-
-User sends question → Build system prompt with all ready source Markdown
-                    → Send to LLM via OpenAI-compatible API
-                    → Stream response into chat panel
+src/
+  modules/
+    chat-panel.ts        UI — builds the chat interface, handles user interaction
+    chat-session.ts      Session state — message history, sources, context building
+    chat-history.ts      Persistence — saves/loads sessions to disk
+    llm-client.ts        API client — OpenAI-compatible chat completions with SSE streaming
+    mineru-client.ts     PDF conversion — uploads to MinerU, polls for results
+    md-cache.ts          Cache layer — stores converted Markdown on disk
+    markdown-renderer.ts Rendering — Markdown + KaTeX math to XHTML
+addon/
+  content/
+    chatpdf.css          All styles for the chat panel
+    icons/chat.svg       Plugin icon
+  manifest.json          Zotero addon manifest
+  prefs.js               Default preference values
 ```
-
-Converted Markdown files are stored as `{zoteroAttachmentKey}.md` in the cache directory, outside of Zotero's data directory. Reconverting is never needed unless you clear the cache.
 
 ## License
 

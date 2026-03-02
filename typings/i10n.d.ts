@@ -3,6 +3,7 @@
 /* eslint-disable */
 // @ts-nocheck
 export type FluentMessageId =
+  | 'chatpdf-item-section-chatpdf-fullheight'
   | 'chatpdf-item-section-chatpdf-head-text'
   | 'chatpdf-item-section-chatpdf-sidenav-tooltip'
   | 'chatpdf-menuitem-addtochatpdf'

@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Release
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ steps.version.outputs.tag }}
+          name: v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          artifacts: ".scaffold/build/chat-pdf.xpi"
+          artifactContentType: application/x-xpinstall
+          allowUpdates: true
+          removeArtifacts: true
+
+      # Upload update.json to a fixed "release" tag so Zotero can always find it
+      - name: Update release manifest
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: release
+          name: "Update Manifest"
+          body: "This release contains the update manifest for Zotero auto-update. Do not delete."
+          draft: false
+          prerelease: false
+          artifacts: ".scaffold/build/update.json"
+          allowUpdates: true
+          removeArtifacts: true

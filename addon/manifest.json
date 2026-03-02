@@ -4,14 +4,15 @@
   "version": "__buildVersion__",
   "description": "__description__",
   "icons": {
-    "48": "content/icons/favicon@0.5x.png",
-    "96": "content/icons/favicon.png"
+    "48": "content/icons/chat.svg",
+    "96": "content/icons/chat.svg"
   },
   "applications": {
     "zotero": {
       "id": "__addonID__",
       "strict_min_version": "6.999",
-      "strict_max_version": "8.*"
+      "strict_max_version": "8.*",
+      "update_url": "https://github.com/ruijie-xi/zotero-chat-pdf/releases/download/release/update.json"
     }
   }
 }
