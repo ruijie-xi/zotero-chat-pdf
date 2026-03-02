@@ -10,7 +10,11 @@ PDFs are converted to Markdown via the [MinerU](https://mineru.net) API and cach
 - **Multi-source sessions** — add multiple papers to a single conversation
 - **Chat history** — conversations are saved and can be resumed across sessions
 - **Streaming responses** — see answers appear in real time
+- **Thinking model support** — reasoning tokens from thinking models (e.g. DeepSeek R1) are shown in a collapsible block with a live timer
+- **Edit and resend** — click the edit button on any user message to modify and resend it
 - **Markdown & math** — responses are rendered with full Markdown and LaTeX math (KaTeX)
+- **Smart document truncation** — large documents are proportionally truncated to fit the context limit, with clear UI indicators showing per-document size and total usage
+- **Customizable system prompt** — edit the system prompt in preferences with built-in English/Chinese defaults
 - **Drag-and-drop** — drag items from the library onto the sources area
 - **Right-click menu** — "Add to ChatPDF" on any item with a PDF
 - **Any LLM provider** — works with DeepSeek, OpenAI, Ollama, OpenRouter, and more
@@ -92,6 +96,9 @@ After installing, go to **Edit > Settings > ChatPDF** (or **Zotero > Settings > 
 
 - Click the **expand** button (top-right of the section) for a full-height chat panel.
 - Use **Clear chat** to reset the conversation while keeping the same sources.
+- Hover over any assistant message and click **Copy** to copy the raw Markdown.
+- Click the **edit** button on a user message to modify and resend it — the conversation rolls back to that point.
+- Source chips show the character count of each document. If a document is truncated to fit the context limit, the chip turns orange with the included percentage.
 - The LLM responds in the same language you use — write in Chinese and it replies in Chinese.
 
 ## How it works
