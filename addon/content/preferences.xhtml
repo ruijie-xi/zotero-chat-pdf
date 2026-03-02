@@ -38,4 +38,21 @@
     <html:label for="zotero-prefpane-__addonRef__-maxContextChars" data-l10n-id="pref-max-context"></html:label>
     <html:input type="number" id="zotero-prefpane-__addonRef__-maxContextChars" preference="maxContextChars" style="width: 100px;" />
   </hbox>
+
+  <separator class="thin" />
+
+  <vbox>
+    <hbox align="center" style="margin-bottom: 4px;">
+      <html:label data-l10n-id="pref-system-prompt" style="font-weight: 600;"></html:label>
+      <html:span style="flex: 1;" />
+      <html:select id="zotero-prefpane-__addonRef__-promptLang" style="font-size: 12px; padding: 1px 4px;">
+        <html:option value="en">English</html:option>
+        <html:option value="cn">中文</html:option>
+      </html:select>
+      <html:button id="zotero-prefpane-__addonRef__-promptReset" style="font-size: 12px; margin-left: 4px; padding: 1px 8px;">Reset</html:button>
+    </hbox>
+    <html:textarea id="zotero-prefpane-__addonRef__-systemPrompt" preference="systemPrompt"
+      style="width: 100%; min-height: 120px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
+      rows="6"></html:textarea>
+  </vbox>
 </groupbox>

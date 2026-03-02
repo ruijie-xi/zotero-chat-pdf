@@ -13,6 +13,7 @@ declare namespace _ZoteroTypes {
       "llmModel": string;
       "cacheDir": string;
       "maxContextChars": number;
+      "systemPrompt": string;
     };
   }
 }

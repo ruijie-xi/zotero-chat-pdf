@@ -15,6 +15,7 @@ export type FluentMessageId =
   | 'pref-llm-model'
   | 'pref-max-context'
   | 'pref-mineru-token'
+  | 'pref-system-prompt'
   | 'pref-title'
   | 'startup-begin'
   | 'startup-finish';

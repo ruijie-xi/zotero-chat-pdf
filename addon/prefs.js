@@ -4,3 +4,4 @@ pref("llmApiKey", "");
 pref("llmModel", "deepseek-chat");
 pref("cacheDir", "");
 pref("maxContextChars", 100000);
+pref("systemPrompt", "");

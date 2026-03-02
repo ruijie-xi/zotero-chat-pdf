@@ -2,6 +2,32 @@ import { ChatMessage } from "./llm-client";
 import { getPref } from "../utils/prefs";
 import { SavedSession } from "./chat-history";
 
+export const DEFAULT_SYSTEM_PROMPT_EN =
+  "You are a helpful research assistant. Answer questions based on the following document(s). " +
+  "Cite specific sections when possible. If the answer is not in the documents, say so.\n\n" +
+  "IMPORTANT formatting rules:\n" +
+  "- Always reply in the same language the user uses.\n" +
+  "- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).\n" +
+  "- For mathematical expressions, use LaTeX syntax with dollar sign delimiters: $...$ for inline math and $$...$$ for display math.\n" +
+  "  For example: The equation $E = mc^2$ or a display formula:\n" +
+  "  $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$\n";
+
+export const DEFAULT_SYSTEM_PROMPT_CN =
+  "你是一个专业的学术研究助手。请根据以下提供的文档内容回答用户的问题。" +
+  "尽可能引用文档中的具体章节。如果答案不在文档中，请明确说明。\n\n" +
+  "重要的格式规则：\n" +
+  "- 始终使用与用户相同的语言回复。\n" +
+  "- 使用标准 Markdown 格式（标题、列表、粗体、代码块等）。\n" +
+  "- 数学公式请使用 LaTeX 语法，用美元符号分隔：$...$ 表示行内公式，$$...$$ 表示独立公式。\n" +
+  "  例如：方程 $E = mc^2$，或独立公式：\n" +
+  "  $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$\n";
+
+export const DEFAULT_NO_DOCS_PROMPT_EN =
+  "You are a helpful research assistant. The user has not added any PDF documents yet. Ask them to add documents to chat about. Always reply in the same language the user uses.";
+
+export const DEFAULT_NO_DOCS_PROMPT_CN =
+  "你是一个专业的学术研究助手。用户尚未添加任何PDF文档。请提示他们添加文档以开始对话。始终使用与用户相同的语言回复。";
+
 export interface SourceItem {
   key: string; // Zotero attachment key
   title: string; // Paper/item title
@@ -176,18 +202,17 @@ export class ChatSession {
     }
 
     if (readySources.length === 0) {
-      return "You are a helpful research assistant. The user has not added any PDF documents yet. Ask them to add documents to chat about. Always reply in the same language the user uses.";
+      const customPrompt = (getPref("systemPrompt") as string) || "";
+      // Detect language from custom prompt, fall back to EN
+      if (customPrompt) {
+        return customPrompt.includes("用户") || customPrompt.includes("文档")
+          ? DEFAULT_NO_DOCS_PROMPT_CN : DEFAULT_NO_DOCS_PROMPT_EN;
+      }
+      return DEFAULT_NO_DOCS_PROMPT_EN;
     }
 
-    let prompt =
-      "You are a helpful research assistant. Answer questions based on the following document(s). " +
-      "Cite specific sections when possible. If the answer is not in the documents, say so.\n\n" +
-      "IMPORTANT formatting rules:\n" +
-      "- Always reply in the same language the user uses. If the user writes in Chinese, reply in Chinese. If in English, reply in English.\n" +
-      "- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).\n" +
-      "- For mathematical expressions, use LaTeX syntax with dollar sign delimiters: $...$ for inline math and $$...$$ for display math.\n" +
-      "  For example: The equation $E = mc^2$ or a display formula:\n" +
-      "  $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$\n\n";
+    const customPrompt = (getPref("systemPrompt") as string) || "";
+    let prompt = (customPrompt || DEFAULT_SYSTEM_PROMPT_EN) + "\n\n";
 
     for (const source of readySources) {
       prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;

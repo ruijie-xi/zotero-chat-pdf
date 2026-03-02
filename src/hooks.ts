@@ -15,6 +15,7 @@ async function onStartup() {
     await Zotero.PreferencePanes.register({
       pluginID: config.addonID,
       src: `chrome://${config.addonRef}/content/preferences.xhtml`,
+      scripts: [`chrome://${config.addonRef}/content/scripts/preferences.js`],
       label: config.addonName,
     });
   } catch (e) {
