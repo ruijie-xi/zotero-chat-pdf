@@ -16,23 +16,29 @@ function setPrefFull(key: string, value: string): void {
 }
 
 function initPromptUI() {
-  const textarea = document.getElementById(
-    `zotero-prefpane-${ADDON_REF}-systemPrompt`,
+  const textarea = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-systemPrompt`,
   ) as HTMLTextAreaElement | null;
-  const resetENBtn = document.getElementById(
-    `zotero-prefpane-${ADDON_REF}-promptResetEN`,
+  const resetENBtn = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-promptResetEN`,
   ) as HTMLButtonElement | null;
-  const resetCNBtn = document.getElementById(
-    `zotero-prefpane-${ADDON_REF}-promptResetCN`,
+  const resetCNBtn = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-promptResetCN`,
   ) as HTMLButtonElement | null;
-  const saveBtn = document.getElementById(
-    `zotero-prefpane-${ADDON_REF}-promptSave`,
+  const saveBtn = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-promptSave`,
   ) as HTMLButtonElement | null;
-  const statusEl = document.getElementById(
-    `zotero-prefpane-${ADDON_REF}-promptStatus`,
+  const statusEl = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-promptStatus`,
   ) as HTMLElement | null;
 
-  if (!textarea || !resetENBtn || !resetCNBtn || !saveBtn) return;
+  if (!textarea || !resetENBtn || !resetCNBtn || !saveBtn) {
+    // Elements not in DOM yet — retry
+    Zotero.debug(`[ChatPDF] Preference pane elements not found, retrying...`);
+    return false;
+  }
+
+  Zotero.debug(`[ChatPDF] Preference pane elements found, initializing prompt UI`);
 
   // Initialize: always show the current prompt (default EN if empty)
   const current = getPrefFull("systemPrompt");
@@ -71,11 +77,19 @@ function initPromptUI() {
     setPrefFull("systemPrompt", value);
     showStatus("Saved!");
   });
+
+  return true;
 }
 
-// Run when the preference pane is loaded
-if (document.readyState === "complete") {
-  initPromptUI();
-} else {
-  document.addEventListener("DOMContentLoaded", initPromptUI);
+// Zotero 7 preference pane scripts run in the main window context.
+// The pane XHTML may not be in the DOM yet, so retry until elements appear.
+function tryInit(retries: number) {
+  if (initPromptUI()) return;
+  if (retries > 0) {
+    setTimeout(() => tryInit(retries - 1), 100);
+  } else {
+    Zotero.debug(`[ChatPDF] Preference pane init failed after retries`);
+  }
 }
+
+tryInit(30); // retry up to 3 seconds
