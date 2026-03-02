@@ -13,8 +13,20 @@ marked.setOptions({
  * Render a markdown string (with LaTeX math) to HTML.
  * Math delimiters: $...$ for inline, $$...$$ for display.
  * LaTeX is converted to HTML via KaTeX (requires katex.css + fonts).
+ *
+ * The output is sanitized to be XHTML-safe (required by Zotero's XUL panels).
  */
 export function renderMarkdown(text: string): string {
+  try {
+    return renderMarkdownUnsafe(text);
+  } catch (err) {
+    // If rendering fails, return escaped plain text so the answer is never lost
+    Zotero.debug(`[ChatPDF] Markdown render error: ${err}`);
+    return escapeXml(text).replace(/\n/g, "<br/>");
+  }
+}
+
+function renderMarkdownUnsafe(text: string): string {
   // Step 1: Extract and replace math blocks with placeholders
   const mathBlocks: { placeholder: string; html: string }[] = [];
   let counter = 0;
@@ -30,7 +42,7 @@ export function renderMarkdown(text: string): string {
       });
       mathBlocks.push({ placeholder, html: `<div class="chatpdf-math-display">${html}</div>` });
     } catch {
-      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">$$${latex}$$</code>` });
+      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">$$${escapeXml(latex)}$$</code>` });
     }
     return placeholder;
   });
@@ -46,7 +58,7 @@ export function renderMarkdown(text: string): string {
       });
       mathBlocks.push({ placeholder, html });
     } catch {
-      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">$${latex}$</code>` });
+      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">$${escapeXml(latex)}$</code>` });
     }
     return placeholder;
   });
@@ -62,7 +74,38 @@ export function renderMarkdown(text: string): string {
   // Step 4: Sanitize — strip dangerous tags/attributes
   html = sanitize(html);
 
+  // Step 5: Make output XHTML-safe
+  // Zotero uses XHTML namespace where innerHTML requires well-formed XML.
+  // marked outputs HTML5 void elements (<br>, <hr>, <img ...>) which are
+  // not valid XHTML. Convert them to self-closing form.
+  html = toXhtml(html);
+
   return html;
+}
+
+/**
+ * Convert HTML5 void elements to XHTML self-closing form.
+ * e.g. <br> → <br/>, <hr> → <hr/>, <img src="..."> → <img src="..."/>
+ */
+function toXhtml(html: string): string {
+  // Self-close void elements that aren't already self-closed
+  const voidTags = "area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr";
+  // Match <tag ...> that doesn't already end with />
+  const re = new RegExp(`<(${voidTags})(\\s[^>]*?)?\\/?>`, "gi");
+  return html.replace(re, (_match, tag, attrs) => {
+    return `<${tag}${attrs || ""}/>`;
+  });
+}
+
+/**
+ * Escape text for safe inclusion in XML/XHTML.
+ */
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /**

@@ -9,12 +9,14 @@ item-pane-custom-section linkset {
 #chatpdf-root {
   display: flex;
   flex-direction: column;
-  height: var(--chatpdf-panel-height, 450px);
+  height: var(--chatpdf-panel-height, 100%);
+  min-height: 200px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   color: var(--fill-primary);
   overflow: hidden;
   background: var(--material-background, #fff);
+  box-sizing: border-box;
 }
 
 /* ===== Messages Area ===== */
@@ -22,11 +24,16 @@ item-pane-custom-section linkset {
 .chatpdf-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 12px;
+  overflow-x: hidden;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-height: 0;
+  /* Enable text selection */
+  user-select: text;
+  -moz-user-select: text;
+  cursor: text;
 }
 
 /* -- Welcome screen -- */
@@ -37,18 +44,20 @@ item-pane-custom-section linkset {
   align-items: center;
   justify-content: center;
   flex: 1;
-  gap: 8px;
-  padding: 32px 16px;
+  gap: 6px;
+  padding: 16px 8px;
   color: var(--fill-tertiary, #999);
+  user-select: none;
+  -moz-user-select: none;
 }
 
 .chatpdf-welcome-icon {
-  opacity: 0.4;
-  margin-bottom: 4px;
+  font-size: 24px;
+  opacity: 0.5;
 }
 
 .chatpdf-welcome-text {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--fill-secondary, #666);
 }
@@ -57,15 +66,16 @@ item-pane-custom-section linkset {
   font-size: 11px;
   text-align: center;
   line-height: 1.4;
-  max-width: 240px;
+  max-width: 200px;
 }
 
 /* -- Message rows -- */
 
 .chatpdf-msg-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   animation: chatpdf-fade-in 0.15s ease-out;
+  min-width: 0;
 }
 
 @keyframes chatpdf-fade-in {
@@ -75,25 +85,28 @@ item-pane-custom-section linkset {
 
 .chatpdf-msg-row-user {
   justify-content: flex-end;
-  padding-left: 32px;
+  padding-left: 20px;
 }
 
 .chatpdf-msg-row-assistant {
   align-items: flex-start;
-  padding-right: 12px;
+  padding-right: 4px;
 }
 
 /* -- Avatar -- */
 
 .chatpdf-avatar {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   margin-top: 2px;
+  font-size: 12px;
+  user-select: none;
+  -moz-user-select: none;
 }
 
 .chatpdf-avatar-assistant {
@@ -107,13 +120,16 @@ item-pane-custom-section linkset {
   max-width: 100%;
   line-height: 1.55;
   font-size: 13px;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .chatpdf-message-user {
   background: var(--color-accent, #4285f4);
   color: white;
-  padding: 8px 12px;
-  border-radius: 14px 14px 4px 14px;
+  padding: 6px 10px;
+  border-radius: 12px 12px 2px 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -121,7 +137,7 @@ item-pane-custom-section linkset {
 .chatpdf-message-assistant {
   background: transparent;
   color: var(--fill-primary, #333);
-  padding: 4px 0;
+  padding: 2px 0;
   word-wrap: break-word;
   overflow-wrap: break-word;
   flex: 1;
@@ -137,8 +153,8 @@ item-pane-custom-section linkset {
 }
 
 .chatpdf-thinking span {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--fill-tertiary, #bbb);
   animation: chatpdf-bounce 1.2s ease-in-out infinite;
@@ -155,7 +171,7 @@ item-pane-custom-section linkset {
 /* -- Markdown content inside assistant bubbles -- */
 
 .chatpdf-message-assistant p {
-  margin: 0 0 8px 0;
+  margin: 0 0 6px 0;
 }
 .chatpdf-message-assistant p:last-child {
   margin-bottom: 0;
@@ -165,27 +181,27 @@ item-pane-custom-section linkset {
 .chatpdf-message-assistant h2,
 .chatpdf-message-assistant h3,
 .chatpdf-message-assistant h4 {
-  margin: 12px 0 6px 0;
+  margin: 8px 0 4px 0;
   font-weight: 600;
   line-height: 1.3;
 }
-.chatpdf-message-assistant h1 { font-size: 1.3em; }
-.chatpdf-message-assistant h2 { font-size: 1.15em; }
+.chatpdf-message-assistant h1 { font-size: 1.2em; }
+.chatpdf-message-assistant h2 { font-size: 1.1em; }
 .chatpdf-message-assistant h3 { font-size: 1.05em; }
 .chatpdf-message-assistant h4 { font-size: 1em; }
 
 .chatpdf-message-assistant ul,
 .chatpdf-message-assistant ol {
-  margin: 4px 0 8px 0;
-  padding-left: 20px;
+  margin: 4px 0 6px 0;
+  padding-left: 18px;
 }
 .chatpdf-message-assistant li {
   margin-bottom: 2px;
 }
 
 .chatpdf-message-assistant blockquote {
-  margin: 6px 0;
-  padding: 4px 10px;
+  margin: 4px 0;
+  padding: 3px 8px;
   border-left: 3px solid var(--color-accent, #4285f4);
   color: var(--fill-secondary, #555);
   background: rgba(0, 0, 0, 0.03);
@@ -194,20 +210,20 @@ item-pane-custom-section linkset {
 
 .chatpdf-message-assistant code {
   font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
-  font-size: 0.9em;
+  font-size: 0.88em;
   background: rgba(0, 0, 0, 0.06);
-  padding: 1px 4px;
+  padding: 1px 3px;
   border-radius: 3px;
 }
 
 .chatpdf-message-assistant pre {
-  margin: 8px 0;
-  padding: 10px 12px;
+  margin: 6px 0;
+  padding: 8px 10px;
   background: #1e1e1e;
   color: #d4d4d4;
   border-radius: 6px;
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.45;
 }
 .chatpdf-message-assistant pre code {
@@ -219,14 +235,14 @@ item-pane-custom-section linkset {
 
 .chatpdf-message-assistant table {
   border-collapse: collapse;
-  margin: 8px 0;
-  font-size: 12px;
+  margin: 6px 0;
+  font-size: 11px;
   width: 100%;
 }
 .chatpdf-message-assistant th,
 .chatpdf-message-assistant td {
   border: 1px solid var(--fill-quinary, #ddd);
-  padding: 4px 8px;
+  padding: 3px 6px;
   text-align: left;
 }
 .chatpdf-message-assistant th {
@@ -245,7 +261,13 @@ item-pane-custom-section linkset {
 .chatpdf-message-assistant hr {
   border: none;
   border-top: 1px solid var(--fill-quinary, #e0e0e0);
-  margin: 10px 0;
+  margin: 8px 0;
+}
+
+/* Ensure images scale down in narrow panels */
+.chatpdf-message-assistant img {
+  max-width: 100%;
+  height: auto;
 }
 
 /* -- Math (KaTeX HTML output) -- */
@@ -253,26 +275,28 @@ item-pane-custom-section linkset {
 .chatpdf-math-display {
   display: block;
   text-align: center;
-  margin: 8px 0;
+  margin: 6px 0;
   overflow-x: auto;
 }
 
 .chatpdf-message-assistant .katex {
-  font-size: 1.1em;
+  font-size: 1.05em;
 }
 
 .chatpdf-math-error {
   color: #c00;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 /* ===== Source Chips Area ===== */
 
 .chatpdf-sources {
   border-top: 1px solid var(--fill-quinary, #e0e0e0);
-  padding: 8px 12px;
-  min-height: 36px;
+  padding: 6px 8px;
+  min-height: 32px;
   flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 120px;
 }
 
 .chatpdf-sources.chatpdf-drop-active {
@@ -284,19 +308,20 @@ item-pane-custom-section linkset {
 .chatpdf-source-chips {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .chatpdf-source-chip {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  font-size: 12px;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  font-size: 11px;
   background: var(--fill-senary, #f5f5f5);
   border: 1px solid var(--fill-quinary, #e8e8e8);
   transition: background 0.12s, border-color 0.12s;
+  min-width: 0;
 }
 
 .chatpdf-source-chip:hover {
@@ -322,8 +347,8 @@ item-pane-custom-section linkset {
 
 /* Status indicator dot */
 .chatpdf-chip-indicator {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -355,10 +380,11 @@ item-pane-custom-section linkset {
 .chatpdf-chip-badge {
   font-size: 10px;
   font-weight: 500;
-  padding: 1px 6px;
+  padding: 0 5px;
   border-radius: 8px;
   flex-shrink: 0;
-  line-height: 1.4;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .chatpdf-chip-badge-converting {
@@ -376,48 +402,41 @@ item-pane-custom-section linkset {
   background: rgba(255, 59, 48, 0.1);
 }
 
-/* Action buttons */
+/* Text-based action buttons */
 .chatpdf-chip-actions {
   display: flex;
   gap: 2px;
   flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.12s;
 }
 
-.chatpdf-source-chip:hover .chatpdf-chip-actions {
-  opacity: 1;
-}
-
-.chatpdf-chip-action-btn {
+.chatpdf-chip-text-btn {
   border: none;
   background: none;
   color: var(--fill-tertiary, #999);
   cursor: pointer;
-  padding: 2px;
+  padding: 0 4px;
   border-radius: 4px;
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
   transition: background 0.12s, color 0.12s;
 }
 
-.chatpdf-chip-action-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
+.chatpdf-chip-text-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
   color: var(--fill-primary, #333);
 }
 
 .chatpdf-chip-remove-btn:hover {
   color: #d32f2f;
+  background: rgba(211, 47, 47, 0.08);
 }
 
 .chatpdf-source-drop-hint {
   color: var(--fill-tertiary, #aaa);
   font-size: 11px;
   font-style: italic;
-  padding: 4px 0;
+  padding: 2px 0;
   text-align: center;
 }
 
@@ -425,7 +444,7 @@ item-pane-custom-section linkset {
 
 .chatpdf-input-area {
   border-top: 1px solid var(--fill-quinary, #e0e0e0);
-  padding: 8px 12px 10px;
+  padding: 6px 8px 8px;
   flex-shrink: 0;
   background: var(--material-background, #fff);
 }
@@ -433,18 +452,18 @@ item-pane-custom-section linkset {
 .chatpdf-input-wrapper {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--fill-quinary, #ccc);
-  border-radius: 10px;
-  padding: 6px 6px 6px 12px;
+  border-radius: 8px;
+  padding: 4px 4px 4px 8px;
   background: var(--material-background, white);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .chatpdf-input-wrapper:focus-within {
   border-color: var(--color-accent, #4285f4);
-  box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.12);
+  box-shadow: 0 0 0 1px rgba(66, 133, 244, 0.15);
 }
 
 .chatpdf-textarea {
@@ -454,14 +473,14 @@ item-pane-custom-section linkset {
   border: none;
   outline: none;
   resize: none;
-  font-size: 13px;
+  font-size: 12px;
   font-family: inherit;
   line-height: 1.4;
-  min-height: 20px;
-  max-height: 120px;
+  min-height: 18px;
+  max-height: 100px;
   background: transparent;
   color: var(--fill-primary, #333);
-  padding: 4px 0;
+  padding: 3px 0;
   box-sizing: border-box;
 }
 
@@ -474,10 +493,10 @@ item-pane-custom-section linkset {
 }
 
 .chatpdf-send-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--color-accent, #4285f4);
   color: white;
   cursor: pointer;
@@ -486,6 +505,8 @@ item-pane-custom-section linkset {
   justify-content: center;
   flex-shrink: 0;
   transition: opacity 0.15s;
+  font-size: 14px;
+  font-weight: bold;
 }
 .chatpdf-send-btn:hover {
   opacity: 0.85;
@@ -499,9 +520,9 @@ item-pane-custom-section linkset {
 
 .chatpdf-toolbar {
   display: flex;
-  gap: 4px;
-  padding: 0 0 6px;
-  font-size: 11px;
+  gap: 2px;
+  padding: 0 0 4px;
+  font-size: 10px;
 }
 
 .chatpdf-toolbar-btn {
@@ -509,9 +530,9 @@ item-pane-custom-section linkset {
   cursor: pointer;
   border: none;
   background: none;
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
   transition: color 0.12s, background 0.12s;
 }
 .chatpdf-toolbar-btn:hover {
@@ -522,7 +543,7 @@ item-pane-custom-section linkset {
 /* ===== Scrollbar ===== */
 
 .chatpdf-messages::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 .chatpdf-messages::-webkit-scrollbar-track {

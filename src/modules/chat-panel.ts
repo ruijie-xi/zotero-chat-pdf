@@ -170,15 +170,12 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
 
   // Welcome message
   const welcome = h(doc, "div", { className: "chatpdf-welcome" });
-  welcome.innerHTML = `
-    <div class="chatpdf-welcome-icon">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
-    </div>
-    <div class="chatpdf-welcome-text">Ask questions about your documents</div>
-    <div class="chatpdf-welcome-hint">Drop PDFs into the sources area or use the right-click menu to add papers</div>
-  `;
+  const welcomeIcon = h(doc, "div", { className: "chatpdf-welcome-icon" }, "\uD83D\uDCAC");
+  const welcomeText = h(doc, "div", { className: "chatpdf-welcome-text" }, "Ask questions about your documents");
+  const welcomeHint = h(doc, "div", { className: "chatpdf-welcome-hint" }, "Drop PDFs into the sources area or use the right-click menu to add papers");
+  welcome.appendChild(welcomeIcon);
+  welcome.appendChild(welcomeText);
+  welcome.appendChild(welcomeHint);
   messagesArea.appendChild(welcome);
   root.appendChild(messagesArea);
 
@@ -228,8 +225,7 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
     rows: "1",
   }) as HTMLTextAreaElement;
 
-  const sendBtn = h(doc, "button", { className: "chatpdf-send-btn", id: "chatpdf-send", title: "Send" });
-  sendBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>`;
+  const sendBtn = h(doc, "button", { className: "chatpdf-send-btn", id: "chatpdf-send", title: "Send" }, "\u2191");
 
   inputWrapper.appendChild(textarea);
   inputWrapper.appendChild(sendBtn);
@@ -317,8 +313,7 @@ function refreshSourceChips(root: HTMLElement) {
     const actions = h(doc, "span", { className: "chatpdf-chip-actions" });
 
     if (source.status === "pending") {
-      const convertBtn = h(doc, "button", { className: "chatpdf-chip-action-btn", title: "Convert" });
-      convertBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>`;
+      const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: "Convert" }, "Convert");
       convertBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         convertSource(source, () => refreshSourceChips(root)).catch(() => refreshSourceChips(root));
@@ -327,8 +322,7 @@ function refreshSourceChips(root: HTMLElement) {
       actions.appendChild(convertBtn);
     }
 
-    const removeBtn = h(doc, "button", { className: "chatpdf-chip-action-btn chatpdf-chip-remove-btn", title: "Remove" });
-    removeBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    const removeBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-remove-btn", title: "Remove" }, "Remove");
     removeBtn.addEventListener("click", (e: Event) => {
       e.stopPropagation();
       session.removeSource(source.key);
@@ -371,15 +365,18 @@ function appendMessage(root: HTMLElement, role: "user" | "assistant", content: s
 
   if (role === "assistant") {
     // Avatar
-    const avatar = h(doc, "div", { className: "chatpdf-avatar chatpdf-avatar-assistant" });
-    avatar.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`;
+    const avatar = h(doc, "div", { className: "chatpdf-avatar chatpdf-avatar-assistant" }, "\u2728");
     row.appendChild(avatar);
   }
 
   const bubble = h(doc, "div", { className: `chatpdf-message chatpdf-message-${role}` });
 
   if (role === "assistant") {
-    bubble.innerHTML = renderMarkdown(content);
+    try {
+      bubble.innerHTML = renderMarkdown(content);
+    } catch {
+      bubble.textContent = content;
+    }
   } else {
     bubble.textContent = content;
   }
@@ -425,7 +422,12 @@ async function handleSend(root: HTMLElement) {
     bubble.className = "chatpdf-message chatpdf-message-assistant";
 
     // Thinking indicator
-    bubble.innerHTML = `<div class="chatpdf-thinking"><span></span><span></span><span></span></div>`;
+    const thinking = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+    thinking.className = "chatpdf-thinking";
+    for (let i = 0; i < 3; i++) {
+      thinking.appendChild(doc.createElementNS("http://www.w3.org/1999/xhtml", "span"));
+    }
+    bubble.appendChild(thinking);
 
     row.appendChild(bubble);
     const messagesEl = root.querySelector("#chatpdf-messages");
@@ -436,13 +438,22 @@ async function handleSend(root: HTMLElement) {
     const win = doc.defaultView!;
     let renderTimer: number | null = null;
 
+    /** Safely set bubble content; fall back to plain text on XHTML parse errors. */
+    function setBubbleHtml(text: string) {
+      try {
+        bubble.innerHTML = renderMarkdown(text);
+      } catch {
+        bubble.textContent = text;
+      }
+    }
+
     const fullResponse = await llmChat(messages, (chunk: string, done: boolean) => {
       if (!done) {
         fullText += chunk;
         if (!renderTimer) {
           renderTimer = win.setTimeout(() => {
             renderTimer = null;
-            bubble.innerHTML = renderMarkdown(fullText);
+            setBubbleHtml(fullText);
             if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
           }, 80);
         }
@@ -451,7 +462,7 @@ async function handleSend(root: HTMLElement) {
           win.clearTimeout(renderTimer);
           renderTimer = null;
         }
-        bubble.innerHTML = renderMarkdown(fullText);
+        setBubbleHtml(fullText);
         if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
       }
     });
