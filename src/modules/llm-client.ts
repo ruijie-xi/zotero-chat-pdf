@@ -3,6 +3,7 @@ import { getPref } from "../utils/prefs";
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  reasoning?: string;
 }
 
 export type StreamCallback = (chunk: string, done: boolean) => void;
@@ -104,11 +105,13 @@ export async function chat(
         return fullText;
       }
 
+      let parsed;
       try {
-        processChunk(JSON.parse(data));
+        parsed = JSON.parse(data);
       } catch {
-        // Skip malformed JSON lines
+        continue; // Skip malformed JSON lines
       }
+      processChunk(parsed);
     }
   }
 

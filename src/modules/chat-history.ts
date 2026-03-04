@@ -5,7 +5,7 @@ export interface SavedSession {
   title: string;
   sourceKeys: string[];
   sourceTitles: string[];
-  messages: { role: string; content: string }[];
+  messages: { role: string; content: string; reasoning?: string }[];
   createdAt: number;
   updatedAt: number;
 }

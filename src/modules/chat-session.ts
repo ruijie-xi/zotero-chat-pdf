@@ -110,8 +110,10 @@ export class ChatSession {
     this.updatedAt = Date.now();
   }
 
-  addAssistantMessage(content: string): void {
-    this.history.push({ role: "assistant", content });
+  addAssistantMessage(content: string, reasoning?: string): void {
+    const msg: ChatMessage = { role: "assistant", content };
+    if (reasoning) msg.reasoning = reasoning;
+    this.history.push(msg);
     this.updatedAt = Date.now();
   }
 
@@ -138,7 +140,11 @@ export class ChatSession {
       title: this.title,
       sourceKeys: sources.map((s) => s.key),
       sourceTitles: sources.map((s) => s.title),
-      messages: this.history.map((m) => ({ role: m.role, content: m.content })),
+      messages: this.history.map((m) => {
+        const saved: { role: string; content: string; reasoning?: string } = { role: m.role, content: m.content };
+        if (m.reasoning) saved.reasoning = m.reasoning;
+        return saved;
+      }),
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -149,7 +155,6 @@ export class ChatSession {
     session.id = data.id;
     session.title = data.title;
     session.createdAt = data.createdAt;
-    session.updatedAt = data.updatedAt;
     for (let i = 0; i < data.sourceKeys.length; i++) {
       session.addSource(data.sourceKeys[i], data.sourceTitles[i] || "Untitled");
     }
@@ -157,9 +162,13 @@ export class ChatSession {
       if (msg.role === "user") {
         session.history.push({ role: "user", content: msg.content });
       } else if (msg.role === "assistant") {
-        session.history.push({ role: "assistant", content: msg.content });
+        const m: ChatMessage = { role: "assistant", content: msg.content };
+        if (msg.reasoning) m.reasoning = msg.reasoning;
+        session.history.push(m);
       }
     }
+    // Restore updatedAt AFTER addSource loop (which sets updatedAt = Date.now())
+    session.updatedAt = data.updatedAt;
     return session;
   }
 
@@ -192,7 +201,8 @@ export class ChatSession {
         break;
       }
       totalChars += msg.content.length;
-      recentHistory.unshift(msg);
+      // Strip reasoning from messages sent to the API — it's only for UI display
+      recentHistory.unshift({ role: msg.role, content: msg.content });
     }
 
     if (droppedCount > 0) {

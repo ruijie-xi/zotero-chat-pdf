@@ -16,6 +16,29 @@ let showingHistory = false;
 let isStreaming = false;
 let currentAbortController: { abort(): void; signal: AbortSignal } | null = null;
 
+/** Live state of an active stream (foreground or background). */
+interface StreamState {
+  session: ChatSession;
+  abortController: { abort(): void; signal: AbortSignal };
+  /** Accumulated content text so far. */
+  fullText: string;
+  /** Accumulated reasoning/thinking text so far. */
+  fullReasoning: string;
+  /** Whether the thinking phase is done. */
+  thinkingDone: boolean;
+  /** Total thinking time in seconds (set when thinking completes). */
+  thinkingElapsed: number;
+  /** Timestamp when thinking started (for live timer display). */
+  thinkingStartTime: number;
+}
+
+/**
+ * Track active streams keyed by session ID.
+ * When a stream is running for a session that the user navigated away from,
+ * this map keeps the live state so we can resume the UI if the user comes back.
+ */
+const backgroundStreams = new Map<string, StreamState>();
+
 /** Create an AbortController — works in both chrome and content contexts. */
 function createAbortController(): { controller: { abort(): void; signal: AbortSignal }; signal: AbortSignal } {
   // In Zotero's chrome context, AbortController may not be globally available.
@@ -84,6 +107,22 @@ function h(doc: Document, tag: string, attrs?: Record<string, string>, ...childr
     else el.appendChild(child);
   }
   return el;
+}
+
+/** Reset the input UI to the non-streaming state.
+ *  Call this whenever switching to a different session so the textarea
+ *  and send button aren't stuck in the old stream's "stop" mode.
+ *  IMPORTANT: This detaches the currentAbortController so that background
+ *  streams continue running even though the UI has moved on. */
+function resetStreamingUI(root: HTMLElement): void {
+  // Detach the foreground abort controller — the background stream keeps its own
+  // reference via the backgroundStreams map and will continue running.
+  currentAbortController = null;
+  isStreaming = false;
+  const ta = root.querySelector("#chatpdf-textarea") as HTMLTextAreaElement;
+  const sb = root.querySelector("#chatpdf-send") as HTMLButtonElement;
+  if (ta) ta.disabled = false;
+  if (sb) setSendButtonToSend(sb);
 }
 
 // ---- Session management ----
@@ -402,6 +441,7 @@ function buildChatUI(root: HTMLElement) {
     abortCurrentStream();
     await autoSaveSession();
     session = new ChatSession();
+    resetStreamingUI(root);
     hideHistoryView(root);
     // Rebuild chat area
     const msgs = root.querySelector("#chatpdf-messages");
@@ -492,24 +532,51 @@ async function loadHistoryList(root: HTMLElement) {
 
       // Click to load session
       info.addEventListener("click", async () => {
-        abortCurrentStream();
         await autoSaveSession();
-        const saved = await ChatHistory.loadSession(meta.id);
-        if (saved) {
+
+        // Check if there's a background stream for this session — use its live data
+        const bgStream = backgroundStreams.get(meta.id);
+        if (bgStream) {
+          Zotero.debug(`[ChatPDF] Loading session ${meta.id} which has an active background stream — using live session`);
+          session = bgStream.session;
+        } else {
+          const saved = await ChatHistory.loadSession(meta.id);
+          if (!saved) return;
           session = ChatSession.fromSavedSession(saved);
-          // Reload markdown for sources from cache
-          for (const source of session.getSources()) {
+        }
+
+        // Reset UI so it's not stuck in the old stream's stop/disabled state
+        resetStreamingUI(root);
+
+        // If this session has an active background stream, restore streaming state
+        // so the Stop button works and the user can see it's still generating
+        if (bgStream) {
+          currentAbortController = bgStream.abortController;
+          isStreaming = true;
+          const sb = root.querySelector("#chatpdf-send") as HTMLButtonElement;
+          if (sb) setSendButtonToStop(sb);
+          const ta = root.querySelector("#chatpdf-textarea") as HTMLTextAreaElement;
+          if (ta) ta.disabled = true;
+        }
+        // Reload markdown for sources from cache
+        for (const source of session.getSources()) {
+          if (source.status !== "ready") {
             if (await MDCache.has(source.key)) {
               const md = await MDCache.read(source.key);
               session.setSourceReady(source.key, md);
             }
           }
-          hideHistoryView(root);
-          // Re-render messages
-          const msgs = root.querySelector("#chatpdf-messages");
-          if (msgs) msgs.innerHTML = "";
-          renderChatHistory(root);
-          refreshSourceChips(root);
+        }
+        hideHistoryView(root);
+        // Re-render messages
+        const msgs = root.querySelector("#chatpdf-messages");
+        if (msgs) msgs.innerHTML = "";
+        renderChatHistory(root);
+        refreshSourceChips(root);
+
+        // If there's an active background stream, render its current state
+        if (bgStream && msgs) {
+          renderLiveStreamState(root, bgStream);
         }
       });
 
@@ -621,6 +688,143 @@ function refreshSourceChips(root: HTMLElement) {
 
 // ---- Messages ----
 
+/**
+ * Render the current state of a live background stream as an assistant bubble
+ * and set up a polling interval to live-update as the stream progresses.
+ * The poll reads from `state` (updated by the stream callbacks) and
+ * incrementally updates the DOM — so the user sees characters appearing
+ * just like when they never left.
+ */
+function renderLiveStreamState(root: HTMLElement, state: StreamState) {
+  const messagesEl = root.querySelector("#chatpdf-messages");
+  if (!messagesEl) return;
+  const doc = root.ownerDocument!;
+  const win = doc.defaultView!;
+
+  const row = h(doc, "div", { className: "chatpdf-msg-row chatpdf-msg-row-assistant" });
+  row.id = "chatpdf-bg-stream-indicator";
+
+  const avatar = h(doc, "div", { className: "chatpdf-avatar chatpdf-avatar-assistant" });
+  avatar.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`;
+  row.appendChild(avatar);
+
+  const bubble = h(doc, "div", { className: "chatpdf-message chatpdf-message-assistant" });
+
+  // Mutable DOM references for incremental updates
+  let reasoningBlock: HTMLElement | null = null;
+  let reasoningContentEl: HTMLElement | null = null;
+  let reasoningLabel: HTMLElement | null = null;
+  let reasoningSpinner: HTMLElement | null = null;
+  let reasoningTimerEl: HTMLElement | null = null;
+  let contentWrap: HTMLElement | null = null;
+  let dots: HTMLElement | null = null;
+
+  // Track what we've rendered so we only update on changes
+  let lastReasoningLen = 0;
+  let lastTextLen = 0;
+  let wasThinkingDone = false;
+
+  function ensureReasoningBlock() {
+    if (reasoningBlock) return;
+    reasoningBlock = h(doc, "div", { className: "chatpdf-reasoning-block chatpdf-reasoning-expanded" });
+    const toggle = h(doc, "button", { className: "chatpdf-reasoning-toggle" });
+    const chevron = h(doc, "span", { className: "chatpdf-reasoning-chevron" }, "\u25B6");
+    reasoningLabel = h(doc, "span", { className: "chatpdf-reasoning-label" }, "Thinking");
+    reasoningSpinner = h(doc, "span", { className: "chatpdf-reasoning-spinner" });
+    reasoningTimerEl = h(doc, "span", { className: "chatpdf-reasoning-timer" }, "0s");
+    toggle.appendChild(chevron);
+    toggle.appendChild(reasoningSpinner);
+    toggle.appendChild(reasoningLabel);
+    toggle.appendChild(reasoningTimerEl);
+    toggle.addEventListener("click", () => {
+      reasoningBlock!.classList.toggle("chatpdf-reasoning-expanded");
+    });
+    reasoningContentEl = h(doc, "div", { className: "chatpdf-reasoning-content" });
+    reasoningBlock.appendChild(toggle);
+    reasoningBlock.appendChild(reasoningContentEl);
+    bubble.insertBefore(reasoningBlock, bubble.firstChild);
+  }
+
+  function updateReasoning() {
+    if (!state.fullReasoning) return;
+    // Remove dots on first reasoning token
+    if (dots && dots.parentNode) dots.remove();
+    ensureReasoningBlock();
+
+    if (state.fullReasoning.length !== lastReasoningLen) {
+      reasoningContentEl!.textContent = state.fullReasoning;
+      lastReasoningLen = state.fullReasoning.length;
+      scrollToBottomIfNeeded(messagesEl!);
+    }
+
+    // Update timer while thinking is in progress
+    if (!state.thinkingDone && state.thinkingStartTime > 0 && reasoningTimerEl) {
+      const elapsed = Math.floor((Date.now() - state.thinkingStartTime) / 1000);
+      reasoningTimerEl.textContent = `${elapsed}s`;
+    }
+
+    // Transition from "Thinking" to "Thought" when done
+    if (state.thinkingDone && !wasThinkingDone) {
+      wasThinkingDone = true;
+      if (reasoningSpinner) reasoningSpinner.remove();
+      if (reasoningLabel) reasoningLabel.textContent = "Thought";
+      if (reasoningTimerEl) {
+        reasoningTimerEl.textContent = state.thinkingElapsed > 0 ? `${state.thinkingElapsed}s` : "";
+      }
+      if (reasoningBlock) reasoningBlock.classList.remove("chatpdf-reasoning-expanded");
+    }
+  }
+
+  function updateContent() {
+    if (state.fullText.length === lastTextLen) return;
+    lastTextLen = state.fullText.length;
+    // Remove dots on first content token
+    if (dots && dots.parentNode) dots.remove();
+    if (!contentWrap) {
+      contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+      bubble.appendChild(contentWrap);
+    }
+    try {
+      contentWrap.innerHTML = renderMarkdown(state.fullText);
+    } catch {
+      contentWrap.textContent = state.fullText;
+    }
+    scrollToBottomIfNeeded(messagesEl!);
+  }
+
+  // ---- Initial render ----
+  updateReasoning();
+  // If thinking is already done at the point we render, mark it
+  if (state.thinkingDone) wasThinkingDone = true;
+  updateContent();
+
+  // Show bouncing dots if no content yet
+  if (!state.fullText) {
+    dots = h(doc, "div", { className: "chatpdf-thinking" });
+    for (let i = 0; i < 3; i++) {
+      dots.appendChild(doc.createElementNS("http://www.w3.org/1999/xhtml", "span"));
+    }
+    bubble.appendChild(dots);
+  }
+
+  row.appendChild(bubble);
+  messagesEl.appendChild(row);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  // ---- Polling: update the DOM as the stream progresses ----
+  // The original stream callbacks keep updating state.fullText/fullReasoning.
+  // We poll at 100ms to read those values and render them.
+  const pollInterval = win.setInterval(() => {
+    // Stop polling if the stream completed or our row was detached from the DOM
+    if (!backgroundStreams.has(state.session.id) || !row.isConnected) {
+      win.clearInterval(pollInterval);
+      return;
+    }
+    updateReasoning();
+    updateContent();
+  }, 100) as unknown as number;
+}
+
 function renderChatHistory(root: HTMLElement) {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return;
@@ -632,7 +836,7 @@ function renderChatHistory(root: HTMLElement) {
     let msgIndex = 0;
     for (const msg of history) {
       if (msg.role === "system") continue;
-      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex);
+      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning);
       msgIndex++;
     }
   }
@@ -654,7 +858,7 @@ function createCopyButton(doc: Document, rawMarkdown: string): HTMLElement {
   return btn;
 }
 
-function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number): HTMLElement {
+function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string): HTMLElement {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return root;
   const doc = root.ownerDocument!;
@@ -677,10 +881,30 @@ function appendMessage(root: HTMLElement, role: "user" | "assistant", content: s
   const bubble = h(doc, "div", { className: `chatpdf-message chatpdf-message-${role}` });
 
   if (role === "assistant") {
+    // Render reasoning/thinking block if available
+    if (reasoning) {
+      const reasoningBlock = h(doc, "div", { className: "chatpdf-reasoning-block" });
+      const toggle = h(doc, "button", { className: "chatpdf-reasoning-toggle" });
+      const chevron = h(doc, "span", { className: "chatpdf-reasoning-chevron" }, "\u25B6");
+      const label = h(doc, "span", { className: "chatpdf-reasoning-label" }, "Thought");
+      toggle.appendChild(chevron);
+      toggle.appendChild(label);
+      toggle.addEventListener("click", () => {
+        reasoningBlock.classList.toggle("chatpdf-reasoning-expanded");
+      });
+      const reasoningContentEl = h(doc, "div", { className: "chatpdf-reasoning-content" });
+      reasoningContentEl.textContent = reasoning;
+      reasoningBlock.appendChild(toggle);
+      reasoningBlock.appendChild(reasoningContentEl);
+      bubble.appendChild(reasoningBlock);
+    }
+
     try {
-      bubble.innerHTML = renderMarkdown(content);
+      const contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+      contentWrap.innerHTML = renderMarkdown(content);
+      bubble.appendChild(contentWrap);
     } catch {
-      bubble.textContent = content;
+      bubble.appendChild(doc.createTextNode(content));
     }
     // Copy button for assistant messages
     row.appendChild(createCopyButton(doc, content));
@@ -841,14 +1065,20 @@ async function handleSend(root: HTMLElement) {
     return;
   }
 
-  // Abort any existing stream before starting a new one
+  // Abort any previous stream for the CURRENT session only.
+  // Background streams for other sessions are left running.
   abortCurrentStream();
+
+  // Capture session reference so background streaming saves to the correct session
+  // even if the user navigates away and the module-level `session` changes.
+  const streamSession = session;
+  const streamSessionId = streamSession.id;
 
   textarea.value = "";
   textarea.style.height = "auto";
 
   // Track message index: current history length is the index for this new user message
-  const userMsgIndex = session.getHistoryLength();
+  const userMsgIndex = streamSession.getHistoryLength();
   appendMessage(root, "user", userText, userMsgIndex);
 
   textarea.disabled = true;
@@ -856,6 +1086,19 @@ async function handleSend(root: HTMLElement) {
   const { controller, signal } = createAbortController();
   currentAbortController = controller;
   setSendButtonToStop(sendBtn);
+
+  // Register this stream so it can be tracked as a background stream.
+  // fullText/fullReasoning are updated via closure below.
+  const streamState: StreamState = {
+    session: streamSession,
+    abortController: controller,
+    fullText: "",
+    fullReasoning: "",
+    thinkingDone: false,
+    thinkingElapsed: 0,
+    thinkingStartTime: 0,
+  };
+  backgroundStreams.set(streamSessionId, streamState);
 
   const doc = root.ownerDocument!;
 
@@ -866,14 +1109,19 @@ async function handleSend(root: HTMLElement) {
   try {
     Zotero.debug("[ChatPDF] handleSend: building messages...");
     // Build messages BEFORE adding to history to avoid duplication
-    const messages = session.buildMessages(userText);
-    session.addUserMessage(userText);
+    const messages = streamSession.buildMessages(userText);
+    streamSession.addUserMessage(userText);
+
+    // Save immediately so the session appears in history right away
+    ChatHistory.saveSession(streamSession.toSavedSession()).catch((e: any) => {
+      Zotero.debug(`[ChatPDF] early save error: ${e.message}`);
+    });
 
     // Debug: log full request
     const model = (getPref("llmModel") as string) || "deepseek-chat";
     logLLMRequest(messages, model).catch(() => {});
 
-    const assistantMsgIndex = session.getHistoryLength(); // index for the upcoming assistant message
+    const assistantMsgIndex = streamSession.getHistoryLength(); // index for the upcoming assistant message
     Zotero.debug(`[ChatPDF] handleSend: creating assistant row (index=${assistantMsgIndex}), calling LLM...`);
     const row = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
     row.className = "chatpdf-msg-row chatpdf-msg-row-assistant";
@@ -901,6 +1149,12 @@ async function handleSend(root: HTMLElement) {
     if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 
     const win = doc.defaultView!;
+
+    // Helper: check if the UI is still showing the session that initiated this stream
+    // AND the DOM nodes created by this stream are still in the document.
+    // When the user navigates away and back, the DOM is rebuilt and our old
+    // bubble/row references become detached — we must not update them.
+    const isActiveSession = () => session === streamSession && row.isConnected;
 
     // ---- Reasoning/Thinking block ----
     let reasoningBlock: HTMLElement | null = null;
@@ -940,6 +1194,7 @@ async function handleSend(root: HTMLElement) {
 
       // Start timer
       thinkingStartTime = Date.now();
+      streamState.thinkingStartTime = thinkingStartTime;
       thinkingTimerInterval = win.setInterval(() => {
         const elapsed = Math.floor((Date.now() - thinkingStartTime) / 1000);
         if (reasoningTimer) reasoningTimer.textContent = `${elapsed}s`;
@@ -948,47 +1203,62 @@ async function handleSend(root: HTMLElement) {
 
     // Thinking callback
     const onThinking: ThinkingCallback = (chunk: string, done: boolean) => {
-      if (!done) {
-        // Remove initial dots on first thinking token
-        if (thinkingDots.parentNode) thinkingDots.remove();
+      try {
+        if (!done) {
+          fullReasoning += chunk;
+          streamState.fullReasoning = fullReasoning;
+          // Skip DOM updates if user navigated away
+          if (!isActiveSession()) return;
 
-        if (!reasoningBlock) createReasoningBlock();
+          // Remove initial dots on first thinking token
+          if (thinkingDots.parentNode) thinkingDots.remove();
 
-        fullReasoning += chunk;
-        // Throttle rendering at 80ms
-        if (!reasoningRenderTimer) {
-          reasoningRenderTimer = win.setTimeout(() => {
+          if (!reasoningBlock) createReasoningBlock();
+
+          // Throttle rendering at 80ms
+          if (!reasoningRenderTimer) {
+            reasoningRenderTimer = win.setTimeout(() => {
+              reasoningRenderTimer = null;
+              if (!isActiveSession()) return;
+              if (reasoningContent) reasoningContent.textContent = fullReasoning;
+              if (messagesEl) scrollToBottomIfNeeded(messagesEl);
+            }, 80) as unknown as number;
+          }
+        } else {
+          // Thinking done — record elapsed time
+          const elapsed = thinkingStartTime ? Math.floor((Date.now() - thinkingStartTime) / 1000) : 0;
+          streamState.thinkingDone = true;
+          streamState.thinkingElapsed = elapsed;
+
+          // Clean up timers regardless of active session
+          if (thinkingTimerInterval) {
+            win.clearInterval(thinkingTimerInterval);
+            thinkingTimerInterval = null;
+          }
+          if (reasoningRenderTimer) {
+            win.clearTimeout(reasoningRenderTimer);
             reasoningRenderTimer = null;
+          }
+          // Only update DOM if still on the same session
+          if (isActiveSession()) {
             if (reasoningContent) reasoningContent.textContent = fullReasoning;
-            if (messagesEl) scrollToBottomIfNeeded(messagesEl);
-          }, 80) as unknown as number;
-        }
-      } else {
-        // Thinking done
-        if (thinkingTimerInterval) {
-          win.clearInterval(thinkingTimerInterval);
-          thinkingTimerInterval = null;
-        }
-        if (reasoningRenderTimer) {
-          win.clearTimeout(reasoningRenderTimer);
-          reasoningRenderTimer = null;
-        }
-        if (reasoningContent) reasoningContent.textContent = fullReasoning;
-        if (reasoningSpinner) reasoningSpinner.remove();
+            if (reasoningSpinner) reasoningSpinner.remove();
 
-        // Update label with final time
-        const elapsed = thinkingStartTime ? Math.floor((Date.now() - thinkingStartTime) / 1000) : 0;
-        if (reasoningLabel && elapsed > 0) {
-          reasoningLabel.textContent = "Thought";
-        }
-        if (reasoningTimer && elapsed > 0) {
-          reasoningTimer.textContent = `${elapsed}s`;
-        }
+            if (reasoningLabel && elapsed > 0) {
+              reasoningLabel.textContent = "Thought";
+            }
+            if (reasoningTimer && elapsed > 0) {
+              reasoningTimer.textContent = `${elapsed}s`;
+            }
 
-        // Collapse the block when thinking finishes
-        if (reasoningBlock) {
-          reasoningBlock.classList.remove("chatpdf-reasoning-expanded");
+            // Collapse the block when thinking finishes
+            if (reasoningBlock) {
+              reasoningBlock.classList.remove("chatpdf-reasoning-expanded");
+            }
+          }
         }
+      } catch (cbErr) {
+        Zotero.debug(`[ChatPDF] thinking callback error: ${cbErr}`);
       }
     };
 
@@ -1020,25 +1290,36 @@ async function handleSend(root: HTMLElement) {
     }
 
     const fullResponse = await llmChat(messages, (chunk: string, done: boolean) => {
-      if (!done) {
-        // Remove dots on first content token (for non-thinking models)
-        if (thinkingDots.parentNode) thinkingDots.remove();
+      try {
+        if (!done) {
+          fullText += chunk;
+          streamState.fullText = fullText;
+          // Skip DOM updates if user navigated away
+          if (!isActiveSession()) return;
 
-        fullText += chunk;
-        if (!renderTimer) {
-          renderTimer = win.setTimeout(() => {
+          // Remove dots on first content token (for non-thinking models)
+          if (thinkingDots.parentNode) thinkingDots.remove();
+
+          if (!renderTimer) {
+            renderTimer = win.setTimeout(() => {
+              renderTimer = null;
+              if (!isActiveSession()) return;
+              setBubbleHtml(fullText);
+              if (messagesEl) scrollToBottomIfNeeded(messagesEl);
+            }, 80);
+          }
+        } else {
+          if (renderTimer) {
+            win.clearTimeout(renderTimer);
             renderTimer = null;
+          }
+          if (isActiveSession()) {
             setBubbleHtml(fullText);
             if (messagesEl) scrollToBottomIfNeeded(messagesEl);
-          }, 80);
+          }
         }
-      } else {
-        if (renderTimer) {
-          win.clearTimeout(renderTimer);
-          renderTimer = null;
-        }
-        setBubbleHtml(fullText);
-        if (messagesEl) scrollToBottomIfNeeded(messagesEl);
+      } catch (cbErr) {
+        Zotero.debug(`[ChatPDF] stream content callback error: ${cbErr}`);
       }
     }, onThinking, signal);
 
@@ -1047,43 +1328,80 @@ async function handleSend(root: HTMLElement) {
 
     Zotero.debug(`[ChatPDF] handleSend: LLM response received, ${fullResponse.length} chars`);
 
-    // Add copy button after streaming completes
-    row.appendChild(createCopyButton(doc, fullResponse));
+    // Add copy button after streaming completes (only if still viewing this session)
+    if (isActiveSession()) {
+      row.appendChild(createCopyButton(doc, fullResponse));
+    }
 
     // Debug: log full response
     logLLMResponse(fullResponse, fullReasoning || undefined).catch(() => {});
 
-    session.addAssistantMessage(fullResponse);
-    // Refresh source chips to show context usage ratios from truncation
-    refreshSourceChips(root);
-    // Auto-save after assistant message
-    await autoSaveSession();
+    streamSession.addAssistantMessage(fullResponse, fullReasoning || undefined);
+    // Refresh source chips only if still viewing this session
+    if (isActiveSession()) {
+      refreshSourceChips(root);
+    }
+    // Save to the stream's session (not the module-level one)
+    try {
+      await ChatHistory.saveSession(streamSession.toSavedSession());
+    } catch (saveErr: any) {
+      Zotero.debug(`[ChatPDF] autoSaveSession error: ${saveErr.message}`);
+    }
+
+    Zotero.debug(`[ChatPDF] Background stream completed for session ${streamSessionId}, isActive=${isActiveSession()}`);
+
+    // If user navigated away but has since come back to this session, refresh the display
+    if (!isActiveSession() && session.id === streamSessionId) {
+      Zotero.debug(`[ChatPDF] User returned to streaming session — refreshing display`);
+      // The in-memory `session` was loaded from disk and may not have the assistant message.
+      // Replace it with the completed streamSession which has the full response.
+      session = streamSession;
+      const msgs = root.querySelector("#chatpdf-messages");
+      if (msgs) msgs.innerHTML = "";
+      renderChatHistory(root);
+      refreshSourceChips(root);
+    }
   } catch (err: any) {
     Zotero.debug(`[ChatPDF] handleSend error: ${err?.name}: ${err?.message}\n${err?.stack}`);
     if (err.name === "AbortError") {
-      // Add "[Generation stopped]" marker to the last assistant bubble in the DOM
-      const messagesEl = root.querySelector("#chatpdf-messages");
-      const lastBubble = messagesEl?.querySelector(".chatpdf-msg-row-assistant:last-child .chatpdf-message-assistant") as HTMLElement;
-      if (lastBubble) {
-        const stoppedMarker = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
-        stoppedMarker.className = "chatpdf-stopped-marker";
-        stoppedMarker.textContent = "[Generation stopped]";
-        lastBubble.appendChild(stoppedMarker);
+      // Add "[Generation stopped]" marker only if still viewing this session
+      if (session === streamSession) {
+        const messagesEl = root.querySelector("#chatpdf-messages");
+        const lastBubble = messagesEl?.querySelector(".chatpdf-msg-row-assistant:last-child .chatpdf-message-assistant") as HTMLElement;
+        if (lastBubble) {
+          const stoppedMarker = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+          stoppedMarker.className = "chatpdf-stopped-marker";
+          stoppedMarker.textContent = "[Generation stopped]";
+          lastBubble.appendChild(stoppedMarker);
+        }
       }
-      // Save partial response so the session isn't lost when switching views
+      // Save partial response to the stream's session
       if (fullText) {
-        session.addAssistantMessage(fullText);
+        streamSession.addAssistantMessage(fullText, fullReasoning || undefined);
       }
-      await autoSaveSession();
+      try {
+        await ChatHistory.saveSession(streamSession.toSavedSession());
+      } catch (saveErr: any) {
+        Zotero.debug(`[ChatPDF] autoSaveSession error: ${saveErr.message}`);
+      }
     } else {
-      appendMessage(root, "assistant", `Error: ${err.message}`);
+      if (session === streamSession) {
+        appendMessage(root, "assistant", `Error: ${err.message}`);
+      }
     }
   } finally {
+    // Clean up background stream tracking
+    backgroundStreams.delete(streamSessionId);
+
+    // Always reset streaming state so new sends are possible
     isStreaming = false;
     currentAbortController = null;
-    textarea.disabled = false;
-    setSendButtonToSend(sendBtn);
-    textarea.focus();
+    // Only touch DOM elements if the UI is still showing the stream's session
+    if (session === streamSession) {
+      textarea.disabled = false;
+      setSendButtonToSend(sendBtn);
+      textarea.focus();
+    }
   }
 }
 
