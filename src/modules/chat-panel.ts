@@ -859,6 +859,10 @@ async function handleSend(root: HTMLElement) {
 
   const doc = root.ownerDocument!;
 
+  // Hoisted so catch block can access partial response on abort
+  let fullText = "";
+  let fullReasoning = "";
+
   try {
     Zotero.debug("[ChatPDF] handleSend: building messages...");
     // Build messages BEFORE adding to history to avoid duplication
@@ -904,7 +908,6 @@ async function handleSend(root: HTMLElement) {
     let reasoningLabel: HTMLElement | null = null;
     let reasoningTimer: HTMLElement | null = null;
     let reasoningSpinner: HTMLElement | null = null;
-    let fullReasoning = "";
     let thinkingStartTime = 0;
     let thinkingTimerInterval: number | null = null;
     let reasoningRenderTimer: number | null = null;
@@ -990,7 +993,6 @@ async function handleSend(root: HTMLElement) {
     };
 
     // ---- Content streaming ----
-    let fullText = "";
     let renderTimer: number | null = null;
 
     /** Safely set bubble content; fall back to plain text on XHTML parse errors. */
@@ -1059,7 +1061,7 @@ async function handleSend(root: HTMLElement) {
   } catch (err: any) {
     Zotero.debug(`[ChatPDF] handleSend error: ${err?.name}: ${err?.message}\n${err?.stack}`);
     if (err.name === "AbortError") {
-      // User stopped generation — save partial response
+      // Add "[Generation stopped]" marker to the last assistant bubble in the DOM
       const messagesEl = root.querySelector("#chatpdf-messages");
       const lastBubble = messagesEl?.querySelector(".chatpdf-msg-row-assistant:last-child .chatpdf-message-assistant") as HTMLElement;
       if (lastBubble) {
@@ -1068,6 +1070,11 @@ async function handleSend(root: HTMLElement) {
         stoppedMarker.textContent = "[Generation stopped]";
         lastBubble.appendChild(stoppedMarker);
       }
+      // Save partial response so the session isn't lost when switching views
+      if (fullText) {
+        session.addAssistantMessage(fullText);
+      }
+      await autoSaveSession();
     } else {
       appendMessage(root, "assistant", `Error: ${err.message}`);
     }
