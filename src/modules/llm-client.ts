@@ -14,6 +14,7 @@ export async function chat(
   messages: ChatMessage[],
   onStream?: StreamCallback,
   onThinking?: ThinkingCallback,
+  signal?: AbortSignal,
 ): Promise<string> {
   const apiBase = getPref("llmApiBase") || "https://api.deepseek.com/v1";
   const apiKey = getPref("llmApiKey");
@@ -37,6 +38,7 @@ export async function chat(
       messages,
       stream: streaming,
     }),
+    signal,
   });
 
   if (!res.ok) {
@@ -80,6 +82,7 @@ export async function chat(
   }
 
   while (true) {
+    if (signal?.aborted) break;
     const { done, value } = await reader.read();
     if (done) break;
 

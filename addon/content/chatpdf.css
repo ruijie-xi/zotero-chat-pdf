@@ -1,15 +1,33 @@
 /* ===== ChatPDF Panel ===== */
 
-/* Hide linkset injected via bodyXHTML */
-#chatpdf-root ~ linkset,
-item-pane-custom-section linkset {
-  display: none;
+/* Side panel container (XUL vbox) */
+#chatpdf-panel-container {
+  min-width: 280px;
+  max-width: 50vw;
+  background: var(--material-background, #fff);
+  border-left: 1px solid var(--fill-quinary, #e0e0e0);
+  overflow: hidden;
+}
+
+/* XUL splitter between item pane and chat panel */
+#chatpdf-splitter {
+  width: 5px;
+  min-width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  border: none;
+  appearance: none;
+  -moz-appearance: none;
+}
+
+#chatpdf-splitter:hover {
+  background: var(--color-accent10, rgba(66, 133, 244, 0.12));
 }
 
 #chatpdf-root {
   display: flex;
   flex-direction: column;
-  height: var(--chatpdf-panel-height, 100%);
+  height: 100%;
   width: 100%;
   min-height: 200px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -942,4 +960,26 @@ item-pane-custom-section linkset {
 
 .chatpdf-messages::-webkit-scrollbar-thumb:hover {
   background: var(--fill-quaternary, #ccc);
+}
+
+/* ===== Stop Button ===== */
+
+.chatpdf-send-btn-stop {
+  background: #d32f2f;
+  font-size: 10px;
+}
+
+.chatpdf-send-btn-stop:hover {
+  opacity: 0.85;
+}
+
+/* ===== Stopped Marker ===== */
+
+.chatpdf-stopped-marker {
+  color: var(--fill-tertiary, #999);
+  font-size: 11px;
+  font-style: italic;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--fill-quinary, #e0e0e0);
 }

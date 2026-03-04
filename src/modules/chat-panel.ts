@@ -11,6 +11,45 @@ import { getPref } from "../utils/prefs";
 let session = new ChatSession();
 let showingHistory = false;
 
+// ---- Streaming state ----
+
+let isStreaming = false;
+let currentAbortController: { abort(): void; signal: AbortSignal } | null = null;
+
+/** Create an AbortController — works in both chrome and content contexts. */
+function createAbortController(): { controller: { abort(): void; signal: AbortSignal }; signal: AbortSignal } {
+  // In Zotero's chrome context, AbortController may not be globally available.
+  // Access it from a window object instead.
+  const Ctor = (typeof AbortController !== "undefined")
+    ? AbortController
+    : (Zotero.getMainWindow() as any).AbortController;
+  const controller = new Ctor();
+  return { controller, signal: controller.signal };
+}
+
+/** Abort the current LLM stream if one is active. */
+export function abortCurrentStream(): void {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+  isStreaming = false;
+}
+
+// ---- Scroll helpers ----
+
+/** Check if the user is near the bottom of a scrollable element. */
+function isNearBottom(el: Element, threshold = 60): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+}
+
+/** Scroll to bottom only if the user hasn't scrolled up. */
+function scrollToBottomIfNeeded(el: Element): void {
+  if (isNearBottom(el)) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
 // ---- Helpers ----
 
 function getPdfAttachment(item: Zotero.Item): Zotero.Item | null {
@@ -99,76 +138,81 @@ async function autoSaveSession(): Promise<void> {
   }
 }
 
-// ---- Full-height helper (pattern from zotero-pdf-translate) ----
+// ---- Side panel injection ----
 
-function updatePanelHeight(body: HTMLElement) {
-  const details = body.closest("item-details");
-  const head = body.closest("item-pane-custom-section")?.querySelector(".head");
-  if (!details || !head) return;
-  const container = details.querySelector(".zotero-view-item") as HTMLElement | null;
-  if (!container) return;
-  const height = container.clientHeight - head.clientHeight - 8;
-  body.style.setProperty("--chatpdf-panel-height", `${height}px`);
+const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+
+export function injectChatPanel(win: Window): void {
+  const doc = win.document;
+
+  // Avoid double injection
+  if (doc.getElementById("chatpdf-panel-container")) return;
+
+  // Find the main horizontal layout. In Zotero 7 the main browser area is
+  // inside a hbox that also holds the item pane.  We look for the element
+  // that contains the item-pane (usually a <hbox id="zotero-layout">
+  // or the <hbox> that wraps the center + right panes).
+  const itemPane = doc.getElementById("zotero-context-pane-inner")
+    || doc.getElementById("zotero-item-pane")
+    || doc.getElementById("zotero-context-pane");
+
+  // We want to insert after the item pane's parent hbox.  Walk up to find
+  // a suitable container.
+  const layoutBox = doc.getElementById("zotero-layout")
+    || itemPane?.closest("hbox")
+    || doc.querySelector("#main-window hbox");
+
+  if (!layoutBox) {
+    Zotero.debug("[ChatPDF] Could not find layout container to inject panel");
+    return;
+  }
+
+  // --- Inject CSS ---
+  const katexLink = doc.createElementNS("http://www.w3.org/1999/xhtml", "link") as HTMLLinkElement;
+  katexLink.rel = "stylesheet";
+  katexLink.href = `chrome://${config.addonRef}/content/katex.css`;
+  katexLink.id = "chatpdf-katex-css";
+  doc.documentElement.appendChild(katexLink);
+
+  const cssLink = doc.createElementNS("http://www.w3.org/1999/xhtml", "link") as HTMLLinkElement;
+  cssLink.rel = "stylesheet";
+  cssLink.href = `chrome://${config.addonRef}/content/chatpdf.css`;
+  cssLink.id = "chatpdf-main-css";
+  doc.documentElement.appendChild(cssLink);
+
+  // --- Create XUL splitter ---
+  const splitter = doc.createElementNS(XUL_NS, "splitter");
+  splitter.id = "chatpdf-splitter";
+  splitter.setAttribute("resizebefore", "closest");
+  splitter.setAttribute("resizeafter", "closest");
+
+  // --- Create XUL vbox container ---
+  const vbox = doc.createElementNS(XUL_NS, "vbox");
+  vbox.id = "chatpdf-panel-container";
+  vbox.setAttribute("width", "350");
+  vbox.setAttribute("flex", "0");
+  vbox.setAttribute("persist", "width");
+
+  // --- Create XHTML root div inside vbox ---
+  const root = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+  root.id = "chatpdf-root";
+  vbox.appendChild(root);
+
+  // Insert splitter + panel at the end of the layout box
+  layoutBox.appendChild(splitter);
+  layoutBox.appendChild(vbox);
+
+  // Build the chat UI once — it persists for the window lifetime
+  buildChatUI(root);
 }
 
-// ---- Section registration ----
-
-export function registerChatSection() {
-  Zotero.ItemPaneManager.registerSection({
-    paneID: "chatpdf-section",
-    pluginID: config.addonID,
-    header: {
-      l10nID: `${config.addonRef}-item-section-chatpdf-head-text`,
-      icon: `chrome://${config.addonRef}/content/icons/chat.svg`,
-    },
-    sidenav: {
-      l10nID: `${config.addonRef}-item-section-chatpdf-sidenav-tooltip`,
-      icon: `chrome://${config.addonRef}/content/icons/chat.svg`,
-    },
-    bodyXHTML: `
-      <linkset>
-        <html:link rel="stylesheet" href="chrome://${config.addonRef}/content/katex.css" />
-        <html:link rel="stylesheet" href="chrome://${config.addonRef}/content/chatpdf.css" />
-      </linkset>
-      <html:div id="chatpdf-root" xmlns:html="http://www.w3.org/1999/xhtml" />
-    `,
-    sectionButtons: [
-      {
-        type: "fullHeight",
-        icon: "chrome://zotero/skin/16/universal/maximize.svg",
-        l10nID: `${config.addonRef}-item-section-chatpdf-fullheight`,
-        onClick: ({ body }: { body: HTMLElement }) => {
-          updatePanelHeight(body);
-          const details = body.closest("item-details") as any;
-          if (details?.scrollToPane) {
-            details.scrollToPane(`${config.addonID}-chatpdf-section`);
-          }
-        },
-      },
-    ],
-    onInit: ({ body, refresh }: { body: HTMLElement; refresh: () => Promise<void> }) => {
-      const uid = Zotero.Utilities.randomString(8);
-      body.dataset.paneUid = uid;
-      // Store refresh function for external updates
-      (body as any)._chatpdfRefresh = refresh;
-    },
-    onDestroy: ({ body }: { body: HTMLElement }) => {
-      delete (body as any)._chatpdfRefresh;
-    },
-    onRender: ({ body, item }: { body: HTMLElement; item: Zotero.Item; setSectionSummary: (s: string) => void }) => {
-      const root = body.querySelector("#chatpdf-root") as HTMLElement;
-      if (!root) return;
-      buildChatUI(root, item);
-      updatePanelHeight(body);
-    },
-    onItemChange: ({ body, item, setEnabled }: { body: HTMLElement; item: Zotero.Item; setEnabled: (e: boolean) => void; setSectionSummary: (s: string) => void }) => {
-      const pdf = item ? getPdfAttachment(item) : null;
-      setEnabled(!!pdf);
-      const root = body?.querySelector("#chatpdf-root") as HTMLElement;
-      if (!root || !item || !pdf) return true;
-      return true;
-    },
-  });
+/** Remove injected panel elements from a window. */
+export function removeChatPanel(win: Window): void {
+  const doc = win.document;
+  doc.getElementById("chatpdf-panel-container")?.remove();
+  doc.getElementById("chatpdf-splitter")?.remove();
+  doc.getElementById("chatpdf-katex-css")?.remove();
+  doc.getElementById("chatpdf-main-css")?.remove();
 }
 
 // ---- Date formatting ----
@@ -193,7 +237,7 @@ function formatRelativeDate(timestamp: number): string {
 
 // ---- UI Building ----
 
-function buildChatUI(root: HTMLElement, item: Zotero.Item) {
+function buildChatUI(root: HTMLElement) {
   const doc = root.ownerDocument!;
   root.innerHTML = "";
   showingHistory = false;
@@ -307,12 +351,18 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
 
   // ---- Event handlers ----
 
-  sendBtn.addEventListener("click", () => handleSend(root));
+  sendBtn.addEventListener("click", () => {
+    if (isStreaming) {
+      abortCurrentStream();
+    } else {
+      handleSend(root);
+    }
+  });
   textarea.addEventListener("keydown", (e: Event) => {
     const ke = e as KeyboardEvent;
     if (ke.key === "Enter" && !ke.shiftKey) {
       ke.preventDefault();
-      handleSend(root);
+      if (!isStreaming) handleSend(root);
     }
   });
   // Auto-resize textarea
@@ -322,6 +372,7 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
   });
 
   clearLink.addEventListener("click", () => {
+    abortCurrentStream();
     session.clearHistory();
     const msgs = root.querySelector("#chatpdf-messages");
     if (msgs) {
@@ -348,11 +399,9 @@ function buildChatUI(root: HTMLElement, item: Zotero.Item) {
 
   // New Chat buttons (toolbar + header)
   const handleNewChat = async () => {
+    abortCurrentStream();
     await autoSaveSession();
     session = new ChatSession();
-    if (item) {
-      await addItemToSession(item);
-    }
     hideHistoryView(root);
     // Rebuild chat area
     const msgs = root.querySelector("#chatpdf-messages");
@@ -443,6 +492,7 @@ async function loadHistoryList(root: HTMLElement) {
 
       // Click to load session
       info.addEventListener("click", async () => {
+        abortCurrentStream();
         await autoSaveSession();
         const saved = await ChatHistory.loadSession(meta.id);
         if (saved) {
@@ -749,6 +799,21 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
   });
 }
 
+// ---- Send button appearance ----
+
+function setSendButtonToStop(sendBtn: HTMLButtonElement) {
+  sendBtn.textContent = "\u25A0"; // square stop icon
+  sendBtn.title = "Stop";
+  sendBtn.classList.add("chatpdf-send-btn-stop");
+  sendBtn.disabled = false;
+}
+
+function setSendButtonToSend(sendBtn: HTMLButtonElement) {
+  sendBtn.textContent = "\u2191"; // up arrow
+  sendBtn.title = "Send";
+  sendBtn.classList.remove("chatpdf-send-btn-stop");
+}
+
 // ---- Chat handling ----
 
 async function handleSend(root: HTMLElement) {
@@ -776,6 +841,9 @@ async function handleSend(root: HTMLElement) {
     return;
   }
 
+  // Abort any existing stream before starting a new one
+  abortCurrentStream();
+
   textarea.value = "";
   textarea.style.height = "auto";
 
@@ -784,9 +852,15 @@ async function handleSend(root: HTMLElement) {
   appendMessage(root, "user", userText, userMsgIndex);
 
   textarea.disabled = true;
-  sendBtn.disabled = true;
+  isStreaming = true;
+  const { controller, signal } = createAbortController();
+  currentAbortController = controller;
+  setSendButtonToStop(sendBtn);
+
+  const doc = root.ownerDocument!;
 
   try {
+    Zotero.debug("[ChatPDF] handleSend: building messages...");
     // Build messages BEFORE adding to history to avoid duplication
     const messages = session.buildMessages(userText);
     session.addUserMessage(userText);
@@ -796,7 +870,7 @@ async function handleSend(root: HTMLElement) {
     logLLMRequest(messages, model).catch(() => {});
 
     const assistantMsgIndex = session.getHistoryLength(); // index for the upcoming assistant message
-    const doc = root.ownerDocument!;
+    Zotero.debug(`[ChatPDF] handleSend: creating assistant row (index=${assistantMsgIndex}), calling LLM...`);
     const row = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
     row.className = "chatpdf-msg-row chatpdf-msg-row-assistant";
     row.dataset.msgIndex = String(assistantMsgIndex);
@@ -809,7 +883,7 @@ async function handleSend(root: HTMLElement) {
     const bubble = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
     bubble.className = "chatpdf-message chatpdf-message-assistant";
 
-    // Initial thinking indicator (bouncing dots — shown before any tokens arrive)
+    // Initial thinking indicator (bouncing dots -- shown before any tokens arrive)
     const thinkingDots = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
     thinkingDots.className = "chatpdf-thinking";
     for (let i = 0; i < 3; i++) {
@@ -883,7 +957,7 @@ async function handleSend(root: HTMLElement) {
           reasoningRenderTimer = win.setTimeout(() => {
             reasoningRenderTimer = null;
             if (reasoningContent) reasoningContent.textContent = fullReasoning;
-            if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+            if (messagesEl) scrollToBottomIfNeeded(messagesEl);
           }, 80) as unknown as number;
         }
       } else {
@@ -953,7 +1027,7 @@ async function handleSend(root: HTMLElement) {
           renderTimer = win.setTimeout(() => {
             renderTimer = null;
             setBubbleHtml(fullText);
-            if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+            if (messagesEl) scrollToBottomIfNeeded(messagesEl);
           }, 80);
         }
       } else {
@@ -962,12 +1036,14 @@ async function handleSend(root: HTMLElement) {
           renderTimer = null;
         }
         setBubbleHtml(fullText);
-        if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
+        if (messagesEl) scrollToBottomIfNeeded(messagesEl);
       }
-    }, onThinking);
+    }, onThinking, signal);
 
     // Clean up any lingering timers
     if (thinkingTimerInterval) win.clearInterval(thinkingTimerInterval);
+
+    Zotero.debug(`[ChatPDF] handleSend: LLM response received, ${fullResponse.length} chars`);
 
     // Add copy button after streaming completes
     row.appendChild(createCopyButton(doc, fullResponse));
@@ -981,10 +1057,25 @@ async function handleSend(root: HTMLElement) {
     // Auto-save after assistant message
     await autoSaveSession();
   } catch (err: any) {
-    appendMessage(root, "assistant", `Error: ${err.message}`);
+    Zotero.debug(`[ChatPDF] handleSend error: ${err?.name}: ${err?.message}\n${err?.stack}`);
+    if (err.name === "AbortError") {
+      // User stopped generation — save partial response
+      const messagesEl = root.querySelector("#chatpdf-messages");
+      const lastBubble = messagesEl?.querySelector(".chatpdf-msg-row-assistant:last-child .chatpdf-message-assistant") as HTMLElement;
+      if (lastBubble) {
+        const stoppedMarker = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+        stoppedMarker.className = "chatpdf-stopped-marker";
+        stoppedMarker.textContent = "[Generation stopped]";
+        lastBubble.appendChild(stoppedMarker);
+      }
+    } else {
+      appendMessage(root, "assistant", `Error: ${err.message}`);
+    }
   } finally {
+    isStreaming = false;
+    currentAbortController = null;
     textarea.disabled = false;
-    sendBtn.disabled = false;
+    setSendButtonToSend(sendBtn);
     textarea.focus();
   }
 }

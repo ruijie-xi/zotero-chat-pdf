@@ -1,6 +1,6 @@
 import { config } from "../package.json";
 import { initLocale } from "./utils/locale";
-import { registerChatSection, registerContextMenu } from "./modules/chat-panel";
+import { injectChatPanel, removeChatPanel, registerContextMenu, abortCurrentStream } from "./modules/chat-panel";
 
 async function onStartup() {
   await Promise.all([
@@ -23,12 +23,6 @@ async function onStartup() {
   }
 
   try {
-    registerChatSection();
-  } catch (e) {
-    Zotero.log(`[${config.addonName}] Failed to register chat section: ${e}`, "error");
-  }
-
-  try {
     registerContextMenu();
   } catch (e) {
     Zotero.log(`[${config.addonName}] Failed to register context menu: ${e}`, "error");
@@ -48,17 +42,25 @@ async function onMainWindowLoad(win: Window) {
   } catch {
     // FTL may already be inserted or method unavailable
   }
+
+  // Inject the persistent side panel
+  try {
+    injectChatPanel(win);
+  } catch (e) {
+    Zotero.debug(`[ChatPDF] Failed to inject chat panel: ${e}`);
+  }
 }
 
-async function onMainWindowUnload(_win: Window) {
-  // Cleanup if needed
+async function onMainWindowUnload(win: Window) {
+  removeChatPanel(win);
 }
 
 async function onShutdown() {
   addon.data.alive = false;
-  try {
-    Zotero.ItemPaneManager.unregisterSection("chatpdf-section");
-  } catch { /* ignore */ }
+  abortCurrentStream();
+  for (const win of Zotero.getMainWindows()) {
+    removeChatPanel(win);
+  }
   try {
     Zotero.MenuManager.unregisterMenu("chatpdf-item-menu");
   } catch { /* ignore */ }
