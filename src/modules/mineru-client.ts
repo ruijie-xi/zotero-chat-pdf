@@ -28,9 +28,18 @@ interface BatchResultResponse {
   extract_result: ExtractResult[];
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const err = new Error("Conversion aborted by user");
+    err.name = "AbortError";
+    throw err;
+  }
+}
+
 export async function convertPdf(
   pdfPath: string,
   onProgress?: ProgressCallback,
+  signal?: AbortSignal,
 ): Promise<string> {
   const token = getPref("mineruToken");
   if (!token) {
@@ -58,6 +67,7 @@ export async function convertPdf(
   };
   log("Batch apply request:", requestBody);
 
+  throwIfAborted(signal);
   const applyRes = await fetch(`${MINERU_API_BASE}/api/v4/file-urls/batch`, {
     method: "POST",
     headers: {
@@ -65,6 +75,7 @@ export async function convertPdf(
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(requestBody),
+    signal,
   });
 
   const applyText = await applyRes.text();
@@ -89,10 +100,12 @@ export async function convertPdf(
   log("Got batch_id:", batch_id, "upload url:", uploadUrl?.substring(0, 80) + "...");
 
   // Step 3: Upload PDF bytes via PUT (as per MinerU docs)
+  throwIfAborted(signal);
   onProgress?.("uploading", "Uploading PDF...");
   const uploadRes = await fetch(uploadUrl, {
     method: "PUT",
     body: pdfBytes,
+    signal,
   });
 
   log("Upload response status:", uploadRes.status);
@@ -107,11 +120,14 @@ export async function convertPdf(
   const startTime = Date.now();
 
   while (true) {
+    throwIfAborted(signal);
+
     if (Date.now() - startTime > POLL_TIMEOUT_MS) {
       throw new Error("MinerU conversion timed out after 6 minutes");
     }
 
     await Zotero.Promise.delay(POLL_INTERVAL_MS);
+    throwIfAborted(signal);
 
     const pollRes = await fetch(
       `${MINERU_API_BASE}/api/v4/extract-results/batch/${batch_id}`,
@@ -119,6 +135,7 @@ export async function convertPdf(
         headers: {
           Authorization: `Bearer ${token}`,
         },
+        signal,
       },
     );
 
@@ -153,8 +170,9 @@ export async function convertPdf(
       }
 
       // Step 5: Download ZIP and extract markdown
+      throwIfAborted(signal);
       onProgress?.("downloading", "Downloading results...");
-      const zipRes = await fetch(zipUrl);
+      const zipRes = await fetch(zipUrl, { signal });
       if (!zipRes.ok) {
         log("ERROR: Failed to download ZIP:", zipRes.status);
         throw new Error(`Failed to download results (${zipRes.status})`);

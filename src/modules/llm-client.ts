@@ -1,9 +1,16 @@
 import { getPref } from "../utils/prefs";
 
+export interface MessageSource {
+  key: string;
+  title: string;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
   reasoning?: string;
+  timestamp?: number;
+  sources?: MessageSource[];
 }
 
 export type StreamCallback = (chunk: string, done: boolean) => void;

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0
+
+### New features
+
+- **Persistent side panel** — The chat panel is now always visible on the right side of the Zotero window, independent of which item is selected. No more losing the panel when clicking another item.
+- **Background stream persistence** — LLM generation continues running in the background when you switch items or browse history. Navigate back to the session to re-attach to the live stream and see the response as it arrives.
+- **Stop MinerU conversion** — A "Stop" button appears on source chips while conversion is in progress. Stopping returns the source to pending status so it can be re-converted. Removing a converting source also cancels the conversion automatically.
+- **Message timestamps** — Each user and assistant message shows a `hh:mm` timestamp beneath the bubble.
+- **Precise history timestamps** — Session history now shows full timestamps ("Today 14:30", "Yesterday 09:15", "3 days ago 16:42", "Jan 15 10:00") instead of just the day.
+- **LLM-generated session titles** — After the first response in a new chat, the LLM automatically generates a concise, language-aware title (max 50 chars). If you edit and resend the first message, the title is regenerated. Title source is tracked (`auto` / `llm` / `user`).
+- **Editable session titles** — A pencil icon appears on hover in the history list. Click to edit the title inline; Enter to save, Escape to cancel. User-edited titles are never overwritten by auto-generation.
+- **Per-message sources** — Sources are now snapshotted at send time and stored with each user message. Small pill chips below each user bubble show which documents were in context for that message. Sources are no longer cleared from the source area after sending.
+- **Tab drag to source area** — Dragging the PDF reader tab from Zotero's tab bar now correctly adds the item to the source area. The drop handler tries multiple data formats (`zotero/tab`, `zotero/item`, `text/x-moz-url`, URI patterns) and falls back to the currently active reader tab.
+
+### Fixed
+
+- Save partial LLM response to session history when generation is stopped mid-stream, so the partial reply is preserved across sessions.
+
 ## 0.2.0
 
 ### New features

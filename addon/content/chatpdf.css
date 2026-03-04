@@ -983,3 +983,108 @@
   padding-top: 4px;
   border-top: 1px solid var(--fill-quinary, #e0e0e0);
 }
+
+/* ===== Stop Conversion Button ===== */
+
+.chatpdf-chip-stop-btn:hover {
+  color: #d32f2f;
+  background: rgba(211, 47, 47, 0.08);
+}
+
+/* ===== Message Timestamps ===== */
+
+.chatpdf-msg-time {
+  font-size: 10px;
+  color: var(--fill-tertiary, #999);
+  line-height: 1;
+  user-select: none;
+  -moz-user-select: none;
+}
+
+.chatpdf-msg-time-user {
+  text-align: right;
+  margin-top: 2px;
+}
+
+.chatpdf-msg-time-assistant {
+  margin-top: 4px;
+}
+
+/* ===== User message bubble wrapper (column for bubble + time + sources) ===== */
+
+.chatpdf-msg-user-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+/* ===== Per-message Source Chips (under user messages) ===== */
+
+.chatpdf-msg-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: flex-end;
+  margin-top: 3px;
+}
+
+.chatpdf-msg-source-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--fill-senary, #f0f0f0);
+  color: var(--fill-secondary, #666);
+  border: 1px solid var(--fill-quinary, #e0e0e0);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== History Title Edit ===== */
+
+.chatpdf-history-item-title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chatpdf-history-edit-title-btn {
+  border: none;
+  background: none;
+  color: var(--fill-tertiary, #bbb);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.chatpdf-history-item:hover .chatpdf-history-edit-title-btn {
+  opacity: 1;
+}
+
+.chatpdf-history-edit-title-btn:hover {
+  color: var(--fill-primary, #333);
+  background: var(--fill-senary, #f0f0f0);
+}
+
+.chatpdf-history-title-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--color-accent, #4285f4);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 500;
+  outline: none;
+  background: var(--material-background, white);
+  color: var(--fill-primary, #333);
+  width: 100%;
+}

@@ -3,9 +3,10 @@ import { getPref } from "../utils/prefs";
 export interface SavedSession {
   id: string;
   title: string;
+  titleSource?: "auto" | "llm" | "user";
   sourceKeys: string[];
   sourceTitles: string[];
-  messages: { role: string; content: string; reasoning?: string }[];
+  messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { key: string; title: string }[] }[];
   createdAt: number;
   updatedAt: number;
 }
@@ -13,6 +14,7 @@ export interface SavedSession {
 export interface SessionMeta {
   id: string;
   title: string;
+  titleSource?: "auto" | "llm" | "user";
   sourceTitles: string[];
   createdAt: number;
   updatedAt: number;
@@ -57,6 +59,7 @@ export async function saveSession(session: SavedSession): Promise<void> {
   const meta: SessionMeta = {
     id: session.id,
     title: session.title,
+    titleSource: session.titleSource,
     sourceTitles: session.sourceTitles,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
@@ -92,6 +95,14 @@ export async function deleteSession(id: string): Promise<void> {
   const index = await loadIndex();
   const filtered = index.filter((m) => m.id !== id);
   await saveIndex(filtered);
+}
+
+export async function updateSessionTitle(id: string, title: string, titleSource: "auto" | "llm" | "user"): Promise<void> {
+  const saved = await loadSession(id);
+  if (!saved) return;
+  saved.title = title;
+  saved.titleSource = titleSource;
+  await saveSession(saved);
 }
 
 async function saveIndex(sessions: SessionMeta[]): Promise<void> {

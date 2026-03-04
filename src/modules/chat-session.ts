@@ -1,4 +1,4 @@
-import { ChatMessage } from "./llm-client";
+import { ChatMessage, MessageSource } from "./llm-client";
 import { getPref } from "../utils/prefs";
 import { SavedSession } from "./chat-history";
 
@@ -40,6 +40,7 @@ export interface SourceItem {
 export class ChatSession {
   id: string;
   title: string = "";
+  titleSource: "auto" | "llm" | "user" = "auto";
   createdAt: number;
   updatedAt: number;
   private history: ChatMessage[] = [];
@@ -102,8 +103,10 @@ export class ChatSession {
     return this.history.length > 0;
   }
 
-  addUserMessage(content: string): void {
-    this.history.push({ role: "user", content });
+  addUserMessage(content: string, sources?: MessageSource[]): void {
+    const msg: ChatMessage = { role: "user", content, timestamp: Date.now() };
+    if (sources?.length) msg.sources = sources;
+    this.history.push(msg);
     if (!this.title) {
       this.title = content.slice(0, 50).replace(/\n/g, " ");
     }
@@ -111,7 +114,7 @@ export class ChatSession {
   }
 
   addAssistantMessage(content: string, reasoning?: string): void {
-    const msg: ChatMessage = { role: "assistant", content };
+    const msg: ChatMessage = { role: "assistant", content, timestamp: Date.now() };
     if (reasoning) msg.reasoning = reasoning;
     this.history.push(msg);
     this.updatedAt = Date.now();
@@ -138,11 +141,14 @@ export class ChatSession {
     return {
       id: this.id,
       title: this.title,
+      titleSource: this.titleSource,
       sourceKeys: sources.map((s) => s.key),
       sourceTitles: sources.map((s) => s.title),
       messages: this.history.map((m) => {
-        const saved: { role: string; content: string; reasoning?: string } = { role: m.role, content: m.content };
+        const saved: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { key: string; title: string }[] } = { role: m.role, content: m.content };
         if (m.reasoning) saved.reasoning = m.reasoning;
+        if (m.timestamp) saved.timestamp = m.timestamp;
+        if (m.sources?.length) saved.sources = m.sources;
         return saved;
       }),
       createdAt: this.createdAt,
@@ -154,19 +160,37 @@ export class ChatSession {
     const session = new ChatSession();
     session.id = data.id;
     session.title = data.title;
+    session.titleSource = data.titleSource || "auto";
     session.createdAt = data.createdAt;
-    for (let i = 0; i < data.sourceKeys.length; i++) {
-      session.addSource(data.sourceKeys[i], data.sourceTitles[i] || "Untitled");
-    }
+
+    // Restore messages (including per-message sources and timestamps)
     for (const msg of data.messages) {
       if (msg.role === "user") {
-        session.history.push({ role: "user", content: msg.content });
+        const m: ChatMessage = { role: "user", content: msg.content };
+        if (msg.timestamp) m.timestamp = msg.timestamp;
+        if (msg.sources?.length) m.sources = msg.sources;
+        session.history.push(m);
       } else if (msg.role === "assistant") {
         const m: ChatMessage = { role: "assistant", content: msg.content };
         if (msg.reasoning) m.reasoning = msg.reasoning;
+        if (msg.timestamp) m.timestamp = msg.timestamp;
         session.history.push(m);
       }
     }
+
+    // Restore session-level sources: prefer last user message's sources (most recent working set),
+    // fall back to session-level sourceKeys for backward compat.
+    const lastUserMsg = [...session.history].reverse().find(m => m.role === "user");
+    if (lastUserMsg?.sources?.length) {
+      for (const s of lastUserMsg.sources) {
+        session.addSource(s.key, s.title);
+      }
+    } else {
+      for (let i = 0; i < data.sourceKeys.length; i++) {
+        session.addSource(data.sourceKeys[i], data.sourceTitles[i] || "Untitled");
+      }
+    }
+
     // Restore updatedAt AFTER addSource loop (which sets updatedAt = Date.now())
     session.updatedAt = data.updatedAt;
     return session;

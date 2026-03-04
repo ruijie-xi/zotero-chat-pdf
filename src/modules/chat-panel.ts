@@ -3,13 +3,16 @@ import { ChatSession, SourceItem } from "./chat-session";
 import * as MDCache from "./md-cache";
 import * as ChatHistory from "./chat-history";
 import { convertPdf } from "./mineru-client";
-import { chat as llmChat, StreamCallback, ThinkingCallback } from "./llm-client";
+import { chat as llmChat, StreamCallback, ThinkingCallback, ChatMessage } from "./llm-client";
 import { renderMarkdown } from "./markdown-renderer";
 import { logLLMRequest, logLLMResponse } from "./debug-log";
 import { getPref } from "../utils/prefs";
 
 let session = new ChatSession();
 let showingHistory = false;
+
+/** AbortControllers for in-progress MinerU conversions, keyed by source key. */
+const conversionAbortControllers = new Map<string, { abort(): void; signal: AbortSignal }>();
 
 // ---- Streaming state ----
 
@@ -141,6 +144,8 @@ export async function addItemToSession(item: Zotero.Item): Promise<void> {
 
 async function convertSource(source: SourceItem, onProgress?: (msg: string) => void): Promise<void> {
   session.setSourceStatus(source.key, "converting");
+  const { controller: convController, signal: convSignal } = createAbortController();
+  conversionAbortControllers.set(source.key, convController);
   onProgress?.("Starting conversion...");
   try {
     let attItem: Zotero.Item | null = null;
@@ -154,15 +159,23 @@ async function convertSource(source: SourceItem, onProgress?: (msg: string) => v
     const pdfPath = await attItem.getFilePathAsync();
     if (!pdfPath) throw new Error("PDF file not found on disk");
 
-    const markdown = await convertPdf(pdfPath, (_status, msg) => onProgress?.(msg));
+    const markdown = await convertPdf(pdfPath, (_status, msg) => onProgress?.(msg), convSignal);
     await MDCache.write(source.key, markdown);
     session.setSourceReady(source.key, markdown);
     onProgress?.("Ready");
   } catch (err: any) {
-    Zotero.debug(`[ChatPDF] convertSource error: ${err.message}\n${err.stack}`);
-    session.setSourceStatus(source.key, "error", err.message);
-    onProgress?.(err.message);
-    throw err;
+    if (err.name === "AbortError") {
+      Zotero.debug(`[ChatPDF] convertSource aborted for ${source.key}`);
+      session.setSourceStatus(source.key, "pending");
+      onProgress?.("Conversion stopped");
+    } else {
+      Zotero.debug(`[ChatPDF] convertSource error: ${err.message}\n${err.stack}`);
+      session.setSourceStatus(source.key, "error", err.message);
+      onProgress?.(err.message);
+      throw err;
+    }
+  } finally {
+    conversionAbortControllers.delete(source.key);
   }
 }
 
@@ -261,17 +274,83 @@ function formatRelativeDate(timestamp: number): string {
   const date = new Date(timestamp);
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  if (diffDays === 0) {
-    // Check if actually same calendar day
-    if (now.toDateString() === date.toDateString()) return "Today";
-    return "Yesterday";
-  }
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return `${diffDays} days ago`;
+  if (now.toDateString() === date.toDateString()) return `Today ${time}`;
+  if (diffDays === 1) return `Yesterday ${time}`;
+  if (diffDays < 7) return `${diffDays} days ago ${time}`;
 
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${months[date.getMonth()]} ${date.getDate()}`;
+  return `${months[date.getMonth()]} ${date.getDate()} ${time}`;
+}
+
+/** Format a message timestamp as hh:mm. */
+function formatMsgTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Render small per-message source chips (right-aligned, for user messages). */
+function renderMsgSources(doc: Document, sources: { key: string; title: string }[]): HTMLElement {
+  const container = h(doc, "div", { className: "chatpdf-msg-sources" });
+  for (const src of sources) {
+    const chip = h(doc, "span", { className: "chatpdf-msg-source-chip", title: src.title }, src.title);
+    container.appendChild(chip);
+  }
+  return container;
+}
+
+/** Look up a Zotero item by attachment key, searching all libraries. */
+function getItemByKey(key: string, libraryID?: number): Zotero.Item | null {
+  if (libraryID !== undefined) {
+    try {
+      const item = Zotero.Items.getByLibraryAndKey(libraryID, key);
+      if (item) return item;
+    } catch {}
+  }
+  for (const lib of Zotero.Libraries.getAll()) {
+    try {
+      const item = Zotero.Items.getByLibraryAndKey(lib.libraryID, key);
+      if (item) return item;
+    } catch { continue; }
+  }
+  return null;
+}
+
+/** Look up a Zotero item from any Zotero URI format. */
+async function getItemFromZoteroUri(uri: string): Promise<Zotero.Item | null> {
+  Zotero.debug(`[ChatPDF] getItemFromZoteroUri: trying "${uri}"`);
+
+  // zotero://select/library/items/KEY  or  zotero://select/groups/ID/items/KEY
+  const selectMatch = uri.match(/zotero:\/\/select\/(?:library|groups\/\d+)\/items\/([A-Z0-9]+)/i);
+  if (selectMatch) return getItemByKey(selectMatch[1]);
+
+  // zotero://open-pdf/library/items/KEY  or  zotero://open-pdf/groups/ID/items/KEY
+  const openPdfMatch = uri.match(/zotero:\/\/open-pdf\/(?:library|groups\/\d+)\/items\/([A-Z0-9]+)/i);
+  if (openPdfMatch) return getItemByKey(openPdfMatch[1]);
+
+  // zotero://attachment/LIBRARYID/KEY
+  const attachLibMatch = uri.match(/zotero:\/\/attachment\/(\d+)\/([A-Z0-9]+)/i);
+  if (attachLibMatch) {
+    const item = getItemByKey(attachLibMatch[2], parseInt(attachLibMatch[1], 10));
+    if (item) return item;
+  }
+
+  // zotero://attachment/NUMERICID  (just numeric item ID)
+  const attachNumMatch = uri.match(/zotero:\/\/attachment\/(\d+)(?:[/?#]|$)/);
+  if (attachNumMatch) {
+    try {
+      const item = Zotero.Items.get(parseInt(attachNumMatch[1], 10));
+      if (item) return item;
+    } catch {}
+  }
+
+  // Try Zotero.URI.getURIItem as a catch-all
+  try {
+    const item = (Zotero.URI as any).getURIItem(uri);
+    if (item) return item;
+  } catch {}
+
+  return null;
 }
 
 // ---- UI Building ----
@@ -345,13 +424,110 @@ function buildChatUI(root: HTMLElement) {
     const de = e as DragEvent;
     de.preventDefault();
     sourceArea.classList.remove("chatpdf-drop-active");
-    const data = de.dataTransfer?.getData("zotero/item");
-    if (data) {
-      for (const id of data.split(",").map((s: string) => parseInt(s, 10))) {
+    const dt = de.dataTransfer;
+
+    // Debug: log all available data transfer types
+    if (dt) {
+      const types = Array.from(dt.types);
+      Zotero.debug(`[ChatPDF] drop: dataTransfer.types = ${JSON.stringify(types)}`);
+      for (const type of types) {
+        try { Zotero.debug(`[ChatPDF] drop: ${type} = "${dt.getData(type)}"`); } catch {}
+      }
+    }
+
+    // 1. zotero/item — library item drag (item IDs, most reliable)
+    const zoteroItemData = dt?.getData("zotero/item");
+    if (zoteroItemData) {
+      Zotero.debug(`[ChatPDF] drop: zotero/item = ${zoteroItemData}`);
+      for (const id of zoteroItemData.split(",").map((s: string) => parseInt(s, 10))) {
         const droppedItem = Zotero.Items.get(id);
         if (droppedItem) await addItemToSession(droppedItem);
       }
       refreshSourceChips(root);
+      return;
+    }
+
+    // 2. zotero/tab — Zotero tab bar drag (PDF reader tab)
+    const tabID = dt?.getData("zotero/tab");
+    if (tabID) {
+      Zotero.debug(`[ChatPDF] drop: zotero/tab = ${tabID}`);
+      try {
+        const mainWin = Zotero.getMainWindow() as any;
+        // Try Zotero.Reader API first
+        const reader = (Zotero as any).Reader?.getByTabID?.(tabID);
+        if (reader?.itemID) {
+          const item = Zotero.Items.get(reader.itemID);
+          if (item) { await addItemToSession(item); refreshSourceChips(root); return; }
+        }
+        // Fallback: look in Zotero_Tabs._tabs array
+        const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === tabID);
+        Zotero.debug(`[ChatPDF] drop: tab obj = ${JSON.stringify(tab)}`);
+        const itemID = tab?.data?.itemID;
+        if (itemID) {
+          const item = Zotero.Items.get(itemID);
+          if (item) { await addItemToSession(item); refreshSourceChips(root); return; }
+        }
+      } catch (err) {
+        Zotero.debug(`[ChatPDF] drop: zotero/tab lookup error: ${err}`);
+      }
+    }
+
+    // 3. URI-based fallbacks: collect all candidate URIs from multiple data types
+    const uriCandidates: string[] = [];
+    const mozUrl = dt?.getData("text/x-moz-url");
+    if (mozUrl) {
+      // text/x-moz-url format: URL\nTitle
+      uriCandidates.push(mozUrl.split("\n")[0].trim());
+    }
+    const plainText = dt?.getData("text/plain");
+    if (plainText) uriCandidates.push(plainText.trim());
+    const uriList = dt?.getData("text/uri-list");
+    if (uriList) {
+      for (const line of uriList.split(/\r?\n/)) {
+        const u = line.trim();
+        if (u && !u.startsWith("#")) uriCandidates.push(u);
+      }
+    }
+
+    for (const uri of uriCandidates) {
+      const item = await getItemFromZoteroUri(uri);
+      if (item) { await addItemToSession(item); refreshSourceChips(root); return; }
+    }
+
+    // 4. Last resort: if nothing worked and a reader tab is currently open, use it.
+    //    This covers the common case where the user drags the currently-active PDF tab.
+    if (dt && Array.from(dt.types).length > 0) {
+      try {
+        const mainWin = Zotero.getMainWindow() as any;
+        const selectedTabID = mainWin.Zotero_Tabs?.selectedID;
+        Zotero.debug(`[ChatPDF] drop: last-resort — trying selectedTabID = ${selectedTabID}`);
+        if (selectedTabID && selectedTabID !== "zotero-pane") {
+          const reader = (Zotero as any).Reader?.getByTabID?.(selectedTabID);
+          if (reader?.itemID) {
+            const item = Zotero.Items.get(reader.itemID);
+            if (item) {
+              Zotero.debug(`[ChatPDF] drop: last-resort success — item ${item.key}`);
+              await addItemToSession(item);
+              refreshSourceChips(root);
+              return;
+            }
+          }
+          // Also check _tabs
+          const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === selectedTabID);
+          const itemID = tab?.data?.itemID;
+          if (itemID) {
+            const item = Zotero.Items.get(itemID);
+            if (item) {
+              Zotero.debug(`[ChatPDF] drop: last-resort via _tabs — item ${item.key}`);
+              await addItemToSession(item);
+              refreshSourceChips(root);
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        Zotero.debug(`[ChatPDF] drop: last-resort error: ${err}`);
+      }
     }
   });
   root.appendChild(sourceArea);
@@ -515,15 +691,59 @@ async function loadHistoryList(root: HTMLElement) {
       const item = h(doc, "div", { className: "chatpdf-history-item" });
 
       const info = h(doc, "div", { className: "chatpdf-history-item-info" });
-      const titleEl = h(doc, "div", { className: "chatpdf-history-item-title" }, meta.title || "Untitled chat");
+      const titleRow = h(doc, "div", { className: "chatpdf-history-item-title-row" });
+      const titleEl = h(doc, "span", { className: "chatpdf-history-item-title" }, meta.title || "Untitled chat");
+      const editTitleBtn = h(doc, "button", { className: "chatpdf-history-edit-title-btn", title: "Edit title" }, "\u270E");
+      titleRow.appendChild(titleEl);
+      titleRow.appendChild(editTitleBtn);
+      info.appendChild(titleRow);
       const details = h(doc, "div", { className: "chatpdf-history-item-details" });
       const dateEl = h(doc, "span", {}, formatRelativeDate(meta.updatedAt));
       const sourceCount = h(doc, "span", {}, `${meta.sourceTitles.length} source${meta.sourceTitles.length !== 1 ? "s" : ""}`);
       details.appendChild(dateEl);
       details.appendChild(doc.createTextNode(" \u00B7 "));
       details.appendChild(sourceCount);
-      info.appendChild(titleEl);
       info.appendChild(details);
+
+      // Inline title edit on pencil click
+      editTitleBtn.addEventListener("click", (e: Event) => {
+        e.stopPropagation();
+        const input = h(doc, "input", { className: "chatpdf-history-title-input" }) as HTMLInputElement;
+        input.value = meta.title || "";
+        titleRow.replaceChild(input, titleEl);
+        editTitleBtn.style.display = "none";
+        input.focus();
+        input.select();
+
+        const saveTitle = async () => {
+          input.removeEventListener("blur", saveTitle);
+          const newTitle = input.value.trim() || meta.title || "Untitled chat";
+          if (newTitle !== meta.title) {
+            meta.title = newTitle;
+            await ChatHistory.updateSessionTitle(meta.id, newTitle, "user");
+            if (session.id === meta.id) {
+              session.title = newTitle;
+              session.titleSource = "user";
+            }
+          }
+          titleEl.textContent = newTitle;
+          titleRow.replaceChild(titleEl, input);
+          editTitleBtn.style.display = "";
+        };
+
+        const cancelTitle = () => {
+          input.removeEventListener("blur", saveTitle);
+          titleRow.replaceChild(titleEl, input);
+          editTitleBtn.style.display = "";
+        };
+
+        input.addEventListener("keydown", (ke: Event) => {
+          const k = ke as KeyboardEvent;
+          if (k.key === "Enter") { k.preventDefault(); saveTitle(); }
+          if (k.key === "Escape") { k.preventDefault(); cancelTitle(); }
+        });
+        input.addEventListener("blur", saveTitle);
+      });
 
       const deleteBtn = h(doc, "button", { className: "chatpdf-history-delete-btn", title: "Delete" }, "\u00D7");
 
@@ -661,9 +881,29 @@ function refreshSourceChips(root: HTMLElement) {
       actions.appendChild(convertBtn);
     }
 
+    if (source.status === "converting") {
+      const stopBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-stop-btn", title: "Stop conversion" }, "Stop");
+      stopBtn.addEventListener("click", (e: Event) => {
+        e.stopPropagation();
+        const controller = conversionAbortControllers.get(source.key);
+        if (controller) {
+          Zotero.debug(`[ChatPDF] User stopped conversion for ${source.key}`);
+          controller.abort();
+        }
+        refreshSourceChips(root);
+      });
+      actions.appendChild(stopBtn);
+    }
+
     const removeBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-remove-btn", title: "Remove" }, "Remove");
     removeBtn.addEventListener("click", (e: Event) => {
       e.stopPropagation();
+      // Abort any in-progress conversion before removing
+      const controller = conversionAbortControllers.get(source.key);
+      if (controller) {
+        Zotero.debug(`[ChatPDF] Aborting conversion for removed source ${source.key}`);
+        controller.abort();
+      }
       session.removeSource(source.key);
       refreshSourceChips(root);
     });
@@ -836,7 +1076,7 @@ function renderChatHistory(root: HTMLElement) {
     let msgIndex = 0;
     for (const msg of history) {
       if (msg.role === "system") continue;
-      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning);
+      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning, msg.timestamp, msg.sources);
       msgIndex++;
     }
   }
@@ -858,7 +1098,7 @@ function createCopyButton(doc: Document, rawMarkdown: string): HTMLElement {
   return btn;
 }
 
-function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string): HTMLElement {
+function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string, timestamp?: number, sources?: { key: string; title: string }[]): HTMLElement {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return root;
   const doc = root.ownerDocument!;
@@ -906,20 +1146,35 @@ function appendMessage(root: HTMLElement, role: "user" | "assistant", content: s
     } catch {
       bubble.appendChild(doc.createTextNode(content));
     }
+    // Timestamp inside assistant bubble
+    if (timestamp) {
+      bubble.appendChild(h(doc, "div", { className: "chatpdf-msg-time chatpdf-msg-time-assistant" }, formatMsgTime(timestamp)));
+    }
     // Copy button for assistant messages
     row.appendChild(createCopyButton(doc, content));
+    row.appendChild(bubble);
   } else {
     bubble.textContent = content;
-    // Edit button for user messages
+    // Edit button for user messages (absolute positioned)
     const editBtn = h(doc, "button", { className: "chatpdf-edit-btn", title: "Edit" }, "\u270E");
     editBtn.addEventListener("click", (e: Event) => {
       e.stopPropagation();
       enterEditMode(root, row, bubble, content);
     });
     row.appendChild(editBtn);
+
+    // Wrap bubble + timestamp + source chips in a column container
+    const wrap = h(doc, "div", { className: "chatpdf-msg-user-wrap" });
+    wrap.appendChild(bubble);
+    if (timestamp) {
+      wrap.appendChild(h(doc, "div", { className: "chatpdf-msg-time chatpdf-msg-time-user" }, formatMsgTime(timestamp)));
+    }
+    if (sources?.length) {
+      wrap.appendChild(renderMsgSources(doc, sources));
+    }
+    row.appendChild(wrap);
   }
 
-  row.appendChild(bubble);
   messagesEl.appendChild(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return bubble;
@@ -976,6 +1231,12 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
 
     const msgIndex = parseInt(row.dataset.msgIndex || "-1", 10);
 
+    // If editing the first message, reset the title so it gets regenerated
+    if (msgIndex === 0) {
+      session.title = "";
+      session.titleSource = "auto";
+    }
+
     // Truncate session history from this message index onwards
     if (msgIndex >= 0) {
       session.truncateHistoryAt(msgIndex);
@@ -993,7 +1254,7 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
         let idx = 0;
         for (const msg of remaining) {
           if (msg.role === "system") continue;
-          appendMessage(root, msg.role as "user" | "assistant", msg.content, idx);
+          appendMessage(root, msg.role as "user" | "assistant", msg.content, idx, msg.reasoning, msg.timestamp, msg.sources);
           idx++;
         }
       }
@@ -1038,6 +1299,50 @@ function setSendButtonToSend(sendBtn: HTMLButtonElement) {
   sendBtn.classList.remove("chatpdf-send-btn-stop");
 }
 
+// ---- LLM title generation ----
+
+async function generateTitle(targetSession: ChatSession): Promise<void> {
+  if (targetSession.titleSource === "user") return;
+  const history = targetSession.getHistory();
+  if (history.length < 2) return;
+
+  const firstUser = history.find(m => m.role === "user");
+  const firstAssistant = history.find(m => m.role === "assistant");
+  if (!firstUser || !firstAssistant) return;
+
+  try {
+    const titleMessages: ChatMessage[] = [
+      {
+        role: "system",
+        content: "Generate a concise, specific title for this conversation. Detect the language of the user's message and reply in that same language. Reply with ONLY the title text — no quotes, no punctuation at the end, maximum 50 characters.",
+      },
+      {
+        role: "user",
+        content: `User: ${firstUser.content.slice(0, 300)}\n\nAssistant: ${firstAssistant.content.slice(0, 300)}`,
+      },
+    ];
+
+    const title = (await llmChat(titleMessages)).trim().slice(0, 50);
+    if (!title) return;
+
+    targetSession.title = title;
+    targetSession.titleSource = "llm";
+    await ChatHistory.saveSession(targetSession.toSavedSession());
+    Zotero.debug(`[ChatPDF] Generated title: "${title}"`);
+
+    // Refresh history list if it's currently visible
+    if (showingHistory) {
+      for (const win of Zotero.getMainWindows()) {
+        const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
+        if (root) loadHistoryList(root);
+      }
+    }
+  } catch (err: any) {
+    Zotero.debug(`[ChatPDF] generateTitle failed: ${err.message}`);
+    // Keep the auto-generated title (first 50 chars of first message)
+  }
+}
+
 // ---- Chat handling ----
 
 async function handleSend(root: HTMLElement) {
@@ -1077,9 +1382,15 @@ async function handleSend(root: HTMLElement) {
   textarea.value = "";
   textarea.style.height = "auto";
 
+  // Snapshot ready sources at send time (for per-message source display)
+  const msgSources = streamSession.getSources()
+    .filter(s => s.status === "ready")
+    .map(s => ({ key: s.key, title: s.title }));
+
   // Track message index: current history length is the index for this new user message
   const userMsgIndex = streamSession.getHistoryLength();
-  appendMessage(root, "user", userText, userMsgIndex);
+  const userMsgTimestamp = Date.now();
+  appendMessage(root, "user", userText, userMsgIndex, undefined, userMsgTimestamp, msgSources);
 
   textarea.disabled = true;
   isStreaming = true;
@@ -1110,7 +1421,7 @@ async function handleSend(root: HTMLElement) {
     Zotero.debug("[ChatPDF] handleSend: building messages...");
     // Build messages BEFORE adding to history to avoid duplication
     const messages = streamSession.buildMessages(userText);
-    streamSession.addUserMessage(userText);
+    streamSession.addUserMessage(userText, msgSources);
 
     // Save immediately so the session appears in history right away
     ChatHistory.saveSession(streamSession.toSavedSession()).catch((e: any) => {
@@ -1346,6 +1657,11 @@ async function handleSend(root: HTMLElement) {
       await ChatHistory.saveSession(streamSession.toSavedSession());
     } catch (saveErr: any) {
       Zotero.debug(`[ChatPDF] autoSaveSession error: ${saveErr.message}`);
+    }
+
+    // Generate LLM title after first exchange (history = user + assistant = 2 messages)
+    if (streamSession.getHistoryLength() === 2 && streamSession.titleSource !== "user") {
+      generateTitle(streamSession).catch(err => Zotero.debug(`[ChatPDF] generateTitle error: ${err.message}`));
     }
 
     Zotero.debug(`[ChatPDF] Background stream completed for session ${streamSessionId}, isActive=${isActiveSession()}`);
