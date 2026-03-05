@@ -41,6 +41,23 @@
 
   <separator class="thin" />
 
+  <!-- Model Profiles -->
+  <vbox>
+    <hbox align="center" style="margin-bottom: 4px;">
+      <html:label data-l10n-id="pref-model-profiles" style="font-weight: 600;"></html:label>
+      <html:span style="flex: 1;" />
+      <html:button id="zotero-prefpane-__addonRef__-profileSaveBtn" style="font-size: 11px; padding: 1px 8px; cursor: pointer;">Save Current as Profile</html:button>
+    </hbox>
+    <html:div id="zotero-prefpane-__addonRef__-profileList" style="min-height: 32px; border: 1px solid var(--fill-quinary, #ddd); border-radius: 4px; margin-bottom: 4px; overflow-y: auto; max-height: 150px;"></html:div>
+    <hbox align="center" style="gap: 4px;">
+      <html:label for="zotero-prefpane-__addonRef__-profileName" data-l10n-id="pref-profile-name"></html:label>
+      <html:input type="text" id="zotero-prefpane-__addonRef__-profileName" placeholder="Profile name..." style="flex: 1;" />
+    </hbox>
+    <html:span id="zotero-prefpane-__addonRef__-profileStatus" style="font-size: 11px; color: #34c759; min-height: 16px; display: block; margin-top: 2px;"></html:span>
+  </vbox>
+
+  <separator class="thin" />
+
   <vbox>
     <hbox align="center" style="margin-bottom: 4px;">
       <html:label data-l10n-id="pref-system-prompt" style="font-weight: 600;"></html:label>

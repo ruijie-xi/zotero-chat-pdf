@@ -7,3 +7,5 @@ pref-cache-dir = Cache Directory
 pref-max-document-chars = Max Document Characters
 pref-system-prompt = System Prompt
 pref-help = { $name } v{ $version }
+pref-model-profiles = Model Profiles
+pref-profile-name = Profile Name

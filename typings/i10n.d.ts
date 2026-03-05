@@ -4,6 +4,7 @@
 // @ts-nocheck
 export type FluentMessageId =
   | 'chatpdf-menuitem-addtochatpdf'
+  | 'chatpdf-menuitem-relatedsessions'
   | 'menuitem-addtochatpdf'
   | 'pref-cache-dir'
   | 'pref-help'
@@ -12,6 +13,8 @@ export type FluentMessageId =
   | 'pref-llm-model'
   | 'pref-max-document-chars'
   | 'pref-mineru-token'
+  | 'pref-model-profiles'
+  | 'pref-profile-name'
   | 'pref-system-prompt'
   | 'pref-title'
   | 'startup-begin'

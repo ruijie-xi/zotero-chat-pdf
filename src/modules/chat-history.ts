@@ -6,7 +6,9 @@ export interface SavedSession {
   titleSource?: "auto" | "llm" | "user";
   sourceKeys: string[];
   sourceTitles: string[];
-  messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { key: string; title: string }[] }[];
+  sourceParentKeys?: string[];
+  referencedParentKeys?: string[];
+  messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { key: string; title: string; parentKey?: string }[]; modelLabel?: string }[];
   createdAt: number;
   updatedAt: number;
 }
@@ -16,6 +18,7 @@ export interface SessionMeta {
   title: string;
   titleSource?: "auto" | "llm" | "user";
   sourceTitles: string[];
+  referencedParentKeys?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -61,6 +64,7 @@ export async function saveSession(session: SavedSession): Promise<void> {
     title: session.title,
     titleSource: session.titleSource,
     sourceTitles: session.sourceTitles,
+    referencedParentKeys: session.referencedParentKeys,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   };

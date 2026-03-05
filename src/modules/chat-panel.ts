@@ -6,10 +6,22 @@ import { convertPdf } from "./mineru-client";
 import { chat as llmChat, StreamCallback, ThinkingCallback, ChatMessage } from "./llm-client";
 import { renderMarkdown } from "./markdown-renderer";
 import { logLLMRequest, logLLMResponse } from "./debug-log";
-import { getPref } from "../utils/prefs";
+import { getPref, setPref } from "../utils/prefs";
 
 let session = new ChatSession();
 let showingHistory = false;
+
+// ---- History filter state ----
+let historyFilterParentKey: string | null = null;
+let historyFilterTitle: string | null = null;
+
+// ---- Model profiles ----
+interface ModelProfile {
+  name: string;
+  apiBase: string;
+  apiKey: string;
+  model: string;
+}
 
 /** AbortControllers for in-progress MinerU conversions, keyed by source key. */
 const conversionAbortControllers = new Map<string, { abort(): void; signal: AbortSignal }>();
@@ -128,6 +140,43 @@ function resetStreamingUI(root: HTMLElement): void {
   if (sb) setSendButtonToSend(sb);
 }
 
+// ---- Model profile helpers ----
+
+function loadModelProfiles(): ModelProfile[] {
+  try {
+    const raw = getPref("modelProfiles") as string;
+    if (!raw) return [];
+    return JSON.parse(raw) as ModelProfile[];
+  } catch {
+    return [];
+  }
+}
+
+function getCurrentProfileName(): string {
+  return (getPref("activeProfile") as string) || "";
+}
+
+function refreshProfileSelect(root: HTMLElement): void {
+  const select = root.querySelector("#chatpdf-profile-select") as HTMLSelectElement | null;
+  if (!select) return;
+  const doc = root.ownerDocument!;
+  select.innerHTML = "";
+  const profiles = loadModelProfiles();
+  const currentProfile = getCurrentProfileName();
+  if (profiles.length === 0) {
+    select.style.display = "none";
+    return;
+  }
+  select.style.display = "";
+  for (const p of profiles) {
+    const opt = doc.createElementNS("http://www.w3.org/1999/xhtml", "option") as HTMLOptionElement;
+    opt.value = p.name;
+    opt.textContent = p.name;
+    if (p.name === currentProfile) opt.selected = true;
+    select.appendChild(opt);
+  }
+}
+
 // ---- Session management ----
 
 export async function addItemToSession(item: Zotero.Item): Promise<void> {
@@ -135,7 +184,12 @@ export async function addItemToSession(item: Zotero.Item): Promise<void> {
   if (!pdf) return;
   const key = pdf.key;
   const title = getItemTitle(item);
-  session.addSource(key, title);
+  // Resolve the parent bibliographic item key (not the attachment key).
+  // Try item itself (if regular item), then item.parentItem, then pdf.parentItem.
+  const parentKey: string | undefined = item.isRegularItem?.()
+    ? item.key
+    : (item.parentItem?.key || pdf.parentItem?.key || undefined);
+  session.addSource(key, title, parentKey);
   if (await MDCache.has(key)) {
     const md = await MDCache.read(key);
     session.setSourceReady(key, md);
@@ -372,6 +426,34 @@ function buildChatUI(root: HTMLElement) {
   welcome.appendChild(welcomeText);
   welcome.appendChild(welcomeHint);
   messagesArea.appendChild(welcome);
+
+  // Fix text copy in Zotero's privileged context.
+  // The copy event fires on the FOCUSED element and bubbles upward.
+  // Because messagesArea is not focusable, focus is usually on the textarea
+  // (a sibling, not an ancestor of messagesArea), so a listener on messagesArea
+  // only catches the first copy while focus happens to be there.
+  // Listening at the document level catches every copy regardless of focus,
+  // then we filter to only act when the selection is within our messages area.
+  doc.addEventListener("copy", (e: Event) => {
+    const win = doc.defaultView;
+    const sel = win?.getSelection?.();
+    if (!sel || sel.isCollapsed) return;
+    const text = sel.toString();
+    if (!text) return;
+    // Only intercept when the selection originates inside the messages area
+    const anchor = sel.anchorNode;
+    if (!anchor || !messagesArea.contains(anchor)) return;
+    e.preventDefault();
+    try {
+      const helper = (Components.classes as any)["@mozilla.org/widget/clipboardhelper;1"]
+        .getService((Components.interfaces as any).nsIClipboardHelper);
+      helper.copyString(text);
+      Zotero.debug(`[ChatPDF] copy: ${text.length} chars`);
+    } catch {
+      (e as ClipboardEvent).clipboardData?.setData("text/plain", text);
+    }
+  });
+
   root.appendChild(messagesArea);
 
   // History view (hidden by default)
@@ -381,6 +463,10 @@ function buildChatUI(root: HTMLElement) {
   historyHeader.appendChild(historyTitle);
   historyHeader.appendChild(newChatBtnHeader);
   root.appendChild(historyHeader);
+
+  // Dedicated filter bar: sits between the header and the list, hidden by default
+  const historyFilterBarEl = h(doc, "div", { className: "chatpdf-history-filter-bar", id: "chatpdf-history-filter-bar", style: "display:none" });
+  root.appendChild(historyFilterBarEl);
 
   const historyList = h(doc, "div", { className: "chatpdf-history-list", id: "chatpdf-history-list", style: "display:none" });
   root.appendChild(historyList);
@@ -541,10 +627,12 @@ function buildChatUI(root: HTMLElement) {
   const newChatBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{2795} New Chat");
   const clearLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Clear chat");
   const convertAllLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Convert all");
+  const profileSelect = h(doc, "select", { className: "chatpdf-profile-select", id: "chatpdf-profile-select", style: "display:none" }) as HTMLSelectElement;
   toolbar.appendChild(historyBtn);
   toolbar.appendChild(newChatBtn);
   toolbar.appendChild(clearLink);
   toolbar.appendChild(convertAllLink);
+  toolbar.appendChild(profileSelect);
   inputArea.appendChild(toolbar);
 
   const inputWrapper = h(doc, "div", { className: "chatpdf-input-wrapper" });
@@ -562,6 +650,9 @@ function buildChatUI(root: HTMLElement) {
   inputWrapper.appendChild(sendBtn);
   inputArea.appendChild(inputWrapper);
 
+  const inputHint = h(doc, "div", { className: "chatpdf-input-hint" }, "Enter to send \u00B7 Ctrl+Enter: convert & send \u00B7 Shift+Enter: new line");
+  inputArea.appendChild(inputHint);
+
   root.appendChild(inputArea);
 
   // ---- Event handlers ----
@@ -575,7 +666,10 @@ function buildChatUI(root: HTMLElement) {
   });
   textarea.addEventListener("keydown", (e: Event) => {
     const ke = e as KeyboardEvent;
-    if (ke.key === "Enter" && !ke.shiftKey) {
+    if (ke.key === "Enter" && ke.ctrlKey && !ke.shiftKey) {
+      ke.preventDefault();
+      if (!isStreaming) handleConvertAndSend(root);
+    } else if (ke.key === "Enter" && !ke.shiftKey && !ke.ctrlKey) {
       ke.preventDefault();
       if (!isStreaming) handleSend(root);
     }
@@ -630,11 +724,33 @@ function buildChatUI(root: HTMLElement) {
   newChatBtn.addEventListener("click", handleNewChat);
   newChatBtnHeader.addEventListener("click", handleNewChat);
 
+  profileSelect.addEventListener("change", () => {
+    const profiles = loadModelProfiles();
+    const selected = profiles.find(p => p.name === (profileSelect as HTMLSelectElement).value);
+    if (selected) {
+      setPref("llmApiBase", selected.apiBase);
+      setPref("llmApiKey", selected.apiKey);
+      setPref("llmModel", selected.model);
+      setPref("activeProfile", selected.name);
+      Zotero.debug(`[ChatPDF] Switched to profile: ${selected.name}`);
+    }
+  });
+
   renderChatHistory(root);
   refreshSourceChips(root);
+  refreshProfileSelect(root);
 }
 
 // ---- History View ----
+
+export function showFilteredHistory(parentKey: string, title: string): void {
+  historyFilterParentKey = parentKey;
+  historyFilterTitle = title;
+  for (const win of Zotero.getMainWindows()) {
+    const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
+    if (root) showHistoryView(root);
+  }
+}
 
 function showHistoryView(root: HTMLElement) {
   showingHistory = true;
@@ -652,17 +768,21 @@ function showHistoryView(root: HTMLElement) {
   if (headerEl) headerEl.style.display = "";
   if (listEl) listEl.style.display = "";
 
-  // Load history items
+  // Load history items (also updates the filter bar)
   loadHistoryList(root);
 }
 
 function hideHistoryView(root: HTMLElement) {
   showingHistory = false;
+  // Clear filter when closing history
+  historyFilterParentKey = null;
+  historyFilterTitle = null;
   const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
   const resizeEl = root.querySelector(".chatpdf-resize-handle") as HTMLElement;
   const sourcesEl = root.querySelector("#chatpdf-sources") as HTMLElement;
   const inputEl = root.querySelector("#chatpdf-input-area") as HTMLElement;
   const headerEl = root.querySelector("#chatpdf-history-header") as HTMLElement;
+  const filterBarEl = root.querySelector("#chatpdf-history-filter-bar") as HTMLElement;
   const listEl = root.querySelector("#chatpdf-history-list") as HTMLElement;
 
   if (messagesEl) messagesEl.style.display = "";
@@ -670,6 +790,7 @@ function hideHistoryView(root: HTMLElement) {
   if (sourcesEl) sourcesEl.style.display = "";
   if (inputEl) inputEl.style.display = "";
   if (headerEl) headerEl.style.display = "none";
+  if (filterBarEl) filterBarEl.style.display = "none";
   if (listEl) listEl.style.display = "none";
 }
 
@@ -679,10 +800,37 @@ async function loadHistoryList(root: HTMLElement) {
   const doc = root.ownerDocument!;
   listEl.innerHTML = "";
 
+  // Show/update the dedicated filter bar element (below header, above list)
+  const filterBarEl = root.querySelector("#chatpdf-history-filter-bar") as HTMLElement | null;
+  if (filterBarEl) {
+    filterBarEl.innerHTML = "";
+    if (historyFilterParentKey) {
+      filterBarEl.style.display = "";
+      filterBarEl.appendChild(h(doc, "span", { className: "chatpdf-history-filter-label" },
+        `Sessions for: ${historyFilterTitle || historyFilterParentKey}`));
+      const clearBtn = h(doc, "button", { className: "chatpdf-history-filter-clear" }, "\u00D7 Clear filter");
+      clearBtn.addEventListener("click", () => {
+        historyFilterParentKey = null;
+        historyFilterTitle = null;
+        loadHistoryList(root);
+      });
+      filterBarEl.appendChild(clearBtn);
+    } else {
+      filterBarEl.style.display = "none";
+    }
+  }
+
   try {
-    const sessions = await ChatHistory.listSessions();
+    let sessions = await ChatHistory.listSessions();
+    if (historyFilterParentKey) {
+      const filterKey = historyFilterParentKey;
+      sessions = sessions.filter(s => s.referencedParentKeys?.includes(filterKey));
+    }
     if (sessions.length === 0) {
-      const empty = h(doc, "div", { className: "chatpdf-history-empty" }, "No chat history yet");
+      const msg = historyFilterParentKey
+        ? `No sessions found for "${historyFilterTitle || historyFilterParentKey}"`
+        : "No chat history yet";
+      const empty = h(doc, "div", { className: "chatpdf-history-empty" }, msg);
       listEl.appendChild(empty);
       return;
     }
@@ -1076,7 +1224,7 @@ function renderChatHistory(root: HTMLElement) {
     let msgIndex = 0;
     for (const msg of history) {
       if (msg.role === "system") continue;
-      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning, msg.timestamp, msg.sources);
+      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning, msg.timestamp, msg.sources, msg.modelLabel);
       msgIndex++;
     }
   }
@@ -1098,7 +1246,7 @@ function createCopyButton(doc: Document, rawMarkdown: string): HTMLElement {
   return btn;
 }
 
-function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string, timestamp?: number, sources?: { key: string; title: string }[]): HTMLElement {
+function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string, timestamp?: number, sources?: { key: string; title: string }[], modelLabel?: string): HTMLElement {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return root;
   const doc = root.ownerDocument!;
@@ -1149,6 +1297,10 @@ function appendMessage(root: HTMLElement, role: "user" | "assistant", content: s
     // Timestamp inside assistant bubble
     if (timestamp) {
       bubble.appendChild(h(doc, "div", { className: "chatpdf-msg-time chatpdf-msg-time-assistant" }, formatMsgTime(timestamp)));
+    }
+    // Model label under assistant bubble
+    if (modelLabel) {
+      bubble.appendChild(h(doc, "div", { className: "chatpdf-msg-model-label" }, modelLabel));
     }
     // Copy button for assistant messages
     row.appendChild(createCopyButton(doc, content));
@@ -1254,7 +1406,7 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
         let idx = 0;
         for (const msg of remaining) {
           if (msg.role === "system") continue;
-          appendMessage(root, msg.role as "user" | "assistant", msg.content, idx, msg.reasoning, msg.timestamp, msg.sources);
+          appendMessage(root, msg.role as "user" | "assistant", msg.content, idx, msg.reasoning, msg.timestamp, msg.sources, msg.modelLabel);
           idx++;
         }
       }
@@ -1345,6 +1497,32 @@ async function generateTitle(targetSession: ChatSession): Promise<void> {
 
 // ---- Chat handling ----
 
+/** Convert all pending sources then send — triggered by Ctrl+Enter. */
+async function handleConvertAndSend(root: HTMLElement): Promise<void> {
+  const pendingSources = session.getSources().filter(s => s.status === "pending");
+  if (pendingSources.length === 0) {
+    handleSend(root);
+    return;
+  }
+
+  const textarea = root.querySelector("#chatpdf-textarea") as HTMLTextAreaElement;
+  const sendBtn = root.querySelector("#chatpdf-send") as HTMLButtonElement;
+  if (textarea) textarea.disabled = true;
+  if (sendBtn) { sendBtn.disabled = true; }
+
+  try {
+    // Convert all pending sources in parallel (same as "Convert all" button)
+    await Promise.all(
+      pendingSources.map(s => convertSource(s, () => refreshSourceChips(root)).catch(() => {}))
+    );
+  } finally {
+    if (textarea) textarea.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+  }
+
+  handleSend(root);
+}
+
 async function handleSend(root: HTMLElement) {
   const textarea = root.querySelector("#chatpdf-textarea") as HTMLTextAreaElement;
   const sendBtn = root.querySelector("#chatpdf-send") as HTMLButtonElement;
@@ -1385,7 +1563,7 @@ async function handleSend(root: HTMLElement) {
   // Snapshot ready sources at send time (for per-message source display)
   const msgSources = streamSession.getSources()
     .filter(s => s.status === "ready")
-    .map(s => ({ key: s.key, title: s.title }));
+    .map(s => ({ key: s.key, title: s.title, ...(s.parentKey ? { parentKey: s.parentKey } : {}) }));
 
   // Track message index: current history length is the index for this new user message
   const userMsgIndex = streamSession.getHistoryLength();
@@ -1430,6 +1608,8 @@ async function handleSend(root: HTMLElement) {
 
     // Debug: log full request
     const model = (getPref("llmModel") as string) || "deepseek-chat";
+    const profileName = getCurrentProfileName();
+    const modelLabel = profileName ? `${profileName} / ${model}` : model;
     logLLMRequest(messages, model).catch(() => {});
 
     const assistantMsgIndex = streamSession.getHistoryLength(); // index for the upcoming assistant message
@@ -1647,7 +1827,7 @@ async function handleSend(root: HTMLElement) {
     // Debug: log full response
     logLLMResponse(fullResponse, fullReasoning || undefined).catch(() => {});
 
-    streamSession.addAssistantMessage(fullResponse, fullReasoning || undefined);
+    streamSession.addAssistantMessage(fullResponse, fullReasoning || undefined, modelLabel);
     // Refresh source chips only if still viewing this session
     if (isActiveSession()) {
       refreshSourceChips(root);
@@ -1728,19 +1908,32 @@ export function registerContextMenu() {
     menuID: "chatpdf-item-menu",
     pluginID: config.addonID,
     target: "main/library/item",
-    menus: [{
-      menuType: "menuitem",
-      l10nID: "chatpdf-menuitem-addtochatpdf",
-      onCommand: async (_event: Event, context: _ZoteroTypes.MenuManager.LibraryMenuContext) => {
-        for (const item of context.items ?? []) {
-          await addItemToSession(item);
-        }
-        for (const win of Zotero.getMainWindows()) {
-          const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
-          if (root) refreshSourceChips(root);
-        }
+    menus: [
+      {
+        menuType: "menuitem",
+        l10nID: "chatpdf-menuitem-addtochatpdf",
+        onCommand: async (_event: Event, context: _ZoteroTypes.MenuManager.LibraryMenuContext) => {
+          for (const item of context.items ?? []) {
+            await addItemToSession(item);
+          }
+          for (const win of Zotero.getMainWindows()) {
+            const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
+            if (root) refreshSourceChips(root);
+          }
+        },
       },
-    }],
+      {
+        menuType: "menuitem",
+        l10nID: "chatpdf-menuitem-relatedsessions",
+        onCommand: async (_event: Event, context: _ZoteroTypes.MenuManager.LibraryMenuContext) => {
+          const item = context.items?.[0];
+          if (!item) return;
+          const parentKey = item.isRegularItem?.() ? item.key : (item.parentItem?.key || item.key);
+          const title = getItemTitle(item);
+          showFilteredHistory(parentKey, title);
+        },
+      },
+    ],
   });
 }
 

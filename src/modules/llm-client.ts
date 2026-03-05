@@ -3,6 +3,7 @@ import { getPref } from "../utils/prefs";
 export interface MessageSource {
   key: string;
   title: string;
+  parentKey?: string; // Zotero parent bibliographic item key
 }
 
 export interface ChatMessage {
@@ -11,6 +12,7 @@ export interface ChatMessage {
   reasoning?: string;
   timestamp?: number;
   sources?: MessageSource[];
+  modelLabel?: string; // e.g. "ProfileName / model-name" for display under assistant messages
 }
 
 export type StreamCallback = (chunk: string, done: boolean) => void;

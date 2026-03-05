@@ -14,6 +14,8 @@ declare namespace _ZoteroTypes {
       "cacheDir": string;
       "maxDocumentChars": number;
       "systemPrompt": string;
+      "modelProfiles": string;
+      "activeProfile": string;
     };
   }
 }

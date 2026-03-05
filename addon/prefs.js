@@ -5,3 +5,5 @@ pref("llmModel", "deepseek-chat");
 pref("cacheDir", "");
 pref("maxDocumentChars", 300000);
 pref("systemPrompt", "");
+pref("modelProfiles", "[]");
+pref("activeProfile", "");

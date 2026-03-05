@@ -31,6 +31,7 @@ export const DEFAULT_NO_DOCS_PROMPT_CN =
 export interface SourceItem {
   key: string; // Zotero attachment key
   title: string; // Paper/item title
+  parentKey?: string; // Zotero parent bibliographic item key
   markdown?: string; // Loaded markdown content
   status: "pending" | "converting" | "ready" | "error";
   errorMessage?: string;
@@ -52,11 +53,12 @@ export class ChatSession {
     this.updatedAt = Date.now();
   }
 
-  addSource(key: string, title: string): SourceItem {
+  addSource(key: string, title: string, parentKey?: string): SourceItem {
     if (this.sources.has(key)) {
       return this.sources.get(key)!;
     }
     const item: SourceItem = { key, title, status: "pending" };
+    if (parentKey) item.parentKey = parentKey;
     this.sources.set(key, item);
     this.updatedAt = Date.now();
     return item;
@@ -113,11 +115,56 @@ export class ChatSession {
     this.updatedAt = Date.now();
   }
 
-  addAssistantMessage(content: string, reasoning?: string): void {
+  addAssistantMessage(content: string, reasoning?: string, modelLabel?: string): void {
     const msg: ChatMessage = { role: "assistant", content, timestamp: Date.now() };
     if (reasoning) msg.reasoning = reasoning;
+    if (modelLabel) msg.modelLabel = modelLabel;
     this.history.push(msg);
     this.updatedAt = Date.now();
+  }
+
+  /**
+   * Collect all unique parent item keys referenced across sources and message sources.
+   * For sources without a stored parentKey, attempts a live Zotero lookup so that
+   * sessions created before the feature (or with missing parentKey) are still indexed.
+   */
+  getAllReferencedParentKeys(): string[] {
+    const keys = new Set<string>();
+
+    const resolve = (attachmentKey: string): string | undefined => {
+      // Look up the Zotero item for this attachment key and return its parent's key.
+      for (const lib of (Zotero as any).Libraries.getAll()) {
+        try {
+          const att = (Zotero as any).Items.getByLibraryAndKey(lib.libraryID, attachmentKey);
+          if (!att) continue;
+          if (att.isRegularItem?.()) return att.key;
+          if (att.parentItem?.key) return att.parentItem.key;
+        } catch { continue; }
+      }
+      return undefined;
+    };
+
+    for (const s of this.sources.values()) {
+      if (s.parentKey) {
+        keys.add(s.parentKey);
+      } else {
+        const resolved = resolve(s.key);
+        if (resolved) { s.parentKey = resolved; keys.add(resolved); }
+      }
+    }
+    for (const msg of this.history) {
+      if (msg.sources) {
+        for (const s of msg.sources) {
+          if (s.parentKey) {
+            keys.add(s.parentKey);
+          } else {
+            const resolved = resolve(s.key);
+            if (resolved) keys.add(resolved);
+          }
+        }
+      }
+    }
+    return Array.from(keys);
   }
 
   clearHistory(): void {
@@ -144,11 +191,14 @@ export class ChatSession {
       titleSource: this.titleSource,
       sourceKeys: sources.map((s) => s.key),
       sourceTitles: sources.map((s) => s.title),
+      sourceParentKeys: sources.map((s) => s.parentKey || ""),
+      referencedParentKeys: this.getAllReferencedParentKeys(),
       messages: this.history.map((m) => {
-        const saved: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { key: string; title: string }[] } = { role: m.role, content: m.content };
+        const saved: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: MessageSource[]; modelLabel?: string } = { role: m.role, content: m.content };
         if (m.reasoning) saved.reasoning = m.reasoning;
         if (m.timestamp) saved.timestamp = m.timestamp;
         if (m.sources?.length) saved.sources = m.sources;
+        if (m.modelLabel) saved.modelLabel = m.modelLabel;
         return saved;
       }),
       createdAt: this.createdAt,
@@ -174,6 +224,7 @@ export class ChatSession {
         const m: ChatMessage = { role: "assistant", content: msg.content };
         if (msg.reasoning) m.reasoning = msg.reasoning;
         if (msg.timestamp) m.timestamp = msg.timestamp;
+        if ((msg as any).modelLabel) m.modelLabel = (msg as any).modelLabel;
         session.history.push(m);
       }
     }
@@ -183,11 +234,12 @@ export class ChatSession {
     const lastUserMsg = [...session.history].reverse().find(m => m.role === "user");
     if (lastUserMsg?.sources?.length) {
       for (const s of lastUserMsg.sources) {
-        session.addSource(s.key, s.title);
+        session.addSource(s.key, s.title, s.parentKey);
       }
     } else {
       for (let i = 0; i < data.sourceKeys.length; i++) {
-        session.addSource(data.sourceKeys[i], data.sourceTitles[i] || "Untitled");
+        const parentKey = data.sourceParentKeys?.[i] || undefined;
+        session.addSource(data.sourceKeys[i], data.sourceTitles[i] || "Untitled", parentKey);
       }
     }
 
