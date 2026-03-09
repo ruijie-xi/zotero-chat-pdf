@@ -8,7 +8,7 @@ export interface SavedSession {
   sourceTitles: string[];
   sourceParentKeys?: string[];
   referencedParentKeys?: string[];
-  messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { key: string; title: string; parentKey?: string }[]; modelLabel?: string }[];
+  messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { key: string; title: string; parentKey?: string }[]; modelLabel?: string; toolHistory?: any[]; iterations?: any[]; usage?: any }[];
   createdAt: number;
   updatedAt: number;
 }

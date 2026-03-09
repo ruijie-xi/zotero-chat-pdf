@@ -1,6 +1,15 @@
-import { ChatMessage, MessageSource } from "./llm-client";
+import { ChatMessage, MessageSource, IterationRecord, TokenUsage } from "./llm-client";
 import { getPref } from "../utils/prefs";
 import { SavedSession } from "./chat-history";
+
+export interface ToolCallRecord {
+  toolName: string;
+  args: Record<string, unknown>;
+  result: string;
+  durationMs: number;
+}
+
+export { IterationRecord } from "./llm-client";
 
 export const DEFAULT_SYSTEM_PROMPT_EN =
   "You are a helpful research assistant. Answer questions based on the following document(s). " +
@@ -115,10 +124,13 @@ export class ChatSession {
     this.updatedAt = Date.now();
   }
 
-  addAssistantMessage(content: string, reasoning?: string, modelLabel?: string): void {
+  addAssistantMessage(content: string, reasoning?: string, modelLabel?: string, toolHistory?: ToolCallRecord[], iterations?: IterationRecord[], usage?: TokenUsage): void {
     const msg: ChatMessage = { role: "assistant", content, timestamp: Date.now() };
     if (reasoning) msg.reasoning = reasoning;
     if (modelLabel) msg.modelLabel = modelLabel;
+    if (toolHistory?.length) msg.toolHistory = toolHistory;
+    if (iterations?.length) msg.iterations = iterations;
+    if (usage) msg.usage = usage;
     this.history.push(msg);
     this.updatedAt = Date.now();
   }
@@ -194,11 +206,14 @@ export class ChatSession {
       sourceParentKeys: sources.map((s) => s.parentKey || ""),
       referencedParentKeys: this.getAllReferencedParentKeys(),
       messages: this.history.map((m) => {
-        const saved: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: MessageSource[]; modelLabel?: string } = { role: m.role, content: m.content };
+        const saved: Record<string, unknown> = { role: m.role, content: m.content };
         if (m.reasoning) saved.reasoning = m.reasoning;
         if (m.timestamp) saved.timestamp = m.timestamp;
         if (m.sources?.length) saved.sources = m.sources;
         if (m.modelLabel) saved.modelLabel = m.modelLabel;
+        if (m.toolHistory?.length) saved.toolHistory = m.toolHistory;
+        if (m.iterations?.length) saved.iterations = m.iterations;
+        if (m.usage) saved.usage = m.usage;
         return saved;
       }),
       createdAt: this.createdAt,
@@ -225,6 +240,15 @@ export class ChatSession {
         if (msg.reasoning) m.reasoning = msg.reasoning;
         if (msg.timestamp) m.timestamp = msg.timestamp;
         if ((msg as any).modelLabel) m.modelLabel = (msg as any).modelLabel;
+        if ((msg as any).toolHistory?.length) m.toolHistory = (msg as any).toolHistory;
+        // Restore iterations (new format) or convert from legacy toolHistory
+        if ((msg as any).iterations?.length) {
+          m.iterations = (msg as any).iterations;
+        } else if ((msg as any).toolHistory?.length) {
+          // Backward compat: wrap legacy toolHistory into a single iteration
+          m.iterations = [{ toolCalls: (msg as any).toolHistory }];
+        }
+        if ((msg as any).usage) m.usage = (msg as any).usage;
         session.history.push(m);
       }
     }
@@ -400,6 +424,91 @@ export class ChatSession {
     }
 
     Zotero.debug(`[ChatPDF] System prompt length: ${prompt.length} chars, includes ${readySources.length} documents`);
+    return prompt;
+  }
+
+  buildAgentMessages(userMessage: string): ChatMessage[] {
+    const maxChars = getPref("maxDocumentChars") || 300000;
+    const systemPrompt = this.buildAgentSystemPrompt();
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+    ];
+    const currentMsg: ChatMessage = { role: "user", content: userMessage };
+
+    let totalChars = systemPrompt.length + userMessage.length;
+
+    Zotero.debug(`[ChatPDF] buildAgentMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
+
+    const recentHistory: ChatMessage[] = [];
+    let droppedCount = 0;
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const msg = this.history[i];
+      if (msg.role === "system") continue;
+      if (msg.role !== "user" && msg.role !== "assistant") continue;
+
+      // For assistant messages with tool history, prepend condensed tool results
+      // so the model has context about what was previously looked up (avoids re-calling tools)
+      let content = msg.content;
+      if (msg.role === "assistant" && msg.iterations?.length) {
+        const allToolCalls = msg.iterations.flatMap(it => it.toolCalls);
+        if (allToolCalls.length > 0) {
+          const summaryLines = allToolCalls.map(tc => {
+            const argsStr = Object.keys(tc.args).length > 0
+              ? `(${Object.entries(tc.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`
+              : "";
+            return `- ${tc.toolName}${argsStr}: ${tc.result}`;
+          });
+          content = `[Previous tool results:\n${summaryLines.join("\n")}\n]\n\n${content}`;
+        }
+      }
+
+      if (totalChars + content.length > maxChars) {
+        droppedCount = i + 1;
+        break;
+      }
+      totalChars += content.length;
+      recentHistory.unshift({ role: msg.role, content });
+    }
+
+    if (droppedCount > 0) {
+      Zotero.debug(`[ChatPDF] buildAgentMessages: dropped ${droppedCount} oldest history messages to fit within ${maxChars} chars`);
+    }
+
+    messages.push(...recentHistory);
+    messages.push(currentMsg);
+
+    Zotero.debug(`[ChatPDF] buildAgentMessages: final ${messages.length} messages, ~${totalChars} total chars`);
+    return messages;
+  }
+
+  private buildAgentSystemPrompt(): string {
+    const sources = Array.from(this.sources.values());
+    const customPrompt = (getPref("systemPrompt") as string) || "";
+
+    const baseInstructions = customPrompt ||
+      "You are a helpful research assistant. Use the available tools to read document content and answer questions accurately. " +
+      "Always reply in the same language the user uses.\n\n" +
+      "IMPORTANT formatting rules:\n" +
+      "- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).\n" +
+      "- For mathematical expressions, use LaTeX syntax: $...$ for inline math and $$...$$ for display math.\n";
+
+    const toolInstructions =
+      "\n\nYou have access to tools to read documents:\n" +
+      "1. Call `list_sources` first to see available documents and their structure (headings, line counts)\n" +
+      "2. Call `read_document` with a key and optional line range to read specific content\n" +
+      "3. Use web tools (`web_search`, `web_fetch`) if enabled and relevant\n\n" +
+      "Strategy:\n" +
+      "- For specific questions: use list_sources to find relevant sections via headings, then read_document for those line ranges\n" +
+      "- For broad questions: read_document without line range to get the full document\n" +
+      "- Cite the document title and section when answering\n";
+
+    const sourceList = sources.length > 0
+      ? `\n\nThis session has ${sources.length} document(s): ${sources.map(s => `"${s.title}" (${s.status})`).join(", ")}`
+      : "\n\nNo documents added yet. If the user asks about documents, let them know they can add PDFs by dropping them into the chat input.";
+
+    const prompt = baseInstructions + toolInstructions + sourceList;
+    Zotero.debug(`[ChatPDF] buildAgentSystemPrompt: ${prompt.length} chars, ${sources.length} sources`);
     return prompt;
   }
 }

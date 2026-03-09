@@ -9,3 +9,7 @@ pref-system-prompt = System Prompt
 pref-help = { $name } v{ $version }
 pref-model-profiles = Model Profiles
 pref-profile-name = Profile Name
+pref-enable-agent-mode = Enable Agent Mode (Tool Calling)
+pref-agent-max-iterations = Max Agent Iterations
+pref-enable-web-tools = Enable Web Search Tools
+pref-brave-search-api-key = Brave Search API Key (optional)

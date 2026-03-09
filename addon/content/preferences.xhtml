@@ -73,4 +73,28 @@
       <html:button id="zotero-prefpane-__addonRef__-promptSave" style="font-size: 12px; padding: 2px 16px; cursor: pointer; font-weight: 500;">Save</html:button>
     </hbox>
   </vbox>
+  <separator class="thin" />
+
+  <!-- Agent Mode Settings -->
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-enableAgentMode" data-l10n-id="pref-enable-agent-mode"></html:label>
+    <html:span style="flex: 1;" />
+    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-enableAgentMode" preference="enableAgentMode" />
+  </hbox>
+
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-agentMaxIterations" data-l10n-id="pref-agent-max-iterations"></html:label>
+    <html:input type="number" id="zotero-prefpane-__addonRef__-agentMaxIterations" preference="agentMaxIterations" style="width: 80px;" min="1" max="20" />
+  </hbox>
+
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-enableWebTools" data-l10n-id="pref-enable-web-tools"></html:label>
+    <html:span style="flex: 1;" />
+    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-enableWebTools" preference="enableWebTools" />
+  </hbox>
+
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-braveSearchApiKey" data-l10n-id="pref-brave-search-api-key"></html:label>
+    <html:input type="password" id="zotero-prefpane-__addonRef__-braveSearchApiKey" preference="braveSearchApiKey" style="flex: 1;" />
+  </hbox>
 </groupbox>

@@ -7,3 +7,7 @@ pref("maxDocumentChars", 300000);
 pref("systemPrompt", "");
 pref("modelProfiles", "[]");
 pref("activeProfile", "");
+pref("enableAgentMode", true);
+pref("agentMaxIterations", 10);
+pref("enableWebTools", false);
+pref("braveSearchApiKey", "");

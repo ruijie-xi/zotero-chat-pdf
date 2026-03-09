@@ -16,6 +16,10 @@ declare namespace _ZoteroTypes {
       "systemPrompt": string;
       "modelProfiles": string;
       "activeProfile": string;
+      "enableAgentMode": boolean;
+      "agentMaxIterations": number;
+      "enableWebTools": boolean;
+      "braveSearchApiKey": string;
     };
   }
 }
