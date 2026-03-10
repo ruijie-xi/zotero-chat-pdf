@@ -290,15 +290,21 @@ If rendering throws (e.g. malformed XHTML), it falls back to `bubble.textContent
 
 All preferences are stored under the plugin's pref prefix (accessed via `getPref(key)`):
 
-| Key               | Type   | Default                        | Used by          |
-|-------------------|--------|--------------------------------|------------------|
-| `mineruToken`     | string | `""`                           | mineru-client.ts |
-| `llmApiBase`      | string | `"https://api.deepseek.com/v1"`| llm-client.ts    |
-| `llmApiKey`       | string | `""`                           | llm-client.ts    |
-| `llmModel`        | string | `"deepseek-chat"`              | llm-client.ts    |
-| `cacheDir`        | string | `""` (→ `~/.chatpdf-cache/`)   | md-cache.ts      |
-| `maxDocumentChars`| number | `300000`                       | chat-session.ts  |
-| `systemPrompt`    | string | `""`                           | chat-session.ts  |
+| Key                   | Type    | Default                        | Used by             |
+|-----------------------|---------|--------------------------------|---------------------|
+| `mineruToken`         | string  | `""`                           | mineru-client.ts    |
+| `llmApiBase`          | string  | `"https://api.deepseek.com/v1"`| llm-client.ts       |
+| `llmApiKey`           | string  | `""`                           | llm-client.ts       |
+| `llmModel`            | string  | `"deepseek-chat"`              | llm-client.ts       |
+| `cacheDir`            | string  | `""` (→ `~/.chatpdf-cache/`)   | utils/cache-dir.ts  |
+| `maxDocumentChars`    | number  | `300000`                       | chat-session.ts     |
+| `systemPrompt`        | string  | `""`                           | chat-session.ts     |
+| `modelProfiles`       | string  | `"[]"`                         | chat-panel.ts       |
+| `activeProfile`       | string  | `""`                           | chat-panel.ts       |
+| `enableAgentMode`     | boolean | `true`                         | send-handler.ts     |
+| `agentMaxIterations`  | number  | `10`                           | agent-loop.ts       |
+| `enableWebTools`      | boolean | `false`                        | tools.ts            |
+| `braveSearchApiKey`   | string  | `""`                           | tools.ts            |
 
 ---
 
@@ -318,7 +324,5 @@ Just change `llmApiBase`, `llmApiKey`, and `llmModel` in preferences.
 
 1. **No token counting** — context truncation uses raw character count, not tokens. A 300K char limit is ~75-150K tokens depending on language. Could use a tokenizer for accuracy.
 2. **No parameters exposed** — temperature, max_tokens, top_p, etc. are not configurable. The model's defaults are used.
-3. **Entire documents in system prompt** — every API call re-sends all document text. For very large documents, this is expensive. RAG (retrieval-augmented generation) with chunking + embeddings would reduce cost.
+3. **Entire documents in system prompt** (classic mode) — every API call re-sends all document text. Agent mode mitigates this with tool-based document reading.
 4. **No error retry** — if the API call fails, the error is shown once and the user must retry manually.
-5. **No abort/cancel** — once a request starts streaming, there's no way to cancel it from the UI.
-6. **Single system prompt** — all documents go into one system message. Some models handle multiple system messages or different prompt structures better.

@@ -276,49 +276,63 @@ export class ChatSession {
     const maxChars = getPref("maxDocumentChars") || 300000;
     const systemPrompt = this.buildSystemPrompt();
 
-    // Start with system prompt + current user message (always included)
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-    ];
-    const currentMsg: ChatMessage = { role: "user", content: userMessage };
-
-    let totalChars = systemPrompt.length + userMessage.length;
-
     Zotero.debug(`[ChatPDF] buildMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
 
     if (systemPrompt.length + userMessage.length > maxChars) {
-      Zotero.debug(`[ChatPDF] WARNING: System prompt (${systemPrompt.length}) + user message (${userMessage.length}) = ${systemPrompt.length + userMessage.length} chars exceeds maxDocumentChars (${maxChars}). No history will be included.`);
+      Zotero.debug(`[ChatPDF] WARNING: System prompt + user message = ${systemPrompt.length + userMessage.length} chars exceeds maxDocumentChars (${maxChars}).`);
     }
 
-    // Add history messages (oldest to newest), only older ones can be dropped
-    // Work backwards through history to keep the most recent conversation
-    const recentHistory: ChatMessage[] = [];
-    let droppedCount = 0;
-    for (let i = this.history.length - 1; i >= 0; i--) {
-      const msg = this.history[i];
-      if (totalChars + msg.content.length > maxChars) {
-        droppedCount = i + 1;
-        break;
-      }
-      totalChars += msg.content.length;
-      // Strip reasoning from messages sent to the API — it's only for UI display
-      recentHistory.unshift({ role: msg.role, content: msg.content });
-    }
+    const recentHistory = this.truncateHistory(systemPrompt.length, userMessage.length, maxChars,
+      (msg) => ({ role: msg.role, content: msg.content }));
 
-    if (droppedCount > 0) {
-      Zotero.debug(`[ChatPDF] Context truncation: dropped ${droppedCount} oldest history messages to fit within ${maxChars} chars`);
-    }
+    const messages: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      ...recentHistory,
+      { role: "user", content: userMessage },
+    ];
 
-    // Assemble: system prompt → recent history → current user message
-    messages.push(...recentHistory);
-    messages.push(currentMsg);
-
+    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
     Zotero.debug(`[ChatPDF] Final message array: ${messages.length} messages, ${totalChars} total chars`);
     for (const m of messages) {
       Zotero.debug(`[ChatPDF]   [${m.role}] ${m.content.length} chars — "${m.content.slice(0, 60).replace(/\n/g, "\\n")}..."`);
     }
 
     return messages;
+  }
+
+  /**
+   * Shared truncation logic: iterate history backwards, keeping recent messages
+   * that fit within the char budget. transformFn maps a ChatMessage to a simplified
+   * { role, content } or null to skip.
+   */
+  private truncateHistory(
+    systemLen: number,
+    userLen: number,
+    maxChars: number,
+    transformFn: (msg: ChatMessage) => { role: string; content: string } | null,
+  ): ChatMessage[] {
+    let totalChars = systemLen + userLen;
+    const recentHistory: ChatMessage[] = [];
+    let droppedCount = 0;
+
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const msg = this.history[i];
+      const transformed = transformFn(msg);
+      if (!transformed) continue;
+
+      if (totalChars + transformed.content.length > maxChars) {
+        droppedCount = i + 1;
+        break;
+      }
+      totalChars += transformed.content.length;
+      recentHistory.unshift(transformed as ChatMessage);
+    }
+
+    if (droppedCount > 0) {
+      Zotero.debug(`[ChatPDF] Context truncation: dropped ${droppedCount} oldest history messages to fit within ${maxChars} chars`);
+    }
+
+    return recentHistory;
   }
 
   private buildSystemPrompt(): string {
@@ -431,53 +445,37 @@ export class ChatSession {
     const maxChars = getPref("maxDocumentChars") || 300000;
     const systemPrompt = this.buildAgentSystemPrompt();
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-    ];
-    const currentMsg: ChatMessage = { role: "user", content: userMessage };
-
-    let totalChars = systemPrompt.length + userMessage.length;
-
     Zotero.debug(`[ChatPDF] buildAgentMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
 
-    const recentHistory: ChatMessage[] = [];
-    let droppedCount = 0;
-    for (let i = this.history.length - 1; i >= 0; i--) {
-      const msg = this.history[i];
-      if (msg.role === "system") continue;
-      if (msg.role !== "user" && msg.role !== "assistant") continue;
+    const recentHistory = this.truncateHistory(systemPrompt.length, userMessage.length, maxChars,
+      (msg) => {
+        if (msg.role === "system") return null; // skip system messages
+        if (msg.role !== "user" && msg.role !== "assistant") return null;
 
-      // For assistant messages with tool history, prepend condensed tool results
-      // so the model has context about what was previously looked up (avoids re-calling tools)
-      let content = msg.content;
-      if (msg.role === "assistant" && msg.iterations?.length) {
-        const allToolCalls = msg.iterations.flatMap(it => it.toolCalls);
-        if (allToolCalls.length > 0) {
-          const summaryLines = allToolCalls.map(tc => {
-            const argsStr = Object.keys(tc.args).length > 0
-              ? `(${Object.entries(tc.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`
-              : "";
-            return `- ${tc.toolName}${argsStr}: ${tc.result}`;
-          });
-          content = `[Previous tool results:\n${summaryLines.join("\n")}\n]\n\n${content}`;
+        // For assistant messages with tool history, prepend condensed tool results
+        let content = msg.content;
+        if (msg.role === "assistant" && msg.iterations?.length) {
+          const allToolCalls = msg.iterations.flatMap(it => it.toolCalls);
+          if (allToolCalls.length > 0) {
+            const summaryLines = allToolCalls.map(tc => {
+              const argsStr = Object.keys(tc.args).length > 0
+                ? `(${Object.entries(tc.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`
+                : "";
+              return `- ${tc.toolName}${argsStr}: ${tc.result}`;
+            });
+            content = `[Previous tool results:\n${summaryLines.join("\n")}\n]\n\n${content}`;
+          }
         }
-      }
+        return { role: msg.role, content };
+      });
 
-      if (totalChars + content.length > maxChars) {
-        droppedCount = i + 1;
-        break;
-      }
-      totalChars += content.length;
-      recentHistory.unshift({ role: msg.role, content });
-    }
+    const messages: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      ...recentHistory,
+      { role: "user", content: userMessage },
+    ];
 
-    if (droppedCount > 0) {
-      Zotero.debug(`[ChatPDF] buildAgentMessages: dropped ${droppedCount} oldest history messages to fit within ${maxChars} chars`);
-    }
-
-    messages.push(...recentHistory);
-    messages.push(currentMsg);
-
+    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
     Zotero.debug(`[ChatPDF] buildAgentMessages: final ${messages.length} messages, ~${totalChars} total chars`);
     return messages;
   }

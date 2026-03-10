@@ -1,25 +1,7 @@
-import { getPref } from "../utils/prefs";
-
-function getCacheDir(): string {
-  const custom = getPref("cacheDir");
-  if (custom) {
-    return custom;
-  }
-  // Default: ~/.chatpdf-cache/
-  const home =
-    Services.dirsvc.get("Home", Components.interfaces.nsIFile).path;
-  return PathUtils.join(home, ".chatpdf-cache");
-}
+import { getCacheDir, ensureDir } from "../utils/cache-dir";
 
 function getFilePath(key: string): string {
   return PathUtils.join(getCacheDir(), `${key}.md`);
-}
-
-async function ensureCacheDir(): Promise<void> {
-  const dir = getCacheDir();
-  if (!(await IOUtils.exists(dir))) {
-    await IOUtils.makeDirectory(dir, { createAncestors: true });
-  }
 }
 
 export async function has(key: string): Promise<boolean> {
@@ -33,7 +15,7 @@ export async function read(key: string): Promise<string> {
 }
 
 export async function write(key: string, content: string): Promise<void> {
-  await ensureCacheDir();
+  await ensureDir(getCacheDir());
   const path = getFilePath(key);
   await IOUtils.write(path, new TextEncoder().encode(content));
 }

@@ -1,22 +1,12 @@
-import { getPref } from "../utils/prefs";
+import { getCacheDir, ensureDir } from "../utils/cache-dir";
 import { ChatMessage } from "./llm-client";
-
-function getCacheDir(): string {
-  const custom = getPref("cacheDir");
-  if (custom) return custom;
-  const home = Services.dirsvc.get("Home", Components.interfaces.nsIFile).path;
-  return PathUtils.join(home, ".chatpdf-cache");
-}
 
 function getLogDir(): string {
   return PathUtils.join(getCacheDir(), "debug-logs");
 }
 
 async function ensureLogDir(): Promise<void> {
-  const dir = getLogDir();
-  if (!(await IOUtils.exists(dir))) {
-    await IOUtils.makeDirectory(dir, { createAncestors: true });
-  }
+  await ensureDir(getLogDir());
 }
 
 function timestamp(): string {

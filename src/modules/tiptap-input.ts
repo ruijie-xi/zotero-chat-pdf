@@ -81,6 +81,8 @@ function createKeyIsolationPlugin(): Plugin {
     props: {
       handleDOMEvents: {
         keydown(_view: any, event: Event) {
+          const ke = event as KeyboardEvent;
+          Zotero.debug(`[ChatPDF] TipTap keydown: key="${ke.key}" code="${ke.code}" ctrl=${ke.ctrlKey} shift=${ke.shiftKey} alt=${ke.altKey} meta=${ke.metaKey} defaultPrevented=${ke.defaultPrevented}`);
           event.stopPropagation();
           event.stopImmediatePropagation();
           return false; // let ProseMirror continue processing
@@ -93,6 +95,17 @@ function createKeyIsolationPlugin(): Plugin {
         keypress(_view: any, event: Event) {
           event.stopPropagation();
           event.stopImmediatePropagation();
+          return false;
+        },
+        beforeinput(_view: any, event: Event) {
+          const ie = event as InputEvent;
+          Zotero.debug(`[ChatPDF] TipTap beforeinput: inputType="${ie.inputType}" data="${ie.data}" defaultPrevented=${ie.defaultPrevented}`);
+          // Don't stop propagation for beforeinput — ProseMirror needs it
+          return false;
+        },
+        input(_view: any, event: Event) {
+          const ie = event as InputEvent;
+          Zotero.debug(`[ChatPDF] TipTap input: inputType="${ie.inputType}" data="${ie.data}"`);
           return false;
         },
       },
@@ -111,20 +124,90 @@ const KeyHandler = Extension.create({
     return {
       // Explicit Backspace/Delete handlers — ProseMirror's built-in bindings
       // may not fire reliably in Zotero's XHTML context with key isolation.
+      // We also handle single-character deletion explicitly since the browser's
+      // native contenteditable `beforeinput` may not fire in Zotero's XHTML.
       Backspace: ({ editor }) => {
-        return editor.commands.first(({ commands }) => [
+        const { state } = editor.view;
+        const { selection } = state;
+        const { $from, empty } = selection;
+        Zotero.debug(`[ChatPDF] TipTap Backspace: pos=${$from.pos}, empty=${empty}, docSize=${state.doc.content.size}, parentType=${$from.parent.type.name}, parentSize=${$from.parent.content.size}, indexInParent=${$from.parentOffset}`);
+
+        // Log surrounding node structure
+        if ($from.pos > 0) {
+          const before = state.doc.resolve($from.pos - 1);
+          Zotero.debug(`[ChatPDF] TipTap Backspace: nodeBefore pos=${$from.pos - 1}, parent=${before.parent.type.name}, nodeAfter=${ $from.nodeBefore?.type.name ?? "null"}, nodeBeforeSize=${$from.nodeBefore?.nodeSize ?? "n/a"}`);
+        }
+
+        // Try structural commands first
+        const structural = editor.commands.first(({ commands }) => [
           () => commands.undoInputRule(),
           () => commands.deleteSelection(),
           () => commands.joinBackward(),
           () => commands.selectNodeBackward(),
         ]);
+        if (structural) {
+          Zotero.debug("[ChatPDF] TipTap Backspace: handled by structural command");
+          return true;
+        }
+
+        // Fallback: delete one character backward (native beforeinput may not work in XHTML)
+        if (empty && $from.pos > 0) {
+          // Check if the node before cursor is a mention — delete the whole mention
+          const nodeBefore = $from.nodeBefore;
+          if (nodeBefore && nodeBefore.type.name === "mention") {
+            const from = $from.pos - nodeBefore.nodeSize;
+            // Also check if there's a trigger "@" character right before the mention
+            Zotero.debug(`[ChatPDF] TipTap Backspace: deleting mention node at ${from}-${$from.pos}`);
+            editor.view.dispatch(state.tr.delete(from, $from.pos));
+            return true;
+          }
+          Zotero.debug(`[ChatPDF] TipTap Backspace: fallback char delete at pos ${$from.pos}`);
+          editor.view.dispatch(state.tr.delete($from.pos - 1, $from.pos));
+          return true;
+        }
+
+        Zotero.debug("[ChatPDF] TipTap Backspace: nothing to delete");
+        return true;
       },
       Delete: ({ editor }) => {
-        return editor.commands.first(({ commands }) => [
+        const { state } = editor.view;
+        const { selection } = state;
+        const { $from, $to, empty } = selection;
+        Zotero.debug(`[ChatPDF] TipTap Delete: pos=${$from.pos}, empty=${empty}, docSize=${state.doc.content.size}, parentType=${$from.parent.type.name}, indexInParent=${$from.parentOffset}`);
+
+        // Log node after cursor
+        if ($from.pos < state.doc.content.size) {
+          Zotero.debug(`[ChatPDF] TipTap Delete: nodeAfter=${$from.nodeAfter?.type.name ?? "null"}, nodeAfterSize=${$from.nodeAfter?.nodeSize ?? "n/a"}`);
+        }
+
+        // Try structural commands first
+        const structural = editor.commands.first(({ commands }) => [
           () => commands.deleteSelection(),
           () => commands.joinForward(),
           () => commands.selectNodeForward(),
         ]);
+        if (structural) {
+          Zotero.debug("[ChatPDF] TipTap Delete: handled by structural command");
+          return true;
+        }
+
+        // Fallback: delete one character forward
+        if (empty && $to.pos < state.doc.content.size) {
+          const nodeAfter = $from.nodeAfter;
+          if (nodeAfter && nodeAfter.type.name === "mention") {
+            // Delete the entire mention node
+            const to = $from.pos + nodeAfter.nodeSize;
+            Zotero.debug(`[ChatPDF] TipTap Delete: deleting mention node at ${$from.pos}-${to}`);
+            editor.view.dispatch(state.tr.delete($from.pos, to));
+            return true;
+          }
+          Zotero.debug(`[ChatPDF] TipTap Delete: fallback char delete at pos ${$from.pos}`);
+          editor.view.dispatch(state.tr.delete($from.pos, $from.pos + 1));
+          return true;
+        }
+
+        Zotero.debug("[ChatPDF] TipTap Delete: nothing to delete");
+        return true;
       },
 
       ArrowLeft: ({ editor }) => {

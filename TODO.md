@@ -48,37 +48,47 @@ Move storage folder
 
 
 
+For this zotero chatpdf plugin, make the following improvements. Since you cannot truly verify it by using zotero, after each fix you should think through the dataflow and workflow of the code and make sure it works well. Also, add enough debug infos to help me locate the issues while testing these improvements. 
 
-
-
-
-
-
-The agent seems to work well now. I have several improvement ideas: 
-
-1. Now the drag-and-drop function is implemented in the message box, but it is separated from the text editing area. What I want is to drag-and-drop items in the text editing area. When I drag an item in the text editing area, The true message is like: 
+1. Disable the auto-adjustment of the sidebar width. always let user to drag. 
+2. Can we show the source chips in the message boxes in the chat after sent, just looking like in the editor? 
+3. What is the logic of the source area? When I remove a key from the edit box, I don't see the source in the area removed. Is the source area showing a message-attached source list or a session-mentioned source list? Clarify that to me, show what the corresponding data is. I assume it should be the message-attached source, so it should be always showing all the sources used in the current edit box. but the agent should see all the sources mentioned in this session and is able to list them using the list_source tool. 
+4. When using gemini model with openai compatible api in agent mode, I get the error info below. and, I cannot get the streaming thinking contents. please refer to [OpenAI compatibility  | Gemini API  | Google AI for Developers](https://ai.google.dev/gemini-api/docs/openai) to make it compatible with gemini. 
 
 ```
-Summarize this article: @Some-item-key-readable-by-agent and search for more information on the internet.
+(3)(+0000001): [ChatPDF] chatWithTools: tool_calls delta, 1 entries
+
+(3)(+0000002): [ChatPDF] chatWithTools: final tool_calls: [{"name":"list_sources","argsLen":2}]
+
+(3)(+0000000): [ChatPDF] runAgentLoop: iteration 1 result: content=0 chars, reasoning=0 chars, tool_calls=1
+
+(3)(+0000000): [ChatPDF] handleSend: tool start: Listing sources...
+
+(3)(+0000001): [ChatPDF] executeTool: list_sources args={}
+
+(3)(+0000000): [ChatPDF] list_sources: 1 sources, 1 ready
+
+(3)(+0000000): [ChatPDF] list_sources: result=1010 chars, 1 sources, 1 ready
+
+(3)(+0000000): [ChatPDF] executeTool: list_sources done in 0ms, result=1010 chars
+
+(3)(+0000000): [ChatPDF] runAgentLoop: tool list_sources done in 0ms, result=1010 chars
+
+(3)(+0000000): [ChatPDF] handleSend: tool end: list_sources (0ms)
+
+(3)(+0000000): [ChatPDF] handleSend: iteration 1/30 complete, tools=1
+
+(3)(+0000001): [ChatPDF] runAgentLoop: iteration 2/30, messages=4
+
+(3)(+0000000): [ChatPDF] chatWithTools: 4 messages, 4 tools, ~1961 chars, stream=true
+
+(5)(+0000002): CookieSandbox: Being paranoid about channel for generativelanguage.googleapis.com
+
+(5)(+0000000): CookieSandbox: Cleared cookies to be sent to generativelanguage.googleapis.com
+
+(5)(+0000321): CookieSandbox: Being paranoid about channel for generativelanguage.googleapis.com
+
+(5)(+0000000): CookieSandbox: No Set-Cookie header received for generativelanguage.googleapis.com
+
+(3)(+0000000): [ChatPDF] handleSend error: Error: LLM API error (400): [{ "error": { "code": 400, "message": "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call `default_api:list_sources` , position 2. Please refer to https://ai.google.dev/gemini-api/docs/thought-signatures for more details.", "status": "INVALID_ARGUMENT" } } ] chatWithTools@jar:file:///C:/Users/XRJ/AppData/Roaming/Zotero/Zotero/Profiles/ej0u85cg.default/extensions/chatpdf@zotero-plugin.xpi!/content/scripts/chatpdf.js:170:13 
 ```
-
-So the agent will know how to use tool call to retrieve answers. But the @ key is displayed like a chip (just like the small chip currently), and the user can delete it by clicking the x button or using backspace when editing (once the user backspace the chip, it must be deleted in a whole - e.g. a key is @123456 and it should be deleted by a backspace as a whole instead of showing @12345 to the user). Note that: previously you implemented this, but the text editing area is not working - I cannot edit, use left/right arrow or send the message. If the current developing tools are not able to implement it, I am open to use more other tools. 
-
-2. Now the thinking and tool calls show in the chat, but it only have one think box and a streaming tool call under it. I want the output to stack these and show the whole loop - e.g. think -> tool call -> think -> tool call. And remember to use the same render logic when visiting a live/dead session from history. 
-
-3. When I use Gemini as the model, I cannot see the thinking process (it is different from deepseek). And it gives error when tool calling: 
-
-```
-Error: LLM API error (400): [{
-"error": {
-  "code": 400,
-  "message": "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call `default_api:list_sources` , position 4. Please refer to https://ai.google.dev/gemini-api/docs/thought-signatures for more details.",
-  "status": "INVALID_ARGUMENT"
-}
-}
-]
-```
-
-4. I am not sure about whether the tool calling results are included in the following chats. It seems that including these will save some tokens for later Q & As. I don't know about the best practice of this. You can think about it and try to (or not to) improve it. 
-
-5. I want to see a token usage at the bottom of the chatbox. 

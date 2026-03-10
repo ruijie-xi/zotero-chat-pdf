@@ -1,4 +1,5 @@
-import { getPref } from "../utils/prefs";
+import { getCacheDir, ensureDir } from "../utils/cache-dir";
+import { log, error as logError } from "../utils/log";
 
 export interface SavedSession {
   id: string;
@@ -23,14 +24,6 @@ export interface SessionMeta {
   updatedAt: number;
 }
 
-function getCacheDir(): string {
-  const custom = getPref("cacheDir");
-  if (custom) return custom;
-  const home =
-    Services.dirsvc.get("Home", Components.interfaces.nsIFile).path;
-  return PathUtils.join(home, ".chatpdf-cache");
-}
-
 function getHistoryDir(): string {
   return PathUtils.join(getCacheDir(), "history");
 }
@@ -44,10 +37,7 @@ function getIndexPath(): string {
 }
 
 async function ensureHistoryDir(): Promise<void> {
-  const dir = getHistoryDir();
-  if (!(await IOUtils.exists(dir))) {
-    await IOUtils.makeDirectory(dir, { createAncestors: true });
-  }
+  await ensureDir(getHistoryDir());
 }
 
 export async function saveSession(session: SavedSession): Promise<void> {
@@ -123,7 +113,8 @@ async function loadIndex(): Promise<SessionMeta[]> {
     const bytes = await IOUtils.read(path);
     const json = new TextDecoder().decode(bytes);
     return JSON.parse(json) as SessionMeta[];
-  } catch {
+  } catch (err: any) {
+    logError("history", "loadIndex failed", err);
     return [];
   }
 }

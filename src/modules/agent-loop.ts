@@ -111,13 +111,18 @@ export async function runAgentLoop(
     const iterationTools = isLastIteration ? undefined : tools;
 
     if (iterationTools) {
-      // ---- Tool-calling iteration: STREAMING to show thinking live ----
+      // ---- Tool-calling iteration: STREAMING thinking + content live ----
+      // Pass the content stream callback so that if the LLM returns a final
+      // answer (no tool calls), it streams to the UI in real time instead of
+      // being buffered and flushed all at once.
       const thinking = makeThinkingWrapper();
 
       const result = await chatWithTools(
         currentMessages as ChatMessage[],
         iterationTools,
-        undefined, // don't stream content to UI during tool iterations
+        callbacks.onStream
+          ? (chunk: string, done: boolean) => { if (!done) callbacks.onStream!(chunk, false); }
+          : undefined,
         thinking.wrapper,
         signal,
       );
@@ -129,14 +134,28 @@ export async function runAgentLoop(
       Zotero.debug(`[ChatPDF] runAgentLoop: iteration ${iteration + 1} result: content=${result.content.length} chars, reasoning=${result.reasoning?.length ?? 0} chars, tool_calls=${result.tool_calls?.length ?? 0}`);
 
       if (result.tool_calls && result.tool_calls.length > 0) {
-        // Reconstruct assistant message from streaming result
+        // Reconstruct assistant message for echo-back.
+        // Use rawContent (with Gemini <thought> tags) when available,
+        // otherwise fall back to clean content.
         const assistantMsg: Record<string, unknown> = {
           role: "assistant",
-          content: result.content || "",
-          tool_calls: result.tool_calls,
+          content: result.rawContent ?? result.content ?? "",
+          tool_calls: result.tool_calls.map(tc => {
+            const mapped: Record<string, unknown> = {
+              id: tc.id,
+              type: "function",
+              function: { name: tc.function.name, arguments: tc.function.arguments },
+            };
+            if (tc.extra_content) mapped.extra_content = tc.extra_content;
+            return mapped;
+          }),
         };
-        // Include reasoning for providers that expect it echoed back
-        if (result.reasoning) {
+        // Preserve message-level extra_content (Gemini thought flag)
+        if (result.extra_content) {
+          assistantMsg.extra_content = result.extra_content;
+        }
+        // Include reasoning_content for DeepSeek/providers that use a dedicated field
+        if (result.reasoning && !result.rawContent) {
           assistantMsg.reasoning_content = result.reasoning;
         }
         currentMessages.push(assistantMsg);
@@ -147,7 +166,7 @@ export async function runAgentLoop(
           result.tool_calls.map(async (tc: ToolCall) => {
             let args: Record<string, unknown> = {};
             try { args = JSON.parse(tc.function.arguments || "{}"); } catch {
-              Zotero.debug(`[ChatPDF] runAgentLoop: failed to parse args for ${tc.function.name}`);
+              Zotero.debug(`[ChatPDF] runAgentLoop: failed to parse args for ${tc.function.name}, raw=${tc.function.arguments}`);
             }
 
             callbacks.onToolCallStart?.(tc.function.name, args);
@@ -179,11 +198,11 @@ export async function runAgentLoop(
         callbacks.onIterationComplete?.(iteration + 1, maxIterations, iterRecord);
         continue;
       } else {
-        // No tool calls — this is the final answer (content was buffered, not streamed)
+        // No tool calls — this is the final answer (content was already streamed live)
         const iterRecord: IterationRecord = { reasoning: result.reasoning, toolCalls: [] };
         iterations.push(iterRecord);
 
-        callbacks.onStream?.(result.content, false);
+        // Signal stream completion (content chunks already delivered above)
         callbacks.onStream?.("", true);
 
         const totalDuration = Date.now() - loopStartTime;

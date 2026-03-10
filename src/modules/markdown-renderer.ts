@@ -3,7 +3,6 @@ import katex from "katex";
 
 const marked = new Marked();
 
-// Configure marked for safe output
 marked.setOptions({
   gfm: true,
   breaks: true,
@@ -20,94 +19,65 @@ export function renderMarkdown(text: string): string {
   try {
     return renderMarkdownUnsafe(text);
   } catch (err) {
-    // If rendering fails, return escaped plain text so the answer is never lost
     Zotero.debug(`[ChatPDF] Markdown render error: ${err}`);
     return escapeXml(text).replace(/\n/g, "<br/>");
   }
 }
 
+/** Replace a math pattern with a placeholder, rendering via KaTeX. */
+function replaceMath(
+  text: string,
+  pattern: RegExp,
+  displayMode: boolean,
+  wrapError: (latex: string) => string,
+  mathBlocks: { placeholder: string; html: string }[],
+  counter: { value: number },
+): string {
+  return text.replace(pattern, (_match, latex) => {
+    const placeholder = `%%MATH_BLOCK_${counter.value++}%%`;
+    try {
+      const html = katex.renderToString(latex.trim(), {
+        displayMode,
+        output: "html",
+        throwOnError: false,
+      });
+      const wrapped = displayMode
+        ? `<div class="chatpdf-math-display">${html}</div>`
+        : html;
+      mathBlocks.push({ placeholder, html: wrapped });
+    } catch {
+      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">${wrapError(latex)}</code>` });
+    }
+    return placeholder;
+  });
+}
+
 function renderMarkdownUnsafe(text: string): string {
-  // Step 1: Extract and replace math blocks with placeholders
   const mathBlocks: { placeholder: string; html: string }[] = [];
-  let counter = 0;
+  const counter = { value: 0 };
 
   // Display math: $$...$$ and \[...\]
-  let processed = text.replace(/\$\$([\s\S]+?)\$\$/g, (_match, latex) => {
-    const placeholder = `%%MATH_BLOCK_${counter++}%%`;
-    try {
-      const html = katex.renderToString(latex.trim(), {
-        displayMode: true,
-        output: "html",
-        throwOnError: false,
-      });
-      mathBlocks.push({ placeholder, html: `<div class="chatpdf-math-display">${html}</div>` });
-    } catch {
-      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">$$${escapeXml(latex)}$$</code>` });
-    }
-    return placeholder;
-  });
-
-  processed = processed.replace(/\\\[([\s\S]+?)\\\]/g, (_match, latex) => {
-    const placeholder = `%%MATH_BLOCK_${counter++}%%`;
-    try {
-      const html = katex.renderToString(latex.trim(), {
-        displayMode: true,
-        output: "html",
-        throwOnError: false,
-      });
-      mathBlocks.push({ placeholder, html: `<div class="chatpdf-math-display">${html}</div>` });
-    } catch {
-      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">\\[${escapeXml(latex)}\\]</code>` });
-    }
-    return placeholder;
-  });
+  let processed = replaceMath(text, /\$\$([\s\S]+?)\$\$/g, true,
+    (l) => `$$${escapeXml(l)}$$`, mathBlocks, counter);
+  processed = replaceMath(processed, /\\\[([\s\S]+?)\\\]/g, true,
+    (l) => `\\[${escapeXml(l)}\\]`, mathBlocks, counter);
 
   // Inline math: $...$ and \(...\)
-  processed = processed.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_match, latex) => {
-    const placeholder = `%%MATH_BLOCK_${counter++}%%`;
-    try {
-      const html = katex.renderToString(latex.trim(), {
-        displayMode: false,
-        output: "html",
-        throwOnError: false,
-      });
-      mathBlocks.push({ placeholder, html });
-    } catch {
-      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">$${escapeXml(latex)}$</code>` });
-    }
-    return placeholder;
-  });
+  processed = replaceMath(processed, /(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, false,
+    (l) => `$${escapeXml(l)}$`, mathBlocks, counter);
+  processed = replaceMath(processed, /\\\((.+?)\\\)/g, false,
+    (l) => `\\(${escapeXml(l)}\\)`, mathBlocks, counter);
 
-  processed = processed.replace(/\\\((.+?)\\\)/g, (_match, latex) => {
-    const placeholder = `%%MATH_BLOCK_${counter++}%%`;
-    try {
-      const html = katex.renderToString(latex.trim(), {
-        displayMode: false,
-        output: "html",
-        throwOnError: false,
-      });
-      mathBlocks.push({ placeholder, html });
-    } catch {
-      mathBlocks.push({ placeholder, html: `<code class="chatpdf-math-error">\\(${escapeXml(latex)}\\)</code>` });
-    }
-    return placeholder;
-  });
-
-  // Step 2: Render markdown
+  // Render markdown
   let html = marked.parse(processed) as string;
 
-  // Step 3: Re-insert math blocks
+  // Re-insert math blocks
   for (const { placeholder, html: mathHtml } of mathBlocks) {
     html = html.replace(placeholder, mathHtml);
   }
 
-  // Step 4: Sanitize — strip dangerous tags/attributes
+  // Sanitize and convert to XHTML
   html = sanitize(html);
-
-  // Step 5: Make output XHTML-safe
-  // Zotero uses XHTML namespace where innerHTML requires well-formed XML.
-  // marked outputs HTML5 void elements (<br>, <hr>, <img ...>) which are
-  // not valid XHTML. Convert them to self-closing form.
   html = toXhtml(html);
 
   return html;
@@ -115,21 +85,15 @@ function renderMarkdownUnsafe(text: string): string {
 
 /**
  * Convert HTML5 void elements to XHTML self-closing form.
- * e.g. <br> → <br/>, <hr> → <hr/>, <img src="..."> → <img src="..."/>
  */
 function toXhtml(html: string): string {
-  // Self-close void elements that aren't already self-closed
   const voidTags = "area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr";
-  // Match <tag ...> that doesn't already end with />
   const re = new RegExp(`<(${voidTags})(\\s[^>]*?)?\\/?>`, "gi");
   return html.replace(re, (_match, tag, attrs) => {
     return `<${tag}${attrs || ""}/>`;
   });
 }
 
-/**
- * Escape text for safe inclusion in XML/XHTML.
- */
 function escapeXml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -138,16 +102,10 @@ function escapeXml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/**
- * Simple HTML sanitizer: remove script tags, on* event attributes, and javascript: URLs.
- */
 function sanitize(html: string): string {
-  // Remove <script> tags
   html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
-  // Remove on* event handlers
   html = html.replace(/\s+on\w+\s*=\s*"[^"]*"/gi, "");
   html = html.replace(/\s+on\w+\s*=\s*'[^']*'/gi, "");
-  // Remove javascript: URLs
   html = html.replace(/href\s*=\s*"javascript:[^"]*"/gi, 'href="#"');
   html = html.replace(/href\s*=\s*'javascript:[^']*'/gi, "href='#'");
   return html;
