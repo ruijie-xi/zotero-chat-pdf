@@ -5,7 +5,7 @@ import { createChatInput, ChatInputEditor } from "./tiptap-input";
 import { getPref, setPref } from "../utils/prefs";
 import { h, XUL_NS } from "../utils/dom";
 import {
-  session, setSession, showingHistory,
+  session, setSession, showingHistory, setShowingHistory,
   chatInput, setChatInput,
   isStreaming,
   conversionAbortControllers,
@@ -208,10 +208,47 @@ export function injectChatPanel(win: Window): void {
   root.id = "chatpdf-root";
   vbox.appendChild(root);
 
+  // --- Create minimized bar (hidden by default) ---
+  const minimizedBar = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+  minimizedBar.id = "chatpdf-minimized-bar";
+  minimizedBar.style.display = "none";
+  const minimizedLabel = doc.createElementNS("http://www.w3.org/1999/xhtml", "span") as HTMLElement;
+  minimizedLabel.className = "chatpdf-minimized-label";
+  minimizedLabel.textContent = "Chat";
+  minimizedBar.appendChild(minimizedLabel);
+  vbox.appendChild(minimizedBar);
+
+  // --- Minimize / Restore logic ---
+  let savedWidth = "350";
+
+  function minimizePanel() {
+    savedWidth = vbox.getAttribute("width") || "350";
+    root.style.display = "none";
+    minimizedBar.style.display = "";
+    vbox.setAttribute("width", "36");
+    vbox.style.minWidth = "36px";
+    vbox.style.maxWidth = "36px";
+    splitter.setAttribute("state", "collapsed");
+    splitter.style.display = "none";
+  }
+
+  function restorePanel() {
+    minimizedBar.style.display = "none";
+    root.style.display = "";
+    vbox.setAttribute("width", savedWidth);
+    vbox.style.minWidth = "";
+    vbox.style.maxWidth = "";
+    splitter.removeAttribute("state");
+    splitter.style.display = "";
+  }
+
+  minimizedBar.addEventListener("click", restorePanel);
+
   layoutBox.appendChild(splitter);
   layoutBox.appendChild(vbox);
 
-  buildChatUI(root);
+  // Build the chat UI once — it persists for the window lifetime
+  buildChatUI(root, minimizePanel);
 }
 
 /** Remove injected panel elements from a window. */
@@ -238,9 +275,21 @@ export function removeChatPanel(win: Window): void {
 
 // ---- UI Building ----
 
-function buildChatUI(root: HTMLElement): void {
+function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   const doc = root.ownerDocument!;
   root.innerHTML = "";
+  setShowingHistory(false);
+
+  // 0. Title bar with minimize button
+  const titleBar = h(doc, "div", { className: "chatpdf-title-bar" });
+  const titleText = h(doc, "span", { className: "chatpdf-title-bar-text" }, "Chat");
+  titleBar.appendChild(titleText);
+  if (onMinimize) {
+    const minimizeBtn = h(doc, "button", { className: "chatpdf-minimize-btn", title: "Minimize" }, "\u2212");
+    minimizeBtn.addEventListener("click", onMinimize);
+    titleBar.appendChild(minimizeBtn);
+  }
+  root.appendChild(titleBar);
 
   // 1. Messages area
   const messagesArea = h(doc, "div", { className: "chatpdf-messages", id: "chatpdf-messages" });
