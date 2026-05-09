@@ -36,6 +36,10 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function convertPdf(
   pdfPath: string,
   onProgress?: ProgressCallback,
@@ -126,7 +130,7 @@ export async function convertPdf(
       throw new Error("MinerU conversion timed out after 6 minutes");
     }
 
-    await Zotero.Promise.delay(POLL_INTERVAL_MS);
+    await delay(POLL_INTERVAL_MS);
     throwIfAborted(signal);
 
     const pollRes = await fetch(
