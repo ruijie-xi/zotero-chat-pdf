@@ -273,13 +273,13 @@ export class ChatSession {
   }
 
   buildMessages(userMessage: string): ChatMessage[] {
-    const maxChars = getPref("maxDocumentChars") || 300000;
+    const maxChars = Number.POSITIVE_INFINITY;
     const systemPrompt = this.buildSystemPrompt();
 
     Zotero.debug(`[ChatPDF] buildMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
 
     if (systemPrompt.length + userMessage.length > maxChars) {
-      Zotero.debug(`[ChatPDF] WARNING: System prompt + user message = ${systemPrompt.length + userMessage.length} chars exceeds maxDocumentChars (${maxChars}).`);
+      Zotero.debug(`[ChatPDF] WARNING: System prompt + user message is very large (${systemPrompt.length + userMessage.length} chars).`);
     }
 
     const recentHistory = this.truncateHistory(systemPrompt.length, userMessage.length, maxChars,
@@ -356,14 +356,14 @@ export class ChatSession {
       return DEFAULT_NO_DOCS_PROMPT_EN;
     }
 
-    const maxDocChars = getPref("maxDocumentChars") || 300000;
+    const maxDocChars = Number.POSITIVE_INFINITY;
     const customPrompt = (getPref("systemPrompt") as string) || "";
     const instructionText = (customPrompt || DEFAULT_SYSTEM_PROMPT_EN) + "\n\n";
 
     // Calculate budget for document content
     const docBudget = maxDocChars - instructionText.length;
     if (docBudget <= 0) {
-      Zotero.debug(`[ChatPDF] WARNING: Instruction text (${instructionText.length}) exceeds maxDocumentChars (${maxDocChars}). No documents included.`);
+      Zotero.debug(`[ChatPDF] WARNING: Instruction text (${instructionText.length}) leaves no room for document content.`);
       for (const source of readySources) {
         source.contextRatio = 0;
       }
@@ -442,7 +442,7 @@ export class ChatSession {
   }
 
   buildAgentMessages(userMessage: string): ChatMessage[] {
-    const maxChars = getPref("maxDocumentChars") || 300000;
+    const maxChars = Number.POSITIVE_INFINITY;
     const systemPrompt = this.buildAgentSystemPrompt();
 
     Zotero.debug(`[ChatPDF] buildAgentMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);

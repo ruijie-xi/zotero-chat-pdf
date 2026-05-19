@@ -55,6 +55,26 @@ export async function runAgentLoop(
     totalUsage.prompt_tokens = (totalUsage.prompt_tokens || 0) + (u.prompt_tokens || 0);
     totalUsage.completion_tokens = (totalUsage.completion_tokens || 0) + (u.completion_tokens || 0);
     totalUsage.total_tokens = (totalUsage.total_tokens || 0) + (u.total_tokens || 0);
+    totalUsage.prompt_cache_hit_tokens = (totalUsage.prompt_cache_hit_tokens || 0) + (u.prompt_cache_hit_tokens || 0);
+    totalUsage.prompt_cache_miss_tokens = (totalUsage.prompt_cache_miss_tokens || 0) + (u.prompt_cache_miss_tokens || 0);
+    const reasoningTokens = u.completion_tokens_details?.reasoning_tokens || 0;
+    if (reasoningTokens) {
+      totalUsage.completion_tokens_details = {
+        ...(totalUsage.completion_tokens_details || {}),
+        reasoning_tokens: (totalUsage.completion_tokens_details?.reasoning_tokens || 0) + reasoningTokens,
+      };
+    }
+  }
+
+  function hasAnyUsage(u: TokenUsage): boolean {
+    return !!(
+      u.prompt_tokens ||
+      u.completion_tokens ||
+      u.total_tokens ||
+      u.prompt_cache_hit_tokens ||
+      u.prompt_cache_miss_tokens ||
+      u.completion_tokens_details?.reasoning_tokens
+    );
   }
 
   /**
@@ -213,7 +233,7 @@ export async function runAgentLoop(
           reasoning: result.reasoning,
           iterations,
           totalIterations: iteration + 1,
-          usage: totalUsage.total_tokens ? totalUsage : undefined,
+          usage: hasAnyUsage(totalUsage) ? totalUsage : undefined,
         };
       }
     } else {
@@ -245,7 +265,7 @@ export async function runAgentLoop(
         reasoning: result.reasoning,
         iterations,
         totalIterations: iteration + 1,
-        usage: totalUsage.total_tokens ? totalUsage : undefined,
+        usage: hasAnyUsage(totalUsage) ? totalUsage : undefined,
       };
     }
   }
@@ -286,6 +306,6 @@ export async function runAgentLoop(
     reasoning: finalResult.reasoning,
     iterations,
     totalIterations: maxIterations,
-    usage: totalUsage.total_tokens ? totalUsage : undefined,
+    usage: hasAnyUsage(totalUsage) ? totalUsage : undefined,
   };
 }

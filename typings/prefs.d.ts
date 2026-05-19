@@ -11,12 +11,12 @@ declare namespace _ZoteroTypes {
       "llmApiBase": string;
       "llmApiKey": string;
       "llmModel": string;
+      "llmThinkingMode": string;
+      "llmThinkEffort": string;
       "cacheDir": string;
-      "maxDocumentChars": number;
       "systemPrompt": string;
       "modelProfiles": string;
       "activeProfile": string;
-      "enableAgentMode": boolean;
       "agentMaxIterations": number;
       "enableWebTools": boolean;
       "braveSearchApiKey": string;

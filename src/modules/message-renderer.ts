@@ -105,16 +105,39 @@ export function createIterationBlock(doc: Document, record: IterationRecord, ite
 export function updateUsageBar(root: HTMLElement, usage?: TokenUsage): void {
   const bar = root.querySelector("#chatpdf-usage-bar") as HTMLElement | null;
   if (!bar) return;
-  if (!usage || !usage.total_tokens) {
+  const text = formatUsageText(usage);
+  if (!text) {
     bar.style.display = "none";
     return;
   }
   bar.style.display = "";
+  bar.textContent = text;
+}
+
+export function formatUsageText(usage?: TokenUsage): string {
+  if (!usage) return "";
   const parts: string[] = [];
   if (usage.prompt_tokens) parts.push(`In: ${formatTokens(usage.prompt_tokens)}`);
   if (usage.completion_tokens) parts.push(`Out: ${formatTokens(usage.completion_tokens)}`);
+  if (usage.completion_tokens_details?.reasoning_tokens) {
+    parts.push(`Reasoning: ${formatTokens(usage.completion_tokens_details.reasoning_tokens)}`);
+  }
   if (usage.total_tokens) parts.push(`Total: ${formatTokens(usage.total_tokens)}`);
-  bar.textContent = parts.join(" \u00B7 ");
+  if (usage.prompt_cache_hit_tokens || usage.prompt_cache_miss_tokens) {
+    const hit = usage.prompt_cache_hit_tokens || 0;
+    const miss = usage.prompt_cache_miss_tokens || 0;
+    parts.push(`Cache: ${formatTokens(hit)}/${formatTokens(miss)}`);
+  }
+  return parts.join(" \u00B7 ");
+}
+
+export function appendUsageMeta(container: HTMLElement, usage?: TokenUsage): void {
+  const text = formatUsageText(usage);
+  const existing = container.querySelector(".chatpdf-msg-usage");
+  if (existing) existing.remove();
+  if (!text) return;
+  const doc = container.ownerDocument!;
+  container.appendChild(h(doc, "div", { className: "chatpdf-msg-usage" }, text));
 }
 
 /** Append a message bubble to the messages area. */
@@ -188,6 +211,7 @@ export function appendMessage(root: HTMLElement, role: "user" | "assistant", con
     if (modelLabel) {
       bubble.appendChild(h(doc, "div", { className: "chatpdf-msg-model-label" }, modelLabel));
     }
+    appendUsageMeta(bubble, usage);
     // Copy button for assistant messages
     row.appendChild(createCopyButton(doc, content));
     row.appendChild(bubble);

@@ -1,9 +1,9 @@
 import { h } from "../utils/dom";
 import { formatChars } from "../utils/format";
-import { getPref } from "../utils/prefs";
 import { SourceItem } from "./chat-session";
 import { convertPdf } from "./mineru-client";
 import * as MDCache from "./md-cache";
+import * as ChatHistory from "./chat-history";
 import {
   session, conversionAbortControllers, createAbortController,
 } from "./panel-state";
@@ -47,6 +47,13 @@ export async function convertSource(source: SourceItem, onProgress?: (msg: strin
   } finally {
     conversionAbortControllers.delete(source.key);
   }
+}
+
+function saveCurrentSession(): void {
+  if (!session.hasMessages()) return;
+  ChatHistory.saveSession(session.toSavedSession()).catch((err: any) => {
+    Zotero.debug(`[ChatPDF] save after source removal failed: ${err.message}`);
+  });
 }
 
 /** Refresh the source chips UI in the panel. */
@@ -117,19 +124,31 @@ export function refreshSourceChips(root: HTMLElement): void {
       actions.appendChild(stopBtn);
     }
 
+    const removeBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-remove-btn", title: "Remove source" }, "Remove");
+    removeBtn.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
+      const controller = conversionAbortControllers.get(source.key);
+      if (controller) {
+        Zotero.debug(`[ChatPDF] Removing source ${source.key}; aborting active conversion`);
+        controller.abort();
+        conversionAbortControllers.delete(source.key);
+      }
+      session.removeSource(source.key);
+      saveCurrentSession();
+      refreshSourceChips(root);
+    });
+    actions.appendChild(removeBtn);
+
     chip.appendChild(actions);
     container.appendChild(chip);
   }
 
-  // Total usage summary bar
+  // Total source size summary
   const readySources = sources.filter((s) => s.status === "ready" && s.markdown);
   if (readySources.length > 0) {
     const totalChars = readySources.reduce((sum, s) => sum + (s.markdown?.length ?? 0), 0);
-    const maxDocChars = (getPref("maxDocumentChars") as number) || 300000;
-    const exceeds = totalChars > maxDocChars;
-    const summaryClass = exceeds ? "chatpdf-source-summary chatpdf-source-summary-over" : "chatpdf-source-summary";
-    const summary = h(doc, "div", { className: summaryClass },
-      `${formatChars(totalChars)} / ${formatChars(maxDocChars)} chars`);
+    const summary = h(doc, "div", { className: "chatpdf-source-summary" },
+      `${formatChars(totalChars)} chars`);
     container.appendChild(summary);
   }
 }

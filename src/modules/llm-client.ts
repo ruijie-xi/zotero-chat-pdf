@@ -49,6 +49,12 @@ export interface TokenUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  completion_tokens_details?: {
+    reasoning_tokens?: number;
+    [key: string]: unknown;
+  };
 }
 
 export interface IterationRecord {
@@ -79,6 +85,90 @@ export interface ChatResult {
 
 export type StreamCallback = (chunk: string, done: boolean) => void;
 export type ThinkingCallback = (chunk: string, done: boolean) => void;
+
+export type ThinkingMode = "default" | "enabled" | "disabled";
+export type ThinkEffort = "default" | "high" | "max";
+
+export interface LLMSettings {
+  apiBase: string;
+  apiKey: string;
+  model: string;
+  thinkingMode: ThinkingMode;
+  thinkEffort: ThinkEffort;
+}
+
+export interface ChatCompletionBodyOptions {
+  stream: boolean;
+  tools?: Tool[];
+  includeUsage?: boolean;
+  includeThinkingParams?: boolean;
+}
+
+const DEFAULT_API_BASE = "https://api.deepseek.com/v1";
+const DEFAULT_MODEL = "deepseek-chat";
+
+export function normalizeThinkingMode(value: unknown): ThinkingMode {
+  return value === "enabled" || value === "disabled" ? value : "default";
+}
+
+export function normalizeThinkEffort(value: unknown): ThinkEffort {
+  return value === "high" || value === "max" ? value : "default";
+}
+
+export function getChatCompletionUrl(apiBase: string): string {
+  return `${apiBase.replace(/\/+$/, "")}/chat/completions`;
+}
+
+export function getLLMSettings(): LLMSettings {
+  return {
+    apiBase: (getPref("llmApiBase") as string) || DEFAULT_API_BASE,
+    apiKey: (getPref("llmApiKey") as string) || "",
+    model: (getPref("llmModel") as string) || DEFAULT_MODEL,
+    thinkingMode: normalizeThinkingMode(getPref("llmThinkingMode")),
+    thinkEffort: normalizeThinkEffort(getPref("llmThinkEffort")),
+  };
+}
+
+export function applyThinkingSettings(
+  body: Record<string, unknown>,
+  settings: Pick<LLMSettings, "thinkingMode" | "thinkEffort">,
+): void {
+  const thinkingMode = normalizeThinkingMode(settings.thinkingMode);
+  const thinkEffort = normalizeThinkEffort(settings.thinkEffort);
+
+  if (thinkingMode !== "default") {
+    body.thinking = { type: thinkingMode };
+  }
+
+  if (thinkEffort !== "default") {
+    body.reasoning_effort = thinkEffort;
+    if (thinkingMode === "default") {
+      body.thinking = { type: "enabled" };
+    }
+  }
+}
+
+export function buildChatCompletionBody(
+  settings: Pick<LLMSettings, "model" | "thinkingMode" | "thinkEffort">,
+  messages: ChatMessage[],
+  options: ChatCompletionBodyOptions,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: settings.model,
+    messages,
+    stream: options.stream,
+  };
+
+  if (options.tools?.length) body.tools = options.tools;
+  if (options.stream && options.includeUsage !== false) {
+    body.stream_options = { include_usage: true };
+  }
+  if (options.includeThinkingParams !== false) {
+    applyThinkingSettings(body, settings);
+  }
+
+  return body;
+}
 
 /** Detect Gemini API endpoints to enable provider-specific features. */
 function isGeminiApi(url: string): boolean {
@@ -183,158 +273,6 @@ function extractGeminiThought(content: string): [string, string] {
 
 
 // ---------------------------------------------------------------------------
-// chat() — simple streaming/non-streaming LLM call (no tool support)
-// ---------------------------------------------------------------------------
-
-export async function chat(
-  messages: ChatMessage[],
-  onStream?: StreamCallback,
-  onThinking?: ThinkingCallback,
-  signal?: AbortSignal,
-  onUsage?: (usage: TokenUsage) => void,
-): Promise<string> {
-  const apiBase = getPref("llmApiBase") || "https://api.deepseek.com/v1";
-  const apiKey = getPref("llmApiKey");
-  const model = getPref("llmModel") || "deepseek-chat";
-
-  if (!apiKey) {
-    throw new Error("LLM API key not configured. Set it in ChatPDF preferences.");
-  }
-
-  const url = `${apiBase.replace(/\/+$/, "")}/chat/completions`;
-  const streaming = !!onStream;
-  const gemini = isGeminiApi(url);
-
-  const body: Record<string, unknown> = { model, messages, stream: streaming };
-  if (gemini) {
-    body.extra_body = { google: { thinking_config: { include_thoughts: true } } };
-  }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`LLM API error (${res.status}): ${text}`);
-  }
-
-  if (!streaming) {
-    const data = await res.json();
-    if (data.usage && onUsage) onUsage(data.usage);
-    let content = data.choices?.[0]?.message?.content || "";
-    // For Gemini, extract thought tags from content
-    if (gemini) {
-      const [clean] = extractGeminiThought(content);
-      content = clean;
-    }
-    return content;
-  }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let fullText = "";
-  let buffer = "";
-  let thinkingDone = false;
-  let streamUsage: TokenUsage | undefined;
-
-  // Gemini: parse <thought> tags from content
-  const thoughtFilter = gemini
-    ? createThoughtTagFilter(
-        onThinking ? (text) => onThinking(text, false) : undefined,
-        (text) => { fullText += text; onStream!(text, false); },
-      )
-    : null;
-
-  function processChunk(parsed: any) {
-    if (parsed.usage) streamUsage = parsed.usage;
-
-    const delta = parsed.choices?.[0]?.delta;
-    if (!delta) return;
-
-    // --- Thinking via dedicated fields (DeepSeek, OpenRouter, etc.) ---
-    const reasoning = delta.reasoning_content || delta.reasoning;
-    if (reasoning && onThinking) {
-      onThinking(reasoning, false);
-    }
-
-    const content = delta.content;
-    if (content) {
-      if (thoughtFilter) {
-        // Gemini: route through tag parser
-        thoughtFilter.push(content);
-      } else {
-        // Standard provider
-        if (!thinkingDone && onThinking) {
-          thinkingDone = true;
-          onThinking("", true);
-        }
-        fullText += content;
-        onStream!(content, false);
-      }
-    }
-  }
-
-  while (true) {
-    if (signal?.aborted) break;
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
-
-      const data = trimmed.slice(6);
-      if (data === "[DONE]") {
-        thoughtFilter?.flush();
-        if (!thinkingDone && onThinking) {
-          onThinking("", true);
-        }
-        onStream!("", true);
-        if (streamUsage && onUsage) onUsage(streamUsage);
-        return fullText;
-      }
-
-      let parsed;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      processChunk(parsed);
-    }
-  }
-
-  if (buffer.trim()) {
-    const trimmed = buffer.trim();
-    if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
-      try {
-        processChunk(JSON.parse(trimmed.slice(6)));
-      } catch {}
-    }
-  }
-
-  thoughtFilter?.flush();
-  if (!thinkingDone && onThinking) {
-    onThinking("", true);
-  }
-  onStream?.("", true);
-  if (streamUsage && onUsage) onUsage(streamUsage);
-  return fullText;
-}
-
-
-// ---------------------------------------------------------------------------
 // chatWithTools() — LLM call with tool/function calling support
 // ---------------------------------------------------------------------------
 
@@ -347,32 +285,34 @@ export async function chatWithTools(
   /** Use non-streaming mode. Returns rawMessage for provider-specific field preservation. */
   nonStreaming?: boolean,
 ): Promise<ChatResult> {
-  const apiBase = getPref("llmApiBase") || "https://api.deepseek.com/v1";
-  const apiKey = getPref("llmApiKey");
-  const model = getPref("llmModel") || "deepseek-chat";
+  const settings = getLLMSettings();
 
-  if (!apiKey) {
+  if (!settings.apiKey) {
     throw new Error("LLM API key not configured. Set it in ChatPDF preferences.");
   }
 
-  const url = `${apiBase.replace(/\/+$/, "")}/chat/completions`;
+  const url = getChatCompletionUrl(settings.apiBase);
   const streaming = !nonStreaming;
   const gemini = isGeminiApi(url);
 
-  const body: Record<string, unknown> = { model, messages, stream: streaming };
-  if (tools && tools.length > 0) body.tools = tools;
+  const body = buildChatCompletionBody(settings, messages, {
+    stream: streaming,
+    tools,
+    includeUsage: true,
+    includeThinkingParams: !gemini,
+  });
   if (gemini) {
     body.extra_body = { google: { thinking_config: { include_thoughts: true } } };
   }
 
   const totalChars = messages.reduce((s, m) => s + (typeof m.content === "string" ? m.content.length : 0), 0);
-  Zotero.debug(`[ChatPDF] chatWithTools: ${messages.length} messages, ${tools?.length ?? 0} tools, ~${totalChars} chars, stream=${streaming}`);
+  Zotero.debug(`[ChatPDF] chatWithTools: ${messages.length} messages, ${tools?.length ?? 0} tools, ~${totalChars} chars, stream=${streaming}, thinking=${settings.thinkingMode}, effort=${settings.thinkEffort}`);
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${settings.apiKey}`,
     },
     body: JSON.stringify(body),
     signal,

@@ -27,19 +27,43 @@
     <html:input type="text" id="zotero-prefpane-__addonRef__-llmModel" preference="llmModel" style="flex: 1;" />
   </hbox>
 
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-llmThinkingMode" data-l10n-id="pref-llm-thinking-mode"></html:label>
+    <html:select id="zotero-prefpane-__addonRef__-llmThinkingMode" preference="llmThinkingMode" style="width: 130px;">
+      <html:option value="default">Default</html:option>
+      <html:option value="enabled">Enabled</html:option>
+      <html:option value="disabled">Disabled</html:option>
+    </html:select>
+  </hbox>
+
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-llmThinkEffort" data-l10n-id="pref-llm-think-effort"></html:label>
+    <html:select id="zotero-prefpane-__addonRef__-llmThinkEffort" preference="llmThinkEffort" style="width: 130px;">
+      <html:option value="default">Default</html:option>
+      <html:option value="high">High</html:option>
+      <html:option value="max">Max</html:option>
+    </html:select>
+  </hbox>
+
+  <vbox style="margin-top: 4px;">
+    <hbox align="center" style="margin-bottom: 4px;">
+      <html:label data-l10n-id="pref-llm-test" style="font-weight: 600;"></html:label>
+      <html:span style="flex: 1;" />
+      <html:button id="zotero-prefpane-__addonRef__-llmTestBtn" style="font-size: 11px; padding: 1px 8px; cursor: pointer;">Test LLM</html:button>
+    </hbox>
+    <html:textarea id="zotero-prefpane-__addonRef__-llmTestPrompt"
+      style="width: 100%; min-height: 48px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
+      rows="2">Reply with exactly: ChatPDF LLM test OK.</html:textarea>
+    <html:pre id="zotero-prefpane-__addonRef__-llmTestDebug"
+      style="display: none; white-space: pre-wrap; max-height: 240px; overflow: auto; margin: 6px 0 0; padding: 8px; border: 1px solid var(--fill-quinary, #ddd); border-radius: 4px; font-size: 11px; background: var(--fill-senary, #f8f8f8);"></html:pre>
+  </vbox>
+
   <separator class="thin" />
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-cacheDir" data-l10n-id="pref-cache-dir"></html:label>
     <html:input type="text" id="zotero-prefpane-__addonRef__-cacheDir" preference="cacheDir" style="flex: 1;" />
   </hbox>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-maxDocumentChars" data-l10n-id="pref-max-document-chars"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-maxDocumentChars" preference="maxDocumentChars" style="width: 100px;" />
-  </hbox>
-
-  <separator class="thin" />
 
   <!-- Model Profiles -->
   <vbox>
@@ -74,13 +98,6 @@
     </hbox>
   </vbox>
   <separator class="thin" />
-
-  <!-- Agent Mode Settings -->
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-enableAgentMode" data-l10n-id="pref-enable-agent-mode"></html:label>
-    <html:span style="flex: 1;" />
-    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-enableAgentMode" preference="enableAgentMode" />
-  </hbox>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-agentMaxIterations" data-l10n-id="pref-agent-max-iterations"></html:label>

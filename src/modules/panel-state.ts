@@ -26,6 +26,8 @@ export interface ModelProfile {
   apiBase: string;
   apiKey: string;
   model: string;
+  thinkingMode?: string;
+  thinkEffort?: string;
 }
 
 /** Minimal AbortController-like interface. */

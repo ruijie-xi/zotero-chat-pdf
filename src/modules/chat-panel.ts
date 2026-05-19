@@ -574,6 +574,8 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
       setPref("llmApiBase", selected.apiBase);
       setPref("llmApiKey", selected.apiKey);
       setPref("llmModel", selected.model);
+      setPref("llmThinkingMode", selected.thinkingMode || "default");
+      setPref("llmThinkEffort", selected.thinkEffort || "default");
       setPref("activeProfile", selected.name);
       Zotero.debug(`[ChatPDF] Switched to profile: ${selected.name}`);
     }

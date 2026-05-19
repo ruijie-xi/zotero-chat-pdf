@@ -3,6 +3,15 @@ import {
   DEFAULT_SYSTEM_PROMPT_EN,
   DEFAULT_SYSTEM_PROMPT_CN,
 } from "./chat-session";
+import {
+  buildChatCompletionBody,
+  ChatMessage,
+  getChatCompletionUrl,
+  normalizeThinkEffort,
+  normalizeThinkingMode,
+  ThinkEffort,
+  ThinkingMode,
+} from "./llm-client";
 
 const PREF_PREFIX = config.prefsPrefix;
 const ADDON_REF = config.addonRef;
@@ -12,6 +21,8 @@ interface ModelProfile {
   apiBase: string;
   apiKey: string;
   model: string;
+  thinkingMode?: string;
+  thinkEffort?: string;
 }
 
 function getPrefFull(key: string): string {
@@ -20,6 +31,27 @@ function getPrefFull(key: string): string {
 
 function setPrefFull(key: string, value: string): void {
   Zotero.Prefs.set(`${PREF_PREFIX}.${key}`, value, true);
+}
+
+function getFieldValue(key: string, fallback = ""): string {
+  const el = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-${key}`,
+  ) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+  if (el && typeof el.value === "string") return el.value;
+  return getPrefFull(key) || fallback;
+}
+
+function setFieldValue(key: string, value: string): void {
+  const el = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-${key}`,
+  ) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+  if (el && typeof el.value === "string") el.value = value;
+}
+
+function maskApiKey(apiKey: string): string {
+  if (!apiKey) return "(not configured)";
+  if (apiKey.length <= 8) return "(configured)";
+  return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
 }
 
 function loadProfiles(): ModelProfile[] {
@@ -43,6 +75,8 @@ function initProfileUI() {
   const profileStatus = document.querySelector(`#zotero-prefpane-${ADDON_REF}-profileStatus`) as HTMLElement | null;
 
   if (!profileList || !profileNameInput || !profileSaveBtn) return false;
+  if ((profileSaveBtn as any).dataset.chatpdfInitialized === "true") return true;
+  (profileSaveBtn as any).dataset.chatpdfInitialized = "true";
 
   function showProfileStatus(msg: string, isError = false) {
     if (!profileStatus) return;
@@ -75,7 +109,8 @@ function initProfileUI() {
       nameEl.style.cssText = "flex: 1; font-size: 12px; font-weight: 500;";
 
       const modelEl = document.createElement("span");
-      modelEl.textContent = p.model;
+      const effortLabel = p.thinkEffort && p.thinkEffort !== "default" ? ` / ${p.thinkEffort}` : "";
+      modelEl.textContent = `${p.model}${effortLabel}`;
       modelEl.style.cssText = "font-size: 11px; color: #888; max-width: 120px; overflow: hidden; text-overflow: ellipsis;";
 
       const loadBtn = document.createElement("button");
@@ -85,20 +120,21 @@ function initProfileUI() {
         Zotero.Prefs.set(`${PREF_PREFIX}.llmApiBase`, p.apiBase, true);
         Zotero.Prefs.set(`${PREF_PREFIX}.llmApiKey`, p.apiKey, true);
         Zotero.Prefs.set(`${PREF_PREFIX}.llmModel`, p.model, true);
+        Zotero.Prefs.set(`${PREF_PREFIX}.llmThinkingMode`, p.thinkingMode || "default", true);
+        Zotero.Prefs.set(`${PREF_PREFIX}.llmThinkEffort`, p.thinkEffort || "default", true);
         Zotero.Prefs.set(`${PREF_PREFIX}.activeProfile`, p.name, true);
         // Refresh the displayed pref fields
-        const apiBaseInput = document.querySelector(`#zotero-prefpane-${ADDON_REF}-llmApiBase`) as HTMLInputElement | null;
-        const apiKeyInput = document.querySelector(`#zotero-prefpane-${ADDON_REF}-llmApiKey`) as HTMLInputElement | null;
-        const modelInput = document.querySelector(`#zotero-prefpane-${ADDON_REF}-llmModel`) as HTMLInputElement | null;
-        if (apiBaseInput) apiBaseInput.value = p.apiBase;
-        if (apiKeyInput) apiKeyInput.value = p.apiKey;
-        if (modelInput) modelInput.value = p.model;
+        setFieldValue("llmApiBase", p.apiBase);
+        setFieldValue("llmApiKey", p.apiKey);
+        setFieldValue("llmModel", p.model);
+        setFieldValue("llmThinkingMode", p.thinkingMode || "default");
+        setFieldValue("llmThinkEffort", p.thinkEffort || "default");
         showProfileStatus(`Loaded profile "${p.name}"`);
         renderProfileList();
       });
 
       const deleteBtn = document.createElement("button");
-      deleteBtn.textContent = "✕";
+      deleteBtn.textContent = "Delete";
       deleteBtn.style.cssText = "font-size: 11px; padding: 1px 6px; cursor: pointer;";
       deleteBtn.addEventListener("click", () => {
         const updated = loadProfiles().filter(x => x.name !== p.name);
@@ -121,18 +157,25 @@ function initProfileUI() {
   profileSaveBtn.addEventListener("click", () => {
     const name = profileNameInput.value.trim();
     if (!name) { showProfileStatus("Enter a profile name", true); return; }
-    const apiBase = (Zotero.Prefs.get(`${PREF_PREFIX}.llmApiBase`, true) as string) || "";
-    const apiKey = (Zotero.Prefs.get(`${PREF_PREFIX}.llmApiKey`, true) as string) || "";
-    const model = (Zotero.Prefs.get(`${PREF_PREFIX}.llmModel`, true) as string) || "";
+    const apiBase = getFieldValue("llmApiBase");
+    const apiKey = getFieldValue("llmApiKey");
+    const model = getFieldValue("llmModel");
+    const thinkingMode = getFieldValue("llmThinkingMode", "default");
+    const thinkEffort = getFieldValue("llmThinkEffort", "default");
     const profiles = loadProfiles();
     const existing = profiles.findIndex(p => p.name === name);
-    const profile: ModelProfile = { name, apiBase, apiKey, model };
+    const profile: ModelProfile = { name, apiBase, apiKey, model, thinkingMode, thinkEffort };
     if (existing >= 0) {
       profiles[existing] = profile;
     } else {
       profiles.push(profile);
     }
     saveProfiles(profiles);
+    setPrefFull("llmApiBase", apiBase);
+    setPrefFull("llmApiKey", apiKey);
+    setPrefFull("llmModel", model);
+    setPrefFull("llmThinkingMode", thinkingMode);
+    setPrefFull("llmThinkEffort", thinkEffort);
     Zotero.Prefs.set(`${PREF_PREFIX}.activeProfile`, name, true);
     showProfileStatus(`Saved profile "${name}"`);
     profileNameInput.value = "";
@@ -140,6 +183,139 @@ function initProfileUI() {
   });
 
   renderProfileList();
+  return true;
+}
+
+function initLLMTestUI() {
+  const testBtn = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-llmTestBtn`,
+  ) as HTMLButtonElement | null;
+  const promptEl = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-llmTestPrompt`,
+  ) as HTMLTextAreaElement | null;
+  const debugEl = document.querySelector(
+    `#zotero-prefpane-${ADDON_REF}-llmTestDebug`,
+  ) as HTMLElement | null;
+
+  if (!testBtn || !promptEl || !debugEl) return false;
+  if ((testBtn as any).dataset.chatpdfInitialized === "true") return true;
+  (testBtn as any).dataset.chatpdfInitialized = "true";
+  const debugOut = debugEl;
+
+  function writeDebug(value: unknown) {
+    debugOut.style.display = "";
+    debugOut.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  }
+
+  testBtn.addEventListener("click", async () => {
+    const apiBase = getFieldValue("llmApiBase", "https://api.deepseek.com/v1");
+    const apiKey = getFieldValue("llmApiKey");
+    const model = getFieldValue("llmModel", "deepseek-chat");
+    const thinkingMode: ThinkingMode = normalizeThinkingMode(getFieldValue("llmThinkingMode", "default"));
+    const thinkEffort: ThinkEffort = normalizeThinkEffort(getFieldValue("llmThinkEffort", "default"));
+    const prompt = promptEl.value.trim() || "Reply with exactly: ChatPDF LLM test OK.";
+    const url = getChatCompletionUrl(apiBase);
+    const isGemini = /generativelanguage\.googleapis\.com/i.test(url);
+
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content: "You are testing ChatPDF's LLM configuration. Follow the user prompt exactly.",
+      },
+      { role: "user", content: prompt },
+    ];
+
+    const body = buildChatCompletionBody(
+      { model, thinkingMode, thinkEffort },
+      messages,
+      {
+        stream: false,
+        includeUsage: true,
+        includeThinkingParams: !isGemini,
+      },
+    );
+    if (isGemini) {
+      body.extra_body = { google: { thinking_config: { include_thoughts: true } } };
+    }
+
+    const requestDebug = {
+      url,
+      apiKey: maskApiKey(apiKey),
+      model,
+      prompt,
+      thinkingMode,
+      thinkEffort,
+      thinkingParametersSent: !isGemini,
+      body,
+    };
+
+    if (!apiKey) {
+      writeDebug({
+        ok: false,
+        error: "LLM API key is not configured.",
+        request: requestDebug,
+      });
+      return;
+    }
+
+    testBtn.disabled = true;
+    testBtn.textContent = "Testing...";
+    writeDebug({
+      status: "Sending test request...",
+      request: requestDebug,
+    });
+
+    const started = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+      const rawText = await res.text();
+      let parsed: any = null;
+      try {
+        parsed = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        parsed = null;
+      }
+
+      const message = parsed?.choices?.[0]?.message;
+      writeDebug({
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText,
+        durationMs: Date.now() - started,
+        request: requestDebug,
+        response: {
+          model: parsed?.model,
+          finishReason: parsed?.choices?.[0]?.finish_reason,
+          content: message?.content,
+          reasoningContent: message?.reasoning_content,
+          usage: parsed?.usage,
+          raw: parsed ?? rawText,
+        },
+      });
+    } catch (err: any) {
+      writeDebug({
+        ok: false,
+        durationMs: Date.now() - started,
+        request: requestDebug,
+        error: {
+          name: err?.name,
+          message: err?.message || String(err),
+          stack: err?.stack,
+        },
+      });
+    } finally {
+      testBtn.disabled = false;
+      testBtn.textContent = "Test LLM";
+    }
+  });
+
   return true;
 }
 
@@ -165,6 +341,8 @@ function initPromptUI() {
     Zotero.debug(`[ChatPDF] Preference pane elements not found, retrying...`);
     return false;
   }
+  if ((saveBtn as any).dataset.chatpdfInitialized === "true") return true;
+  (saveBtn as any).dataset.chatpdfInitialized = "true";
 
   Zotero.debug(`[ChatPDF] Preference pane elements found, initializing prompt UI`);
 
@@ -213,8 +391,9 @@ function initPromptUI() {
 // The pane XHTML may not be in the DOM yet, so retry until elements appear.
 function tryInit(retries: number) {
   const promptOk = initPromptUI();
+  const testOk = initLLMTestUI();
   initProfileUI();
-  if (promptOk) return;
+  if (promptOk && testOk) return;
   if (retries > 0) {
     setTimeout(() => tryInit(retries - 1), 100);
   } else {
