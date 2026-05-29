@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+### New features
+
+- **Long PDF conversion** - Large PDFs are converted through MinerU page-range chunks, with progress and cached chunk reuse so failed conversions can resume without starting over.
+- **Long-document chat tools** - Added chunk listing, chunk reading, and document search tools so the agent can navigate books and other large converted PDFs without loading the entire document at once.
+
+### Changed
+
+- MinerU polling now allows longer-running chunks and uses smaller page ranges for more reliable conversion of book-length PDFs.
+- The agent prompt now prefers search and chunk reads for long documents.
+
 ## 0.3.0
 
 ### New features
