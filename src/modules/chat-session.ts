@@ -495,10 +495,12 @@ export class ChatSession {
       "\n\nYou have access to tools to read documents:\n" +
       "1. Call `list_sources` first to see available documents and their structure (headings, line counts)\n" +
       "2. Call `read_document` with a key and optional line range to read specific content\n" +
-      "3. Use web tools (`web_search`, `web_fetch`) if enabled and relevant\n\n" +
+      "3. For long documents, use `list_document_chunks`, `search_document`, and `read_document_chunk` to navigate page-based chunks\n" +
+      "4. Use web tools (`web_search`, `web_fetch`) if enabled and relevant\n\n" +
       "Strategy:\n" +
       "- For specific questions: use list_sources to find relevant sections via headings, then read_document for those line ranges\n" +
-      "- For broad questions: read_document without line range to get the full document\n" +
+      "- For books or very long PDFs: search first, then read only the matching chunks or line ranges\n" +
+      "- For broad questions on short papers: read_document without line range can preview or read the document\n" +
       "- Cite the document title and section when answering\n";
 
     const sourceList = sources.length > 0

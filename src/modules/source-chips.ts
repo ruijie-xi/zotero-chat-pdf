@@ -1,12 +1,116 @@
 import { h } from "../utils/dom";
 import { formatChars } from "../utils/format";
 import { SourceItem } from "./chat-session";
-import { convertPdf } from "./mineru-client";
+import {
+  convertPdf,
+  MINERU_LONG_PDF_CHUNK_SIZE,
+  PdfChunkPlanItem,
+  PdfChunkResult,
+} from "./mineru-client";
 import * as MDCache from "./md-cache";
 import * as ChatHistory from "./chat-history";
 import {
   session, conversionAbortControllers, createAbortController,
 } from "./panel-state";
+
+async function loadCachedChunks(key: string): Promise<Map<number, string>> {
+  const chunks = new Map<number, string>();
+  const manifest = await MDCache.readManifest(key);
+  if (!manifest) return chunks;
+  if (manifest.chunks.length > 1 && manifest.chunkSize !== MINERU_LONG_PDF_CHUNK_SIZE) {
+    Zotero.debug(`[ChatPDF] Ignoring stale chunk cache for ${key}: chunkSize=${manifest.chunkSize}`);
+    return chunks;
+  }
+
+  for (const chunk of manifest.chunks) {
+    if (chunk.status !== "ready") continue;
+    try {
+      chunks.set(chunk.index, await MDCache.readChunk(key, chunk.index));
+    } catch (err: any) {
+      Zotero.debug(`[ChatPDF] Failed to read cached chunk ${chunk.index} for ${key}: ${err.message}`);
+    }
+  }
+  return chunks;
+}
+
+function makeManifest(
+  key: string,
+  title: string,
+  pageCount: number,
+  chunkSize: number,
+  plan: PdfChunkPlanItem[],
+  cachedChunks: Map<number, string>,
+): MDCache.DocumentManifest {
+  return {
+    version: 1,
+    key,
+    title,
+    pageCount,
+    chunkSize,
+    updatedAt: Date.now(),
+    chunks: plan.map((chunk) => {
+      const cached = cachedChunks.get(chunk.index);
+      return {
+        ...chunk,
+        status: cached ? "ready" : "pending",
+        charCount: cached?.length,
+      };
+    }),
+  };
+}
+
+function markChunkReady(
+  manifest: MDCache.DocumentManifest,
+  chunk: PdfChunkResult,
+): MDCache.DocumentManifest {
+  return {
+    ...manifest,
+    updatedAt: Date.now(),
+    chunks: manifest.chunks.map((item) => item.index === chunk.index
+      ? {
+        ...item,
+        status: "ready",
+        charCount: chunk.markdown.length,
+        errorMessage: undefined,
+      }
+      : item),
+  };
+}
+
+function withLineRanges(
+  manifest: MDCache.DocumentManifest,
+  markdown: string,
+): MDCache.DocumentManifest {
+  const markerPattern = /^<!-- chatpdf-chunk:(\d+) pages:\d+-\d+ -->$/;
+  const lines = markdown.split("\n");
+  const ranges: { index: number; lineStart: number; lineEnd: number }[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const match = markerPattern.exec(lines[i]);
+    if (!match) continue;
+    const previous = ranges[ranges.length - 1];
+    if (previous) previous.lineEnd = i;
+    ranges.push({
+      index: Number(match[1]),
+      lineStart: i + 1,
+      lineEnd: lines.length,
+    });
+  }
+
+  return {
+    ...manifest,
+    updatedAt: Date.now(),
+    chunks: manifest.chunks.map((chunk) => {
+      const range = ranges.find((r) => r.index === chunk.index);
+      if (!range) return chunk;
+      return {
+        ...chunk,
+        lineStart: range.lineStart,
+        lineEnd: range.lineEnd,
+      };
+    }),
+  };
+}
 
 /** Convert a pending source to markdown via MinerU. */
 export async function convertSource(source: SourceItem, onProgress?: (msg: string) => void): Promise<void> {
@@ -29,9 +133,32 @@ export async function convertSource(source: SourceItem, onProgress?: (msg: strin
     const pdfPath = await attItem.getFilePathAsync();
     if (!pdfPath) throw new Error("PDF file not found on disk");
 
-    const markdown = await convertPdf(pdfPath, (_status, msg) => onProgress?.(msg), convSignal);
-    await MDCache.write(source.key, markdown);
-    session.setSourceReady(source.key, markdown);
+    const cachedChunks = await loadCachedChunks(source.key);
+    let manifest: MDCache.DocumentManifest | null = null;
+    const result = await convertPdf(
+      pdfPath,
+      (_status, msg) => onProgress?.(msg),
+      convSignal,
+      {
+        cachedChunks,
+        onPlan: async (pageCount, chunkSize, plan) => {
+          manifest = makeManifest(source.key, source.title, pageCount, chunkSize, plan, cachedChunks);
+          await MDCache.writeManifest(source.key, manifest);
+        },
+        onChunkConverted: async (chunk) => {
+          await MDCache.writeChunk(source.key, chunk.index, chunk.markdown);
+          if (manifest) {
+            manifest = markChunkReady(manifest, chunk);
+            await MDCache.writeManifest(source.key, manifest);
+          }
+        },
+      },
+    );
+    await MDCache.write(source.key, result.markdown);
+    if (manifest) {
+      await MDCache.writeManifest(source.key, withLineRanges(manifest, result.markdown));
+    }
+    session.setSourceReady(source.key, result.markdown);
     onProgress?.("Ready");
   } catch (err: any) {
     if (err.name === "AbortError") {
