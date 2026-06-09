@@ -110,6 +110,57 @@ async function mineruFetch(
   }
 }
 
+async function downloadResultZip(zipUrl: string, signal?: AbortSignal): Promise<Uint8Array> {
+  try {
+    const zipRes = await mineruFetch("MinerU result download", zipUrl, { signal });
+    if (!zipRes.ok) {
+      log("ERROR: Failed to download ZIP:", zipRes.status);
+      throw new Error(`Failed to download results (${zipRes.status})`);
+    }
+    return new Uint8Array(await zipRes.arrayBuffer());
+  } catch (fetchErr: any) {
+    throwIfAborted(signal);
+    log("MinerU result fetch download failed; trying Zotero.HTTP fallback:", fetchErr?.message || String(fetchErr));
+  }
+
+  let cancelRequest: (() => void) | undefined;
+  const abortFallback = () => cancelRequest?.();
+  signal?.addEventListener("abort", abortFallback, { once: true });
+
+  try {
+    const xhr = await Zotero.HTTP.request("GET", zipUrl, {
+      responseType: "arraybuffer",
+      noCache: true,
+      timeout: 120000,
+      cancellerReceiver: (cancel: () => void) => {
+        cancelRequest = cancel;
+        if (signal?.aborted) cancelRequest();
+      },
+    });
+    throwIfAborted(signal);
+    const response = xhr.response;
+    if (response instanceof ArrayBuffer) {
+      return new Uint8Array(response);
+    }
+    if (ArrayBuffer.isView(response)) {
+      return new Uint8Array(response.buffer, response.byteOffset, response.byteLength);
+    }
+    if (response instanceof Blob) {
+      return new Uint8Array(await response.arrayBuffer());
+    }
+    throw new Error(`Unexpected Zotero.HTTP response type: ${typeof response}`);
+  } catch (httpErr: any) {
+    throwIfAborted(signal);
+    const message = httpErr?.message || String(httpErr);
+    log("MinerU result Zotero.HTTP fallback failed:", message);
+    throw new Error(
+      `MinerU result download failed with fetch and Zotero.HTTP fallback from ${describeRequestTarget(zipUrl)}: ${message}`,
+    );
+  } finally {
+    signal?.removeEventListener("abort", abortFallback);
+  }
+}
+
 export async function convertPdf(
   pdfPath: string,
   onProgress?: ProgressCallback,
@@ -410,18 +461,12 @@ async function convertPdfBytes(
       // Step 5: Download ZIP and extract markdown
       throwIfAborted(signal);
       onProgress?.("downloading", "Downloading results...");
-      const zipRes = await mineruFetch("MinerU result download", zipUrl, { signal });
-      if (!zipRes.ok) {
-        log("ERROR: Failed to download ZIP:", zipRes.status);
-        throw new Error(`Failed to download results (${zipRes.status})`);
-      }
-
-      const zipBytes = new Uint8Array(await zipRes.arrayBuffer());
+      const zipBytes = await downloadResultZip(zipUrl, signal);
       log("Downloaded ZIP size:", zipBytes.length, "bytes");
-      const result = await extractMarkdownFromZip(zipBytes, outputDir, assetPrefix);
-      log("Extracted markdown length:", result.markdown.length, "asset count:", result.assetCount);
+      const extracted = await extractMarkdownFromZip(zipBytes, outputDir, assetPrefix);
+      log("Extracted markdown length:", extracted.markdown.length, "asset count:", extracted.assetCount);
       onProgress?.("done", "Conversion complete");
-      return result;
+      return extracted;
     } else if (result.state === "failed") {
       log("ERROR: Conversion failed:", result.err_msg);
       throw new Error(
@@ -442,6 +487,19 @@ function isSafeZipEntry(entry: string): boolean {
 
 function normalizeZipEntry(entry: string): string {
   return entry.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function getSafeRelativeParts(relativePath: string): string[] {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const parts = normalized.split("/");
+  if (!parts.length || parts.some(part => !part || part === "." || part === "..")) {
+    throw new Error(`Unsafe ZIP asset path: ${relativePath}`);
+  }
+  return parts;
+}
+
+function joinSafeRelativePath(base: string, relativePath: string): string {
+  return PathUtils.join(base, ...getSafeRelativeParts(relativePath));
 }
 
 function readZipEntryBytes(zipReader: any, entry: string): Uint8Array {
@@ -584,13 +642,13 @@ async function extractMarkdownFromZip(
 
       if (outputDir && assetPrefix) {
         const cleanPrefix = assetPrefix.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-        const assetRoot = PathUtils.joinRelative(outputDir, cleanPrefix);
+        const assetRoot = joinSafeRelativePath(outputDir, cleanPrefix);
         await ensureDir(assetRoot);
 
         for (const entry of assetEntries) {
           throwIfAborted();
           const outputEntry = getAssetOutputEntry(entry, mdEntry);
-          const outputPath = PathUtils.joinRelative(assetRoot, outputEntry);
+          const outputPath = joinSafeRelativePath(assetRoot, outputEntry);
           const parent = PathUtils.parent(outputPath);
           if (parent) await ensureDir(parent);
           await IOUtils.write(outputPath, readZipEntryBytes(zipReader, entry));

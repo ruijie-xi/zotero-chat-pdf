@@ -5,6 +5,8 @@
 ### Fixed
 
 - Preserve MinerU result ZIP assets beside each converted PDF so Markdown image links have matching local files.
+- Fall back to Zotero.HTTP when Zotero fetch fails to download a completed MinerU result ZIP.
+- Normalize MinerU ZIP asset paths before writing them so Windows Zotero builds do not reject slash-delimited relative paths.
 - Store new conversions under `documents/<attachment-key>/document.md` while keeping older root-level Markdown caches readable.
 - Add stage-specific MinerU network errors for upload URL requests, PDF uploads, result polling, and result ZIP downloads.
 - Add MinerU host permissions for the API host, OSS upload host, and result CDN host.
