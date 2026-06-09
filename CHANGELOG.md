@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0
+
 ### Fixed
 
 - Preserve MinerU result ZIP assets beside each converted PDF so Markdown image links have matching local files.
