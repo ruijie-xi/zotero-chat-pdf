@@ -17,6 +17,10 @@ async function loadCachedChunks(key: string): Promise<Map<number, string>> {
   const chunks = new Map<number, string>();
   const manifest = await MDCache.readManifest(key);
   if (!manifest) return chunks;
+  if (manifest.version < 2) {
+    Zotero.debug(`[ChatPDF] Ignoring stale chunk cache for ${key}: manifest version=${manifest.version}`);
+    return chunks;
+  }
   if (manifest.chunks.length > 1 && manifest.chunkSize !== MINERU_LONG_PDF_CHUNK_SIZE) {
     Zotero.debug(`[ChatPDF] Ignoring stale chunk cache for ${key}: chunkSize=${manifest.chunkSize}`);
     return chunks;
@@ -42,7 +46,7 @@ function makeManifest(
   cachedChunks: Map<number, string>,
 ): MDCache.DocumentManifest {
   return {
-    version: 1,
+    version: 2,
     key,
     title,
     pageCount,
@@ -71,6 +75,7 @@ function markChunkReady(
         ...item,
         status: "ready",
         charCount: chunk.markdown.length,
+        assetCount: chunk.assetCount,
         errorMessage: undefined,
       }
       : item),
@@ -140,6 +145,7 @@ export async function convertSource(source: SourceItem, onProgress?: (msg: strin
       (_status, msg) => onProgress?.(msg),
       convSignal,
       {
+        outputDir: MDCache.getDocDir(source.key),
         cachedChunks,
         onPlan: async (pageCount, chunkSize, plan) => {
           manifest = makeManifest(source.key, source.title, pageCount, chunkSize, plan, cachedChunks);

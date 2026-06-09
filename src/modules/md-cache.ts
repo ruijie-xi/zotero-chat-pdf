@@ -8,11 +8,12 @@ export interface DocumentChunkMeta {
   lineStart?: number;
   lineEnd?: number;
   charCount?: number;
+  assetCount?: number;
   errorMessage?: string;
 }
 
 export interface DocumentManifest {
-  version: 1;
+  version: number;
   key: string;
   title?: string;
   pageCount: number;
@@ -25,8 +26,12 @@ function getFilePath(key: string): string {
   return PathUtils.join(getCacheDir(), `${key}.md`);
 }
 
-function getDocDir(key: string): string {
+export function getDocDir(key: string): string {
   return PathUtils.join(getCacheDir(), "documents", key);
+}
+
+function getDocumentPath(key: string): string {
+  return PathUtils.join(getDocDir(key), "document.md");
 }
 
 function getManifestPath(key: string): string {
@@ -38,18 +43,19 @@ function getChunkPath(key: string, index: number): string {
 }
 
 export async function has(key: string): Promise<boolean> {
-  return IOUtils.exists(getFilePath(key));
+  return (await IOUtils.exists(getDocumentPath(key))) || IOUtils.exists(getFilePath(key));
 }
 
 export async function read(key: string): Promise<string> {
-  const path = getFilePath(key);
+  const documentPath = getDocumentPath(key);
+  const path = await IOUtils.exists(documentPath) ? documentPath : getFilePath(key);
   const bytes = await IOUtils.read(path);
   return new TextDecoder().decode(bytes);
 }
 
 export async function write(key: string, content: string): Promise<void> {
-  await ensureDir(getCacheDir());
-  const path = getFilePath(key);
+  await ensureDir(getDocDir(key));
+  const path = getDocumentPath(key);
   await IOUtils.write(path, new TextEncoder().encode(content));
 }
 

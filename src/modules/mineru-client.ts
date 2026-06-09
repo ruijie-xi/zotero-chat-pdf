@@ -1,4 +1,5 @@
 import { getPref } from "../utils/prefs";
+import { ensureDir } from "../utils/cache-dir";
 import { PDFDocument } from "pdf-lib";
 
 const MINERU_API_BASE = "https://mineru.net";
@@ -39,6 +40,7 @@ export interface PdfChunkPlanItem {
 
 export interface PdfChunkResult extends PdfChunkPlanItem {
   markdown: string;
+  assetCount?: number;
 }
 
 export interface ConvertedPdf {
@@ -46,12 +48,19 @@ export interface ConvertedPdf {
   pageCount: number;
   chunkSize: number;
   chunks: PdfChunkResult[];
+  assetCount: number;
 }
 
 export interface ConvertPdfOptions {
+  outputDir?: string;
   cachedChunks?: Map<number, string>;
   onPlan?: (pageCount: number, chunkSize: number, chunks: PdfChunkPlanItem[]) => void | Promise<void>;
   onChunkConverted?: (chunk: PdfChunkResult) => void | Promise<void>;
+}
+
+interface MineruJobResult {
+  markdown: string;
+  assetCount: number;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -64,6 +73,41 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function describeRequestTarget(input: string | URL | Request): string {
+  const raw = typeof input === "string"
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url;
+  try {
+    const url = new URL(raw);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return raw;
+  }
+}
+
+async function mineruFetch(
+  stage: string,
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err: any) {
+    const target = describeRequestTarget(input);
+    const message = err?.message || String(err);
+    const cdnHint = target.startsWith("https://cdn-mineru.openxlab.org.cn/")
+      ? " MinerU returns conversion ZIP files from this CDN; if only this step fails, configure Zotero/system proxy or VPN so Zotero can reach cdn-mineru.openxlab.org.cn."
+      : "";
+    log(`${stage} network error:`, message, "target:", target);
+    throw new Error(
+      `${stage} failed before receiving a response from ${target}: ${message}. ` +
+      `Check network/proxy settings and extension host permissions.${cdnHint}`,
+    );
+  }
 }
 
 export async function convertPdf(
@@ -95,12 +139,22 @@ export async function convertPdf(
     } else {
       log("Could not inspect PDF page count; falling back to single upload:", err.message);
       onProgress?.("uploading", "Could not inspect PDF page count; converting as a single MinerU job...");
-      const markdown = await convertPdfBytes(pdfBytes, PathUtils.filename(pdfPath), token, onProgress, signal);
+      const result = await convertPdfBytes(
+        pdfBytes,
+        PathUtils.filename(pdfPath),
+        token,
+        onProgress,
+        signal,
+        undefined,
+        options?.outputDir,
+        "attachments/full",
+      );
       return {
-        markdown,
+        markdown: result.markdown,
         pageCount: 0,
         chunkSize: 0,
-        chunks: [{ index: 1, startPage: 1, endPage: 0, markdown }],
+        chunks: [{ index: 1, startPage: 1, endPage: 0, markdown: result.markdown, assetCount: result.assetCount }],
+        assetCount: result.assetCount,
       };
     }
   }
@@ -110,14 +164,24 @@ export async function convertPdf(
   await options?.onPlan?.(pageCount, chunkSize, plan);
 
   if (plan.length === 1) {
-    const markdown = await convertPdfBytes(pdfBytes, PathUtils.filename(pdfPath), token, onProgress, signal);
-    const chunk = { ...plan[0], markdown };
+    const result = await convertPdfBytes(
+      pdfBytes,
+      PathUtils.filename(pdfPath),
+      token,
+      onProgress,
+      signal,
+      undefined,
+      options?.outputDir,
+      "attachments/full",
+    );
+    const chunk = { ...plan[0], markdown: result.markdown, assetCount: result.assetCount };
     await options?.onChunkConverted?.(chunk);
     return {
-      markdown,
+      markdown: result.markdown,
       pageCount,
       chunkSize,
       chunks: [chunk],
+      assetCount: result.assetCount,
     };
   }
 
@@ -134,27 +198,31 @@ export async function convertPdf(
 
     onProgress?.("uploading", `Requesting chunk ${item.index}/${plan.length} (pages ${item.startPage}-${item.endPage})...`);
     const pageRange = `${item.startPage}-${item.endPage}`;
-    const markdown = await convertPdfBytes(
+    const result = await convertPdfBytes(
       pdfBytes,
       fileName,
       token,
       (status, message) => onProgress?.(status, `Chunk ${item.index}/${plan.length}: ${message}`),
       signal,
       pageRange,
+      options?.outputDir,
+      `attachments/chunk-${String(item.index).padStart(4, "0")}`,
     );
-    const chunk = { ...item, markdown };
+    const chunk = { ...item, markdown: result.markdown, assetCount: result.assetCount };
     convertedChunks.push(chunk);
     await options?.onChunkConverted?.(chunk);
   }
 
   convertedChunks.sort((a, b) => a.index - b.index);
   const markdown = mergeChunks(fileName, pageCount, convertedChunks);
+  const assetCount = convertedChunks.reduce((sum, chunk) => sum + (chunk.assetCount || 0), 0);
   onProgress?.("done", `Conversion complete (${convertedChunks.length} chunks)`);
   return {
     markdown,
     pageCount,
     chunkSize,
     chunks: convertedChunks,
+    assetCount,
   };
 }
 
@@ -206,7 +274,9 @@ async function convertPdfBytes(
   onProgress?: ProgressCallback,
   signal?: AbortSignal,
   pageRange?: string,
-): Promise<string> {
+  outputDir?: string,
+  assetPrefix?: string,
+): Promise<MineruJobResult> {
   // Step 2: Get upload URL via batch apply
   onProgress?.("uploading", "Requesting upload URL...");
   const fileRequest: { name: string; is_ocr: boolean; page_ranges?: string } = {
@@ -227,15 +297,19 @@ async function convertPdfBytes(
   log("Batch apply request:", requestBody);
 
   throwIfAborted(signal);
-  const applyRes = await fetch(`${MINERU_API_BASE}/api/v4/file-urls/batch`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+  const applyRes = await mineruFetch(
+    "MinerU upload URL request",
+    `${MINERU_API_BASE}/api/v4/file-urls/batch`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(requestBody),
+      signal,
     },
-    body: JSON.stringify(requestBody),
-    signal,
-  });
+  );
 
   const applyText = await applyRes.text();
   log("Batch apply response status:", applyRes.status, "body:", applyText);
@@ -261,11 +335,15 @@ async function convertPdfBytes(
   // Step 3: Upload PDF bytes via PUT (as per MinerU docs)
   throwIfAborted(signal);
   onProgress?.("uploading", "Uploading PDF...");
-  const uploadRes = await fetch(uploadUrl, {
-    method: "PUT",
-    body: pdfBytes,
-    signal,
-  });
+  const uploadRes = await mineruFetch(
+    "MinerU PDF upload",
+    uploadUrl,
+    {
+      method: "PUT",
+      body: pdfBytes,
+      signal,
+    },
+  );
 
   log("Upload response status:", uploadRes.status);
   if (!uploadRes.ok) {
@@ -288,7 +366,8 @@ async function convertPdfBytes(
     await delay(POLL_INTERVAL_MS);
     throwIfAborted(signal);
 
-    const pollRes = await fetch(
+    const pollRes = await mineruFetch(
+      "MinerU result polling",
       `${MINERU_API_BASE}/api/v4/extract-results/batch/${batch_id}`,
       {
         headers: {
@@ -331,7 +410,7 @@ async function convertPdfBytes(
       // Step 5: Download ZIP and extract markdown
       throwIfAborted(signal);
       onProgress?.("downloading", "Downloading results...");
-      const zipRes = await fetch(zipUrl, { signal });
+      const zipRes = await mineruFetch("MinerU result download", zipUrl, { signal });
       if (!zipRes.ok) {
         log("ERROR: Failed to download ZIP:", zipRes.status);
         throw new Error(`Failed to download results (${zipRes.status})`);
@@ -339,10 +418,10 @@ async function convertPdfBytes(
 
       const zipBytes = new Uint8Array(await zipRes.arrayBuffer());
       log("Downloaded ZIP size:", zipBytes.length, "bytes");
-      const markdown = await extractMarkdownFromZip(zipBytes);
-      log("Extracted markdown length:", markdown.length);
+      const result = await extractMarkdownFromZip(zipBytes, outputDir, assetPrefix);
+      log("Extracted markdown length:", result.markdown.length, "asset count:", result.assetCount);
       onProgress?.("done", "Conversion complete");
-      return markdown;
+      return result;
     } else if (result.state === "failed") {
       log("ERROR: Conversion failed:", result.err_msg);
       throw new Error(
@@ -354,13 +433,97 @@ async function convertPdfBytes(
   }
 }
 
+function isSafeZipEntry(entry: string): boolean {
+  if (!entry || entry.startsWith("/") || entry.startsWith("\\") || /^[a-zA-Z]:/.test(entry)) {
+    return false;
+  }
+  return entry.split(/[\\/]+/).every(part => part !== "" && part !== "." && part !== "..");
+}
+
+function normalizeZipEntry(entry: string): string {
+  return entry.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function readZipEntryBytes(zipReader: any, entry: string): Uint8Array {
+  const inputStream = zipReader.getInputStream(entry);
+  const scriptableStream = Components.classes[
+    "@mozilla.org/scriptableinputstream;1"
+  ].createInstance(Components.interfaces.nsIScriptableInputStream);
+  scriptableStream.init(inputStream);
+
+  try {
+    const chunks: string[] = [];
+    let available = scriptableStream.available();
+    while (available > 0) {
+      chunks.push(scriptableStream.readBytes(available));
+      available = scriptableStream.available();
+    }
+    const bytes = chunks.join("");
+    const uint8 = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) {
+      uint8[i] = bytes.charCodeAt(i);
+    }
+    return uint8;
+  } finally {
+    scriptableStream.close();
+    inputStream.close();
+  }
+}
+
+function isPrimaryMarkdownEntry(entry: string): boolean {
+  return entry.endsWith(".md") && !entry.includes("_middle");
+}
+
+function rewriteMarkdownAssetLinks(markdown: string, assetPrefix?: string): string {
+  if (!assetPrefix) return markdown;
+  const cleanPrefix = assetPrefix.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!cleanPrefix) return markdown;
+  const externalPattern = /^(?:[a-z][a-z0-9+.-]*:|#|\/|\\)/i;
+
+  const rewrite = (rawPath: string): string => {
+    const cleanPath = rawPath.trim();
+    const normalized = cleanPath.replace(/\\/g, "/").replace(/^\.?\//, "");
+    if (
+      !cleanPath ||
+      externalPattern.test(cleanPath) ||
+      normalized.split("/").some(part => part === "." || part === "..") ||
+      normalized.startsWith(cleanPrefix + "/")
+    ) {
+      return rawPath;
+    }
+    return `${cleanPrefix}/${normalized}`;
+  };
+
+  return markdown
+    .replace(/(!\[[^\]]*\]\()([^)\r\n]+)(\))/g, (_match, before, url, after) => {
+      return `${before}${rewrite(url)}${after}`;
+    })
+    .replace(/(<img\b[^>]*\bsrc=["'])([^"']+)(["'][^>]*>)/gi, (_match, before, url, after) => {
+      return `${before}${rewrite(url)}${after}`;
+    });
+}
+
+function getZipEntryDir(entry: string): string {
+  const slash = entry.lastIndexOf("/");
+  return slash === -1 ? "" : entry.slice(0, slash);
+}
+
+function getAssetOutputEntry(assetEntry: string, mdEntry: string): string {
+  const mdDir = getZipEntryDir(mdEntry);
+  if (mdDir && assetEntry.startsWith(mdDir + "/")) {
+    return assetEntry.slice(mdDir.length + 1);
+  }
+  return assetEntry;
+}
+
 /**
- * Extract the markdown content from a MinerU result ZIP.
- * The ZIP contains files like: {filename}.md, {filename}_model.json, etc.
- * We need to find and read the .md file.
+ * Extract the Markdown content and optional asset files from a MinerU result ZIP.
  */
-async function extractMarkdownFromZip(zipBytes: Uint8Array): Promise<string> {
-  // Write ZIP to a temp file, extract, and read the .md file
+async function extractMarkdownFromZip(
+  zipBytes: Uint8Array,
+  outputDir?: string,
+  assetPrefix?: string,
+): Promise<MineruJobResult> {
   const tempDir = PathUtils.join(PathUtils.tempDir, `chatpdf-${Date.now()}`);
   const tempZip = tempDir + ".zip";
 
@@ -380,24 +543,34 @@ async function extractMarkdownFromZip(zipBytes: Uint8Array): Promise<string> {
     zipReader.open(zipFile);
 
     try {
-      // Find the .md file in the ZIP
-      const entries = zipReader.findEntries("*.md");
+      const entries = zipReader.findEntries("*");
       let mdEntry: string | null = null;
+      const assetEntries: string[] = [];
 
       while (entries.hasMore()) {
-        const entry = entries.getNext();
-        // Pick the first .md file (skip _middle.md etc. if present)
-        if (entry.endsWith(".md") && !entry.includes("_middle")) {
+        const rawEntry = String(entries.getNext());
+        const entry = normalizeZipEntry(rawEntry);
+        if (!isSafeZipEntry(entry) || entry.endsWith("/")) {
+          log("Skipping unsafe or directory ZIP entry:", rawEntry);
+          continue;
+        }
+        if (isPrimaryMarkdownEntry(entry) && !mdEntry) {
           mdEntry = entry;
-          break;
+          continue;
+        }
+        if (!entry.endsWith(".md")) {
+          assetEntries.push(entry);
         }
       }
 
       if (!mdEntry) {
-        // Fallback: try any .md file
+        // Fallback: try any safe .md file
         const allEntries = zipReader.findEntries("*.md");
-        if (allEntries.hasMore()) {
-          mdEntry = allEntries.getNext();
+        while (allEntries.hasMore()) {
+          const entry = normalizeZipEntry(String(allEntries.getNext()));
+          if (!isSafeZipEntry(entry)) continue;
+          mdEntry = entry;
+          break;
         }
       }
 
@@ -405,24 +578,28 @@ async function extractMarkdownFromZip(zipBytes: Uint8Array): Promise<string> {
         throw new Error("No markdown file found in conversion results");
       }
 
-      // Read the markdown content from the ZIP
-      const inputStream = zipReader.getInputStream(mdEntry);
-      const scriptableStream = Components.classes[
-        "@mozilla.org/scriptableinputstream;1"
-      ].createInstance(Components.interfaces.nsIScriptableInputStream);
-      scriptableStream.init(inputStream);
-
-      const bytes = scriptableStream.readBytes(scriptableStream.available());
-      scriptableStream.close();
-      inputStream.close();
-
-      // Decode UTF-8
       const decoder = new TextDecoder("utf-8");
-      const uint8 = new Uint8Array(bytes.length);
-      for (let i = 0; i < bytes.length; i++) {
-        uint8[i] = bytes.charCodeAt(i);
+      let markdown = decoder.decode(readZipEntryBytes(zipReader, mdEntry));
+      let assetCount = 0;
+
+      if (outputDir && assetPrefix) {
+        const cleanPrefix = assetPrefix.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+        const assetRoot = PathUtils.joinRelative(outputDir, cleanPrefix);
+        await ensureDir(assetRoot);
+
+        for (const entry of assetEntries) {
+          throwIfAborted();
+          const outputEntry = getAssetOutputEntry(entry, mdEntry);
+          const outputPath = PathUtils.joinRelative(assetRoot, outputEntry);
+          const parent = PathUtils.parent(outputPath);
+          if (parent) await ensureDir(parent);
+          await IOUtils.write(outputPath, readZipEntryBytes(zipReader, entry));
+          assetCount++;
+        }
+        markdown = rewriteMarkdownAssetLinks(markdown, cleanPrefix);
       }
-      return decoder.decode(uint8);
+
+      return { markdown, assetCount };
     } finally {
       zipReader.close();
     }

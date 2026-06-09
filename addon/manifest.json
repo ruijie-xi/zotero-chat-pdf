@@ -7,6 +7,11 @@
     "48": "content/icons/chat.svg",
     "96": "content/icons/chat.svg"
   },
+  "permissions": [
+    "https://mineru.net/*",
+    "https://mineru.oss-cn-shanghai.aliyuncs.com/*",
+    "https://cdn-mineru.openxlab.org.cn/*"
+  ],
   "applications": {
     "zotero": {
       "id": "__addonID__",
