@@ -2,6 +2,17 @@ import { ChatSession } from "./chat-session";
 import * as MDCache from "./md-cache";
 import { getPref } from "../utils/prefs";
 import { Tool } from "./llm-client";
+import { convertSource, refreshSourceChips } from "./source-chips";
+import {
+  addZoteroItemToSession,
+  getAllCollections,
+  getAllLibraryItems,
+  getItemByKey,
+  getPdfAttachment,
+  summarizeZoteroItem,
+  ZoteroCollectionSummary,
+  ZoteroItemSummary,
+} from "./zotero-items";
 
 const DEFAULT_READ_LINE_LIMIT = 400;
 const MAX_SEARCH_RESULTS = 20;
@@ -137,6 +148,136 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "search_zotero_library",
+        description:
+          "Search the user's Zotero library metadata for relevant papers/items. " +
+          "This is read-only and returns compact metadata plus PDF/session status. " +
+          "Use this when the user asks to find papers or when no session sources are available.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Title, author, keyword, tag, or abstract text to search for" },
+            max_results: { type: "integer", description: "Maximum number of results (default 10, max 20)" },
+            year_from: { type: "integer", description: "Earliest publication year to include" },
+            year_to: { type: "integer", description: "Latest publication year to include" },
+            item_type: { type: "string", description: "Zotero item type filter, e.g. journalArticle, preprint, book" },
+            has_pdf: { type: "boolean", description: "If true, only return items with PDF attachments; if false, only without PDFs" },
+          },
+          required: ["query"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_zotero_item",
+        description:
+          "Inspect one Zotero item by key. This is read-only and returns metadata, PDF availability, collections, tags, and session status.",
+        parameters: {
+          type: "object",
+          properties: {
+            key: { type: "string", description: "Zotero item key or PDF attachment key" },
+          },
+          required: ["key"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_zotero_collections",
+        description: "List Zotero collections, optionally filtered by name. This is read-only.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Optional collection name filter" },
+            max_results: { type: "integer", description: "Maximum number of collections (default 10, max 30)" },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_collection_items",
+        description:
+          "List Zotero items in a collection by collection key. This is read-only and returns compact item metadata.",
+        parameters: {
+          type: "object",
+          properties: {
+            collection_key: { type: "string", description: "Zotero collection key" },
+            max_results: { type: "integer", description: "Maximum number of items (default 10, max 20)" },
+            has_pdf: { type: "boolean", description: "If true, only return items with PDFs; if false, only without PDFs" },
+          },
+          required: ["collection_key"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_current_zotero_selection",
+        description:
+          "List the currently selected Zotero item(s) or open reader item when available. This is read-only.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "add_zotero_item_to_session",
+        description:
+          "Add a Zotero item's PDF attachment to the current ChatPDF session. " +
+          "This is a lightweight reversible action; use it when a Zotero item is relevant to the user's task.",
+        parameters: {
+          type: "object",
+          properties: {
+            item_key: { type: "string", description: "Zotero parent item key or PDF attachment key" },
+          },
+          required: ["item_key"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "convert_session_source",
+        description:
+          "Convert a source already in the current ChatPDF session with MinerU. " +
+          "Use when the source is needed to answer. Be careful with extreme bulk conversions and explain the cost/risk when relevant.",
+        parameters: {
+          type: "object",
+          properties: {
+            source_key: { type: "string", description: "Current session source key from list_sources" },
+          },
+          required: ["source_key"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "add_and_convert_zotero_item",
+        description:
+          "Add a Zotero item's PDF attachment to this session, then convert it with MinerU if needed. " +
+          "Use when the item is relevant and needed to answer. Be careful with extreme bulk conversions and explain the cost/risk when relevant.",
+        parameters: {
+          type: "object",
+          properties: {
+            item_key: { type: "string", description: "Zotero parent item key or PDF attachment key" },
+          },
+          required: ["item_key"],
+        },
+      },
+    },
   ];
 
   const enableWeb = options?.enableWebTools ?? ((getPref("enableWebTools") as boolean | undefined) ?? false);
@@ -201,6 +342,30 @@ export async function executeTool(
         break;
       case "search_document":
         result = await executeSearchDocument(args, session);
+        break;
+      case "search_zotero_library":
+        result = await executeSearchZoteroLibrary(args, session);
+        break;
+      case "get_zotero_item":
+        result = await executeGetZoteroItem(args, session);
+        break;
+      case "list_zotero_collections":
+        result = await executeListZoteroCollections(args);
+        break;
+      case "list_collection_items":
+        result = await executeListCollectionItems(args, session);
+        break;
+      case "get_current_zotero_selection":
+        result = await executeGetCurrentZoteroSelection(session);
+        break;
+      case "add_zotero_item_to_session":
+        result = await executeAddZoteroItemToSession(args, session);
+        break;
+      case "convert_session_source":
+        result = await executeConvertSessionSource(args, session);
+        break;
+      case "add_and_convert_zotero_item":
+        result = await executeAddAndConvertZoteroItem(args, session);
         break;
       case "web_search":
         result = await executeWebSearch(args);
@@ -510,6 +675,331 @@ async function executeSearchDocument(args: Record<string, unknown>, session: Cha
   }
 
   return `Search results for "${query}" in "${title}" (${matches.length} shown):\n\n${matches.join("\n\n")}`;
+}
+
+function normalizeYear(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function formatCreators(creators: string[]): string {
+  if (creators.length === 0) return "unknown";
+  if (creators.length <= 3) return creators.join(", ");
+  return `${creators.slice(0, 3).join(", ")} et al.`;
+}
+
+function sessionStatusForItem(item: ZoteroItemSummary, session: ChatSession): string {
+  if (!item.pdfKey) return "not in session";
+  const source = session.getSource(item.pdfKey);
+  return source ? `in session (${source.status})` : "not in session";
+}
+
+function formatZoteroItemSummary(item: ZoteroItemSummary, session?: ChatSession, index?: number): string {
+  const prefix = index !== undefined ? `${index}. ` : "";
+  const lines = [`${prefix}${item.title}`];
+  lines.push(`   key: ${item.key}`);
+  if (item.pdfKey) lines.push(`   pdf_key: ${item.pdfKey}`);
+  if (item.itemType) lines.push(`   type: ${item.itemType}`);
+  if (item.year) lines.push(`   year: ${item.year}`);
+  lines.push(`   creators: ${formatCreators(item.creators)}`);
+  lines.push(`   has_pdf: ${item.hasPdf ? "yes" : "no"}`);
+  if (session) lines.push(`   session_status: ${sessionStatusForItem(item, session)}`);
+  if (item.collections.length) lines.push(`   collections: ${item.collections.join(", ")}`);
+  if (item.tags.length) lines.push(`   tags: ${item.tags.slice(0, 8).join(", ")}`);
+  if (item.abstractNote) lines.push(`   abstract: ${item.abstractNote}`);
+  return lines.join("\n");
+}
+
+function formatCollectionSummary(collection: ZoteroCollectionSummary, index: number): string {
+  const lines = [`${index}. ${collection.name}`];
+  lines.push(`   key: ${collection.key}`);
+  if (collection.libraryID !== undefined) lines.push(`   libraryID: ${collection.libraryID}`);
+  if (collection.parentKey) lines.push(`   parent_key: ${collection.parentKey}`);
+  if (collection.itemCount !== undefined) lines.push(`   item_count: ${collection.itemCount}`);
+  return lines.join("\n");
+}
+
+function normalizeSearchText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function searchTerms(query: string): string[] {
+  return normalizeSearchText(query).split(" ").filter((term) => term.length >= 2);
+}
+
+function fuzzyTextScore(text: string, query: string): number {
+  const normalizedText = normalizeSearchText(text);
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return 1;
+  if (normalizedText.includes(normalizedQuery)) return 100 + normalizedQuery.length;
+
+  let score = 0;
+  for (const term of searchTerms(query)) {
+    if (normalizedText.includes(term)) {
+      score += 10 + term.length;
+      continue;
+    }
+    const partial = normalizedText.split(" ").some((word) => word.includes(term) || term.includes(word));
+    if (partial) score += 3;
+  }
+  return score;
+}
+
+function matchesLibraryQuery(item: ZoteroItemSummary, query: string): boolean {
+  const haystack = [
+    item.title,
+    item.creators.join(" "),
+    item.year || "",
+    item.itemType || "",
+    item.abstractNote || "",
+    item.tags.join(" "),
+    item.collections.join(" "),
+  ].join(" ");
+  return fuzzyTextScore(haystack, query) > 0;
+}
+
+function libraryQueryScore(item: ZoteroItemSummary, query: string): number {
+  return fuzzyTextScore([
+    item.title,
+    item.creators.join(" "),
+    item.abstractNote || "",
+    item.tags.join(" "),
+    item.collections.join(" "),
+  ].join(" "), query);
+}
+
+async function executeSearchZoteroLibrary(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+  const query = String(args.query || "").trim();
+  if (!query) return "Error: query is required.";
+
+  const maxResults = Math.min(MAX_SEARCH_RESULTS, Math.max(1, Number(args.max_results) || 10));
+  const yearFrom = normalizeYear(args.year_from);
+  const yearTo = normalizeYear(args.year_to);
+  const itemType = String(args.item_type || "").trim().toLowerCase();
+  const hasPdf = typeof args.has_pdf === "boolean" ? args.has_pdf : undefined;
+
+  const summaries = (await getAllLibraryItems())
+    .map(summarizeZoteroItem)
+    .filter((item) => matchesLibraryQuery(item, query))
+    .filter((item) => yearFrom === undefined || Number(item.year) >= yearFrom)
+    .filter((item) => yearTo === undefined || Number(item.year) <= yearTo)
+    .filter((item) => !itemType || (item.itemType || "").toLowerCase() === itemType)
+    .filter((item) => hasPdf === undefined || item.hasPdf === hasPdf)
+    .sort((a, b) => libraryQueryScore(b, query) - libraryQueryScore(a, query))
+    .slice(0, maxResults);
+
+  if (summaries.length === 0) {
+    return `No Zotero library items found for "${query}".`;
+  }
+
+  const lines = [`Zotero library results for "${query}" (${summaries.length} shown):`, ""];
+  summaries.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
+  lines.push("These results are read-only. You may add or convert relevant PDFs if needed to answer; use judgment and warn the user about cost/time before extreme bulk conversions.");
+  return lines.join("\n");
+}
+
+async function executeGetZoteroItem(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+  const key = String(args.key || "").trim();
+  if (!key) return "Error: key is required.";
+  const item = getItemByKey(key);
+  if (!item) return `Error: Zotero item "${key}" was not found.`;
+  return formatZoteroItemSummary(summarizeZoteroItem(item), session);
+}
+
+async function executeListZoteroCollections(args: Record<string, unknown>): Promise<string> {
+  const query = String(args.query || "").trim().toLowerCase();
+  const maxResults = Math.min(30, Math.max(1, Number(args.max_results) || 10));
+  const collections = (await getAllCollections())
+    .filter((collection) => !query || fuzzyTextScore(collection.name, query) > 0)
+    .sort((a, b) => fuzzyTextScore(b.name, query) - fuzzyTextScore(a.name, query))
+    .slice(0, maxResults);
+
+  if (collections.length === 0) {
+    return query ? `No Zotero collections found for "${query}".` : "No Zotero collections found.";
+  }
+
+  return [
+    `Zotero collections (${collections.length} shown):`,
+    "",
+    ...collections.map((collection, i) => formatCollectionSummary(collection, i + 1)),
+  ].join("\n\n");
+}
+
+function getCollectionByKey(key: string): any | null {
+  for (const lib of Zotero.Libraries.getAll()) {
+    try {
+      const collection = (Zotero.Collections as any).getByLibraryAndKey?.(lib.libraryID, key);
+      if (collection) return collection;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+async function executeListCollectionItems(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+  const key = String(args.collection_key || "").trim();
+  if (!key) return "Error: collection_key is required.";
+  const collection = getCollectionByKey(key);
+  if (!collection) return `Error: Zotero collection "${key}" was not found.`;
+
+  const maxResults = Math.min(MAX_SEARCH_RESULTS, Math.max(1, Number(args.max_results) || 10));
+  const hasPdf = typeof args.has_pdf === "boolean" ? args.has_pdf : undefined;
+  let rawItems: any[] = [];
+  try {
+    const maybeItems = collection.getChildItems?.() || [];
+    rawItems = typeof maybeItems?.then === "function" ? await maybeItems : maybeItems;
+  } catch (e: any) {
+    return `Error reading collection "${collection.name || key}": ${e.message}`;
+  }
+
+  const items = rawItems
+    .map((itemOrID) => typeof itemOrID === "number" ? Zotero.Items.get(itemOrID) : itemOrID)
+    .filter((item): item is Zotero.Item => !!item && (item.isRegularItem?.() || (item.isPDFAttachment?.() && !item.parentItem)))
+    .map(summarizeZoteroItem)
+    .filter((item) => hasPdf === undefined || item.hasPdf === hasPdf)
+    .slice(0, maxResults);
+
+  if (items.length === 0) {
+    return `No matching items found in Zotero collection "${collection.name || key}".`;
+  }
+
+  const lines = [`Items in Zotero collection "${collection.name || key}" (${items.length} shown):`, ""];
+  items.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
+  return lines.join("\n");
+}
+
+function selectedItemsFromWindow(win: any): Zotero.Item[] {
+  const items: Zotero.Item[] = [];
+  try {
+    const paneItems = win.ZoteroPane?.getSelectedItems?.();
+    if (Array.isArray(paneItems)) items.push(...paneItems);
+  } catch {}
+
+  try {
+    const activePaneItems = (Zotero as any).getActiveZoteroPane?.()?.getSelectedItems?.();
+    if (Array.isArray(activePaneItems)) items.push(...activePaneItems);
+  } catch {}
+
+  try {
+    const selectedTabID = win.Zotero_Tabs?.selectedID;
+    if (selectedTabID && selectedTabID !== "zotero-pane") {
+      const reader = (Zotero as any).Reader?.getByTabID?.(selectedTabID);
+      if (reader?.itemID) {
+        const item = Zotero.Items.get(reader.itemID);
+        if (item) items.push(item);
+      }
+      const tab = win.Zotero_Tabs?._tabs?.find((t: any) => t.id === selectedTabID);
+      if (tab?.data?.itemID) {
+        const item = Zotero.Items.get(tab.data.itemID);
+        if (item) items.push(item);
+      }
+    }
+  } catch {}
+
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${(item as any).libraryID || ""}:${item.key}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function executeGetCurrentZoteroSelection(session: ChatSession): Promise<string> {
+  const selectedItems: Zotero.Item[] = [];
+  for (const win of Zotero.getMainWindows()) {
+    selectedItems.push(...selectedItemsFromWindow(win as any));
+  }
+
+  const seen = new Set<string>();
+  const items = selectedItems.filter((item) => {
+    const key = `${(item as any).libraryID || ""}:${item.key}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (items.length === 0) {
+    return "No current Zotero selection or open reader item was found.";
+  }
+
+  const lines = [`Current Zotero selection (${items.length} item${items.length === 1 ? "" : "s"}):`, ""];
+  items.map(summarizeZoteroItem).forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
+  return lines.join("\n");
+}
+
+function refreshOpenSourceChips(): void {
+  for (const win of Zotero.getMainWindows()) {
+    try {
+      const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
+      if (root) refreshSourceChips(root);
+    } catch {}
+  }
+}
+
+async function executeAddZoteroItemToSession(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+  const key = String(args.item_key || "").trim();
+  if (!key) return "Error: item_key is required.";
+  const item = getItemByKey(key);
+  if (!item) return `Error: Zotero item "${key}" was not found.`;
+
+  const added = await addZoteroItemToSession(item, session);
+  refreshOpenSourceChips();
+  return added.message;
+}
+
+async function executeConvertSessionSource(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+  const key = String(args.source_key || "").trim();
+  if (!key) return "Error: source_key is required.";
+  const validationError = validateSourceKey(key, session, "convert_session_source");
+  if (validationError) return validationError;
+  const source = session.getSource(key);
+  if (!source) return `Error: source "${key}" not found.`;
+  if (source.status === "ready") {
+    return `Source "${source.title}" is already converted and ready.`;
+  }
+  if (source.status === "converting") {
+    return `Source "${source.title}" is already converting.`;
+  }
+  await convertSource(source, refreshOpenSourceChips);
+  refreshOpenSourceChips();
+  const updated = session.getSource(key);
+  if (updated?.status === "ready") {
+    return `Converted source "${updated.title}" successfully.`;
+  }
+  return `Conversion finished for "${source.title}" with status: ${updated?.status || "unknown"}.`;
+}
+
+async function executeAddAndConvertZoteroItem(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+  const key = String(args.item_key || "").trim();
+  if (!key) return "Error: item_key is required.";
+  const item = getItemByKey(key);
+  if (!item) return `Error: Zotero item "${key}" was not found.`;
+  const summary = summarizeZoteroItem(item);
+  if (!getPdfAttachment(item)) {
+    return `Error: "${summary.title}" has no PDF attachment available.`;
+  }
+
+  const added = await addZoteroItemToSession(item, session);
+  refreshOpenSourceChips();
+  if (!added.sourceKey) return added.message;
+  const source = session.getSource(added.sourceKey);
+  if (!source) return `${added.message}\nError: added source could not be found in the current session.`;
+  if (source.status === "ready") {
+    return `${added.message}\nSource is already converted and ready.`;
+  }
+  if (source.status === "converting") {
+    return `${added.message}\nSource is already converting.`;
+  }
+  await convertSource(source, refreshOpenSourceChips);
+  refreshOpenSourceChips();
+  const updated = session.getSource(added.sourceKey);
+  return `${added.message}\nConversion status: ${updated?.status || "unknown"}.`;
 }
 
 async function executeWebSearch(args: Record<string, unknown>): Promise<string> {

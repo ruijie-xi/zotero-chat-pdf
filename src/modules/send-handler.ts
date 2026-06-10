@@ -219,15 +219,16 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       try {
         const rendered = renderMarkdown(text);
         if (thinkingDots.parentNode) thinkingDots.remove();
+        bubble.querySelectorAll(".chatpdf-live-content").forEach((node) => node.remove());
         const blocks = bubble.querySelectorAll(".chatpdf-iteration-block, .chatpdf-reasoning-block, .chatpdf-tool-block, .chatpdf-tool-status");
+        const contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
+        contentWrap.className = "chatpdf-live-content";
+        contentWrap.innerHTML = rendered;
         if (blocks.length > 0) {
-          const lastBlock = blocks[blocks.length - 1];
-          while (lastBlock.nextSibling) lastBlock.nextSibling.remove();
-          const contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
-          contentWrap.innerHTML = rendered;
           bubble.appendChild(contentWrap);
         } else {
-          bubble.innerHTML = rendered;
+          bubble.innerHTML = "";
+          bubble.appendChild(contentWrap);
         }
       } catch {
         bubble.textContent = text;
@@ -263,6 +264,20 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       let curThinkRenderTimer: number | null = null;
       let curIterReasoning = "";
       let agentRenderTimer: number | null = null;
+      let needsAssistantSegmentBreak = false;
+
+      function ensureParagraphBreak(text: string): string {
+        if (!text.trim()) return text;
+        return /\n\s*\n$/.test(text) ? text : text.replace(/\s*$/, "\n\n");
+      }
+
+      function appendAssistantStreamChunk(chunk: string): void {
+        if (needsAssistantSegmentBreak && chunk.trim()) {
+          fullText = ensureParagraphBreak(fullText);
+          needsAssistantSegmentBreak = false;
+        }
+        fullText += chunk;
+      }
 
       function finalizeThinkingBlock() {
         if (!curThinkBlock) return;
@@ -324,6 +339,11 @@ export async function handleSend(root: HTMLElement): Promise<void> {
           if (!isActiveSession()) return;
 
           if (record.toolCalls.length > 0) {
+            if (fullText.trim()) {
+              fullText = ensureParagraphBreak(fullText);
+              streamState.fullText = fullText;
+              needsAssistantSegmentBreak = true;
+            }
             if (statusDiv.parentNode) statusDiv.remove();
             const totalMs = record.toolCalls.reduce((sum, t) => sum + t.durationMs, 0);
             const toolBlock = createToolBlock(doc, record.toolCalls, totalMs);
@@ -376,7 +396,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         onStream: (chunk: string, done: boolean) => {
           try {
             if (!done) {
-              fullText += chunk;
+              appendAssistantStreamChunk(chunk);
               streamState.fullText = fullText;
               if (!isActiveSession()) return;
               if (thinkingDots.parentNode) thinkingDots.remove();

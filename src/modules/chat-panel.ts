@@ -1,6 +1,5 @@
 import { config } from "../../package.json";
 import { ChatSession, SourceItem } from "./chat-session";
-import * as MDCache from "./md-cache";
 import { createChatInput, ChatInputEditor } from "./tiptap-input";
 import { getPref, setPref } from "../utils/prefs";
 import { h, XUL_NS } from "../utils/dom";
@@ -17,87 +16,16 @@ import { showFilteredHistory, showHistoryView, hideHistoryView } from "./history
 import { refreshSourceChips, convertSource } from "./source-chips";
 import { renderChatHistory } from "./message-renderer";
 import { handleSend, handleConvertAndSend, autoSaveSession } from "./send-handler";
+import {
+  addZoteroItemToSession,
+  getItemFromZoteroUri,
+  getItemTitle,
+  getPdfAttachment,
+} from "./zotero-items";
 
 // Re-export for external consumers (hooks.ts, etc.)
 export { showFilteredHistory } from "./history-view";
 export { abortCurrentStream } from "./panel-state";
-
-// ---- Helpers ----
-
-function getPdfAttachment(item: Zotero.Item): Zotero.Item | null {
-  if (item.isPDFAttachment?.()) return item;
-  if (item.isRegularItem?.()) {
-    for (const id of item.getAttachments()) {
-      const att = Zotero.Items.get(id);
-      if (att?.isPDFAttachment?.()) return att;
-    }
-  }
-  return null;
-}
-
-function getItemTitle(item: Zotero.Item): string {
-  if (item.isRegularItem?.()) return (item.getField("title") as string) || "Untitled";
-  const parent = item.parentItem;
-  if (parent) return (parent.getField("title") as string) || "Untitled";
-  return (item.getField("title") as string) || "Untitled";
-}
-
-/** Look up a Zotero item by attachment key, searching all libraries. */
-function getItemByKey(key: string, libraryID?: number): Zotero.Item | null {
-  if (libraryID !== undefined) {
-    try {
-      const item = Zotero.Items.getByLibraryAndKey(libraryID, key);
-      if (item) return item;
-    } catch (e: any) {
-      Zotero.debug(`[ChatPDF] getItemByKey: lookup failed for lib ${libraryID}: ${e.message}`);
-    }
-  }
-  for (const lib of Zotero.Libraries.getAll()) {
-    try {
-      const item = Zotero.Items.getByLibraryAndKey(lib.libraryID, key);
-      if (item) return item;
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-/** Look up a Zotero item from any Zotero URI format. */
-async function getItemFromZoteroUri(uri: string): Promise<Zotero.Item | null> {
-  Zotero.debug(`[ChatPDF] getItemFromZoteroUri: trying "${uri}"`);
-
-  const selectMatch = uri.match(/zotero:\/\/select\/(?:library|groups\/\d+)\/items\/([A-Z0-9]+)/i);
-  if (selectMatch) return getItemByKey(selectMatch[1]);
-
-  const openPdfMatch = uri.match(/zotero:\/\/open-pdf\/(?:library|groups\/\d+)\/items\/([A-Z0-9]+)/i);
-  if (openPdfMatch) return getItemByKey(openPdfMatch[1]);
-
-  const attachLibMatch = uri.match(/zotero:\/\/attachment\/(\d+)\/([A-Z0-9]+)/i);
-  if (attachLibMatch) {
-    const item = getItemByKey(attachLibMatch[2], parseInt(attachLibMatch[1], 10));
-    if (item) return item;
-  }
-
-  const attachNumMatch = uri.match(/zotero:\/\/attachment\/(\d+)(?:[/?#]|$)/);
-  if (attachNumMatch) {
-    try {
-      const item = Zotero.Items.get(parseInt(attachNumMatch[1], 10));
-      if (item) return item;
-    } catch (e: any) {
-      Zotero.debug(`[ChatPDF] getItemFromZoteroUri: numeric attachment lookup failed: ${e.message}`);
-    }
-  }
-
-  try {
-    const item = (Zotero.URI as any).getURIItem(uri);
-    if (item) return item;
-  } catch (e: any) {
-    Zotero.debug(`[ChatPDF] getItemFromZoteroUri: getURIItem failed: ${e.message}`);
-  }
-
-  return null;
-}
 
 // ---- Model profile helpers ----
 
@@ -140,18 +68,7 @@ function refreshProfileSelect(root: HTMLElement): void {
 // ---- Session management ----
 
 export async function addItemToSession(item: Zotero.Item): Promise<void> {
-  const pdf = getPdfAttachment(item);
-  if (!pdf) return;
-  const key = pdf.key;
-  const title = getItemTitle(item);
-  const parentKey: string | undefined = item.isRegularItem?.()
-    ? item.key
-    : (item.parentItem?.key || pdf.parentItem?.key || undefined);
-  session.addSource(key, title, parentKey);
-  if (await MDCache.has(key)) {
-    const md = await MDCache.read(key);
-    session.setSourceReady(key, md);
-  }
+  await addZoteroItemToSession(item, session);
 }
 
 /** Insert an inline mention chip into the TipTap editor. */

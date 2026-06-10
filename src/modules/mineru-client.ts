@@ -89,6 +89,107 @@ function describeRequestTarget(input: string | URL | Request): string {
   }
 }
 
+function makeCdnDiagnosticHint(zipUrl: string): string {
+  let host = "";
+  try {
+    host = new URL(zipUrl).host;
+  } catch {}
+  if (host !== "cdn-mineru.openxlab.org.cn") return "";
+  return (
+    ` MinerU conversion finished, but Zotero could not download the result ZIP from ${host}. ` +
+    `Test the same URL outside Zotero with: curl.exe -4 -I --max-time 20 "${zipUrl}". ` +
+    `If that works but Zotero fails, adjust Zotero's proxy/certificate/network route so Zotero can reach this CDN.`
+  );
+}
+
+function isWindows(): boolean {
+  return Services.appinfo.OS === "WINNT";
+}
+
+function isMineruCdnZipUrl(zipUrl: string): boolean {
+  try {
+    const url = new URL(zipUrl);
+    return url.protocol === "https:" && url.hostname === "cdn-mineru.openxlab.org.cn";
+  } catch {
+    return false;
+  }
+}
+
+async function findCurlExecutable(): Promise<string> {
+  const winDir = Services.dirsvc.get("WinD", Components.interfaces.nsIFile).path;
+  const candidates = [
+    PathUtils.join(winDir, "System32", "curl.exe"),
+    PathUtils.join(winDir, "Sysnative", "curl.exe"),
+    PathUtils.join(winDir, "SystemWOW64", "curl.exe"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (await IOUtils.exists(candidate)) {
+        return candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error(`curl.exe was not found at expected Windows paths: ${candidates.join(", ")}`);
+}
+
+async function downloadResultZipWithCurl(zipUrl: string, signal?: AbortSignal): Promise<Uint8Array> {
+  throwIfAborted(signal);
+  if (!isWindows()) {
+    throw new Error("curl.exe fallback is only available on Windows.");
+  }
+  if (!isMineruCdnZipUrl(zipUrl)) {
+    throw new Error("curl.exe fallback is only allowed for MinerU CDN ZIP URLs.");
+  }
+
+  const tempDir = PathUtils.join(PathUtils.tempDir, "chatpdf-mineru-curl");
+  await ensureDir(tempDir);
+  const tempZip = PathUtils.join(tempDir, `result-${Date.now()}-${Math.random().toString(36).slice(2)}.zip`);
+  const args = [
+    "-4",
+    "--ssl-no-revoke",
+    "--location",
+    "--fail",
+    "--silent",
+    "--show-error",
+    "--max-time",
+    "120",
+    "--output",
+    tempZip,
+    zipUrl,
+  ];
+
+  try {
+    const curlPath = await findCurlExecutable();
+    log("MinerU result curl fallback: running", curlPath, args.slice(0, -1).join(" "), describeRequestTarget(zipUrl));
+    const result = await (Zotero.Utilities.Internal as any).exec(curlPath, args);
+    throwIfAborted(signal);
+    if (result !== true) {
+      throw result instanceof Error ? result : new Error(String(result));
+    }
+    if (!(await IOUtils.exists(tempZip))) {
+      throw new Error("curl.exe completed but did not create the ZIP file.");
+    }
+    const bytes = await IOUtils.read(tempZip);
+    if (!bytes.length) {
+      throw new Error("curl.exe downloaded an empty ZIP file.");
+    }
+    log("MinerU result curl fallback succeeded:", bytes.length, "bytes");
+    return bytes;
+  } finally {
+    try {
+      if (await IOUtils.exists(tempZip)) {
+        await IOUtils.remove(tempZip);
+      }
+    } catch (cleanupErr: any) {
+      log("MinerU result curl fallback cleanup failed:", cleanupErr?.message || String(cleanupErr));
+    }
+  }
+}
+
 async function mineruFetch(
   stage: string,
   input: string | URL | Request,
@@ -130,8 +231,12 @@ async function downloadResultZip(zipUrl: string, signal?: AbortSignal): Promise<
   try {
     const xhr = await Zotero.HTTP.request("GET", zipUrl, {
       responseType: "arraybuffer",
+      foreground: true,
       noCache: true,
       timeout: 120000,
+      headers: {
+        Accept: "application/zip, application/octet-stream, */*",
+      },
       cancellerReceiver: (cancel: () => void) => {
         cancelRequest = cancel;
         if (signal?.aborted) cancelRequest();
@@ -153,8 +258,23 @@ async function downloadResultZip(zipUrl: string, signal?: AbortSignal): Promise<
     throwIfAborted(signal);
     const message = httpErr?.message || String(httpErr);
     log("MinerU result Zotero.HTTP fallback failed:", message);
+    if (isMineruCdnZipUrl(zipUrl)) {
+      try {
+        return await downloadResultZipWithCurl(zipUrl, signal);
+      } catch (curlErr: any) {
+        throwIfAborted(signal);
+        const curlMessage = curlErr?.message || String(curlErr);
+        log("MinerU result curl fallback failed:", curlMessage);
+        throw new Error(
+          `MinerU result download failed with fetch, Zotero.HTTP, and curl.exe fallback from ${describeRequestTarget(zipUrl)}: ` +
+          `Zotero.HTTP: ${message}; curl.exe: ${curlMessage}.` +
+          makeCdnDiagnosticHint(zipUrl),
+        );
+      }
+    }
     throw new Error(
-      `MinerU result download failed with fetch and Zotero.HTTP fallback from ${describeRequestTarget(zipUrl)}: ${message}`,
+      `MinerU result download failed with fetch and Zotero.HTTP fallback from ${describeRequestTarget(zipUrl)}: ${message}.` +
+      makeCdnDiagnosticHint(zipUrl),
     );
   } finally {
     signal?.removeEventListener("abort", abortFallback);

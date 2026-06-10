@@ -12,6 +12,7 @@ import * as ChatHistory from "./chat-history";
 import {
   session, conversionAbortControllers, createAbortController,
 } from "./panel-state";
+import { openPdfForSourceKey } from "./zotero-items";
 
 async function loadCachedChunks(key: string): Promise<Map<number, string>> {
   const chunks = new Map<number, string>();
@@ -200,7 +201,13 @@ export function refreshSourceChips(root: HTMLElement): void {
   if (sources.length === 0) return;
 
   for (const source of sources) {
-    const chip = h(doc, "div", { className: `chatpdf-source-chip chatpdf-source-chip-${source.status}`, title: source.errorMessage || "" });
+    const chipTitle = source.errorMessage || "Open PDF";
+    const chip = h(doc, "div", { className: `chatpdf-source-chip chatpdf-source-chip-${source.status}`, title: chipTitle });
+    chip.addEventListener("click", () => {
+      openPdfForSourceKey(source.key).catch((err: any) => {
+        Zotero.debug(`[ChatPDF] open source chip failed for ${source.key}: ${err.message}`);
+      });
+    });
 
     // Status indicator
     const statusIndicator = h(doc, "span", { className: `chatpdf-chip-indicator chatpdf-chip-indicator-${source.status}` });

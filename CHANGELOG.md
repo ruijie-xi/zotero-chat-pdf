@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.8.0
+
+### New Features
+
+- Add Zotero library agent tools for searching items, inspecting metadata, listing collections, reading the current selection, and adding/converting relevant PDFs from chat.
+- Add clickable source chips so chat sources and message source snapshots can open their Zotero PDFs.
+- Add a Windows `curl.exe` fallback for MinerU result ZIP downloads when Zotero fetch and Zotero.HTTP cannot reach the MinerU CDN.
+
+### Changed
+
+- Give the agent more autonomy to add and convert relevant Zotero PDFs while keeping broad conversion caution as guidance instead of a hard guard.
+- Improve live agent rendering so streamed assistant text is not duplicated around tool-use blocks.
+- Make Zotero library and collection matching more forgiving with partial, case-insensitive search.
+
 ## 0.7.0
 
 ### Fixed

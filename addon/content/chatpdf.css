@@ -657,6 +657,7 @@
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
+  cursor: pointer;
 }
 
 .chatpdf-source-chip:hover {
@@ -1107,6 +1108,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: none;
+  -moz-appearance: none;
+  line-height: 1.4;
+}
+
+.chatpdf-msg-source-chip:hover {
+  background: var(--fill-quinary, #e0e0e0);
+  color: var(--fill-primary, #333);
 }
 
 /* ===== History Title Edit ===== */

@@ -8,6 +8,7 @@ import {
 } from "./panel-state";
 import { handleSend } from "./send-handler";
 import { chatInput } from "./panel-state";
+import { openPdfForSourceKey } from "./zotero-items";
 
 // Re-export for use by other modules
 export { refreshSourceChips } from "./source-chips";
@@ -16,7 +17,13 @@ export { refreshSourceChips } from "./source-chips";
 function renderMsgSources(doc: Document, sources: { key: string; title: string }[]): HTMLElement {
   const container = h(doc, "div", { className: "chatpdf-msg-sources" });
   for (const src of sources) {
-    const chip = h(doc, "span", { className: "chatpdf-msg-source-chip", title: src.title }, src.title);
+    const chip = h(doc, "button", { className: "chatpdf-msg-source-chip", title: `Open PDF: ${src.title}` }, src.title);
+    chip.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
+      openPdfForSourceKey(src.key).catch((err: any) => {
+        Zotero.debug(`[ChatPDF] open message source failed for ${src.key}: ${err.message}`);
+      });
+    });
     container.appendChild(chip);
   }
   return container;

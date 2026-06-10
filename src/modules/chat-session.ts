@@ -492,20 +492,23 @@ export class ChatSession {
       "- For mathematical expressions, use LaTeX syntax: $...$ for inline math and $$...$$ for display math.\n";
 
     const toolInstructions =
-      "\n\nYou have access to tools to read documents:\n" +
+      "\n\nYou have access to tools to search Zotero and read documents:\n" +
       "1. Call `list_sources` first to see available documents and their structure (headings, line counts)\n" +
       "2. Call `read_document` with a key and optional line range to read specific content\n" +
       "3. For long documents, use `list_document_chunks`, `search_document`, and `read_document_chunk` to navigate page-based chunks\n" +
-      "4. Use web tools (`web_search`, `web_fetch`) if enabled and relevant\n\n" +
+      "4. Use `search_zotero_library`, `get_zotero_item`, `list_zotero_collections`, `list_collection_items`, and `get_current_zotero_selection` to find relevant Zotero items when the user asks to find papers or when no useful session sources are available\n" +
+      "5. You may use `add_zotero_item_to_session`, `convert_session_source`, or `add_and_convert_zotero_item` when Zotero items/PDFs are relevant and needed to answer; be careful with extreme bulk conversions and warn the user about cost/time when relevant\n" +
+      "6. Use web tools (`web_search`, `web_fetch`) if enabled and relevant\n\n" +
       "Strategy:\n" +
       "- For specific questions: use list_sources to find relevant sections via headings, then read_document for those line ranges\n" +
       "- For books or very long PDFs: search first, then read only the matching chunks or line ranges\n" +
       "- For broad questions on short papers: read_document without line range can preview or read the document\n" +
+      "- For library discovery: search Zotero metadata first, then add/convert relevant PDFs if needed; use judgment before converting broad sets, whole collections, folders, or many PDFs\n" +
       "- Cite the document title and section when answering\n";
 
     const sourceList = sources.length > 0
       ? `\n\nThis session has ${sources.length} document(s): ${sources.map(s => `"${s.title}" (${s.status})`).join(", ")}`
-      : "\n\nNo documents added yet. If the user asks about documents, let them know they can add PDFs by dropping them into the chat input.";
+      : "\n\nNo documents added yet. If the user asks about papers or documents, search the Zotero library for candidates before saying there are no documents in the chat.";
 
     const prompt = baseInstructions + toolInstructions + sourceList;
     Zotero.debug(`[ChatPDF] buildAgentSystemPrompt: ${prompt.length} chars, ${sources.length} sources`);
