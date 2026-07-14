@@ -89,6 +89,23 @@ describe("web tools", () => {
     expect(dns.queryInterface).toHaveBeenCalledWith(dns.nsIDNSAddrRecord);
   });
 
+  it("parses DuckDuckGo result markup as plain text", async () => {
+    installPublicDnsMock();
+    const fetchMock = vi.fn(async () => new Response(
+      '<div class="result results_links"><a class="result__a" href="https://example.com/result">ChatPDF <strong>result</strong><img src="x" onerror="alert(1)"></a><a class="result__snippet">A <em>useful</em> snippet.</a></div>',
+      { status: 200, headers: { "content-type": "text/html; charset=utf-8" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await executeTool("web_search", { query: "ChatPDF" }, toolContext());
+
+    expect(result).toContain("ChatPDF result");
+    expect(result).toContain("A useful snippet.");
+    expect(result).toContain("https://example.com/result");
+    expect(result).not.toContain("<strong>");
+    expect(result).not.toContain("onerror");
+  });
+
   it("executes web_fetch and returns cleaned page text", async () => {
     const dns = installPublicDnsMock();
     const fetchMock = vi.fn(async () => new Response(

@@ -1111,8 +1111,8 @@ async function duckDuckGoSearch(query: string, maxResults: number | undefined, s
   let m;
   while ((m = resultPattern.exec(html)) !== null) {
     const rawUrl = m[1].trim();
-    const title = m[2].replace(/<[^>]+>/g, "").trim();
-    const snippet = m[3].replace(/<[^>]+>/g, "").trim();
+    const title = htmlToText(m[2]);
+    const snippet = htmlToText(m[3]);
     results.push({ url: rawUrl, title, snippet });
     if (maxResults !== undefined && results.length >= maxResults) break;
   }
