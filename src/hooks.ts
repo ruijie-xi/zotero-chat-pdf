@@ -1,5 +1,4 @@
 import { config } from "../package.json";
-import { initLocale } from "./utils/locale";
 import { injectChatPanel, removeChatPanel, registerContextMenu, abortCurrentStream } from "./modules/chat-panel";
 
 async function onStartup() {
@@ -8,8 +7,6 @@ async function onStartup() {
     Zotero.unlockPromise,
     Zotero.uiReadyPromise,
   ]);
-
-  initLocale();
 
   try {
     await Zotero.PreferencePanes.register({

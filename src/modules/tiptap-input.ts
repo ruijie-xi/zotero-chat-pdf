@@ -394,7 +394,7 @@ export function createChatInput(
         if (node.isText) {
           result += node.text;
         } else if (node.type.name === "mention") {
-          result += `@${node.attrs.id}`;
+          result += `@${node.attrs.label || node.attrs.id}`;
         } else if (node.type.name === "paragraph" && result.length > 0 && !result.endsWith("\n")) {
           result += "\n";
         }

@@ -1,4 +1,6 @@
 pref("mineruToken", "");
+pref("mineruLanguage", "ch");
+pref("mineruTimeoutMinutes", 15);
 pref("llmApiBase", "https://api.deepseek.com/v1");
 pref("llmApiKey", "");
 pref("llmModel", "deepseek-chat");
@@ -9,5 +11,8 @@ pref("systemPrompt", "");
 pref("modelProfiles", "[]");
 pref("activeProfile", "");
 pref("agentMaxIterations", 10);
+pref("contextMaxChars", 240000);
 pref("enableWebTools", false);
 pref("braveSearchApiKey", "");
+pref("debugLogMode", "metadata");
+pref("debugLogRetentionDays", 7);

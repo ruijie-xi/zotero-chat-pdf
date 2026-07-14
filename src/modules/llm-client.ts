@@ -1,7 +1,10 @@
 import { getPref } from "../utils/prefs";
 
 export interface MessageSource {
+  /** Stable library-qualified identity exposed to agent tools and persisted in history. */
+  id: string;
   key: string;
+  libraryID?: number;
   title: string;
   parentKey?: string;
 }
@@ -32,6 +35,8 @@ export interface ChatMessage {
   toolHistory?: { toolName: string; args: Record<string, unknown>; result: string; durationMs: number }[];
   iterations?: IterationRecord[];
   usage?: TokenUsage;
+  status?: "complete" | "cancelled" | "error";
+  errorMessage?: string;
 }
 
 export interface ToolFunction {
@@ -325,13 +330,13 @@ export async function chatWithTools(
 
   // ---- Non-streaming path ----
   if (!streaming) {
-    const data = await res.json();
+    const data = await res.json() as any;
     const msg = data.choices?.[0]?.message;
     if (!msg) {
       return { content: "" };
     }
 
-    let content: string = msg.content || "";
+    const content: string = msg.content || "";
     const result: ChatResult = {
       content,
       rawMessage: msg,
@@ -500,7 +505,7 @@ export async function chatWithTools(
 
   while (true) {
     if (signal?.aborted) break;
-    const { done, value } = await reader.read();
+    const { done, value } = await (reader as any).read();
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });

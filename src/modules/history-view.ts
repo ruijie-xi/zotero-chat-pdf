@@ -4,30 +4,26 @@ import * as ChatHistory from "./chat-history";
 import * as MDCache from "./md-cache";
 import { ChatSession } from "./chat-session";
 import {
-  session, setSession, showingHistory, setShowingHistory,
-  historyFilterParentKey, historyFilterTitle,
-  setHistoryFilterParentKey, setHistoryFilterTitle,
-  backgroundStreams, chatInput,
-  abortCurrentStream, resetStreamingUI,
-  currentAbortController, setCurrentAbortController,
-  isStreaming, setIsStreaming,
-  setSendButtonToStop,
+  getPanelState, resetStreamingUI, setSendButtonToStop,
 } from "./panel-state";
 import { renderChatHistory, refreshSourceChips, renderLiveStreamState } from "./message-renderer";
 import { autoSaveSession } from "./send-handler";
 
 /** Show history filtered to a specific parent item. Called from context menu. */
 export function showFilteredHistory(parentKey: string, title: string): void {
-  setHistoryFilterParentKey(parentKey);
-  setHistoryFilterTitle(title);
   for (const win of Zotero.getMainWindows()) {
     const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
-    if (root) showHistoryView(root);
+    if (root) {
+      const state = getPanelState(root);
+      state.historyFilterParentKey = parentKey;
+      state.historyFilterTitle = title;
+      showHistoryView(root);
+    }
   }
 }
 
 export function showHistoryView(root: HTMLElement): void {
-  setShowingHistory(true);
+  getPanelState(root).showingHistory = true;
   const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
   const resizeEl = root.querySelector(".chatpdf-resize-handle") as HTMLElement;
   const sourcesEl = root.querySelector("#chatpdf-sources") as HTMLElement;
@@ -46,9 +42,10 @@ export function showHistoryView(root: HTMLElement): void {
 }
 
 export function hideHistoryView(root: HTMLElement): void {
-  setShowingHistory(false);
-  setHistoryFilterParentKey(null);
-  setHistoryFilterTitle(null);
+  const state = getPanelState(root);
+  state.showingHistory = false;
+  state.historyFilterParentKey = null;
+  state.historyFilterTitle = null;
   const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
   const resizeEl = root.querySelector(".chatpdf-resize-handle") as HTMLElement;
   const sourcesEl = root.querySelector("#chatpdf-sources") as HTMLElement;
@@ -67,6 +64,7 @@ export function hideHistoryView(root: HTMLElement): void {
 }
 
 export async function loadHistoryList(root: HTMLElement): Promise<void> {
+  const state = getPanelState(root);
   const listEl = root.querySelector("#chatpdf-history-list");
   if (!listEl) return;
   const doc = root.ownerDocument!;
@@ -76,14 +74,14 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
   const filterBarEl = root.querySelector("#chatpdf-history-filter-bar") as HTMLElement | null;
   if (filterBarEl) {
     filterBarEl.innerHTML = "";
-    if (historyFilterParentKey) {
+    if (state.historyFilterParentKey) {
       filterBarEl.style.display = "";
       filterBarEl.appendChild(h(doc, "span", { className: "chatpdf-history-filter-label" },
-        `Sessions for: ${historyFilterTitle || historyFilterParentKey}`));
+        `Sessions for: ${state.historyFilterTitle || state.historyFilterParentKey}`));
       const clearBtn = h(doc, "button", { className: "chatpdf-history-filter-clear" }, "\u00D7 Clear filter");
       clearBtn.addEventListener("click", () => {
-        setHistoryFilterParentKey(null);
-        setHistoryFilterTitle(null);
+        state.historyFilterParentKey = null;
+        state.historyFilterTitle = null;
         loadHistoryList(root);
       });
       filterBarEl.appendChild(clearBtn);
@@ -94,13 +92,13 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
 
   try {
     let sessions = await ChatHistory.listSessions();
-    if (historyFilterParentKey) {
-      const filterKey = historyFilterParentKey;
+    if (state.historyFilterParentKey) {
+      const filterKey = state.historyFilterParentKey;
       sessions = sessions.filter(s => s.referencedParentKeys?.includes(filterKey));
     }
     if (sessions.length === 0) {
-      const msg = historyFilterParentKey
-        ? `No sessions found for "${historyFilterTitle || historyFilterParentKey}"`
+      const msg = state.historyFilterParentKey
+        ? `No sessions found for "${state.historyFilterTitle || state.historyFilterParentKey}"`
         : "No chat history yet";
       const empty = h(doc, "div", { className: "chatpdf-history-empty" }, msg);
       listEl.appendChild(empty);
@@ -141,9 +139,9 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
           if (newTitle !== meta.title) {
             meta.title = newTitle;
             await ChatHistory.updateSessionTitle(meta.id, newTitle, "user");
-            if (session.id === meta.id) {
-              session.title = newTitle;
-              session.titleSource = "user";
+            if (state.session.id === meta.id) {
+              state.session.title = newTitle;
+              state.session.titleSource = "user";
             }
           }
           titleEl.textContent = newTitle;
@@ -172,37 +170,36 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
 
       // Click to load session
       info.addEventListener("click", async () => {
-        await autoSaveSession();
+        await autoSaveSession(root);
 
         // Check if there's a background stream for this session
-        const bgStream = backgroundStreams.get(meta.id);
+        const bgStream = state.backgroundStreams.get(meta.id);
         if (bgStream) {
           Zotero.debug(`[ChatPDF] Loading session ${meta.id} which has an active background stream`);
-          setSession(bgStream.session);
+          state.session = bgStream.session;
         } else {
           const saved = await ChatHistory.loadSession(meta.id);
           if (!saved) return;
-          setSession(ChatSession.fromSavedSession(saved));
+          state.session = ChatSession.fromSavedSession(saved);
         }
 
         resetStreamingUI(root);
 
         // If this session has an active background stream, restore streaming state
         if (bgStream) {
-          setCurrentAbortController(bgStream.abortController);
-          setIsStreaming(true);
+          state.currentAbortController = bgStream.abortController;
+          state.isStreaming = true;
           const sb = root.querySelector("#chatpdf-send") as HTMLButtonElement;
           if (sb) setSendButtonToStop(sb);
-          if (chatInput) chatInput.setEditable(false);
+          state.chatInput?.setEditable(false);
         }
         // Reload markdown for sources from cache
-        // Re-import session since setSession changed it
-        const currentSession = (await import("./panel-state")).session;
+        const currentSession = state.session;
         for (const source of currentSession.getSources()) {
-          if (source.status !== "ready") {
-            if (await MDCache.has(source.key)) {
-              const md = await MDCache.read(source.key);
-              currentSession.setSourceReady(source.key, md);
+          if (!source.markdown) {
+      if (await MDCache.has(source.cacheKey, source.key)) {
+        const md = await MDCache.read(source.cacheKey, source.key);
+        currentSession.setSourceReady(source.id, md);
             }
           }
         }
@@ -222,6 +219,10 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
       // Delete button
       deleteBtn.addEventListener("click", async (e: Event) => {
         e.stopPropagation();
+        const activeStream = state.backgroundStreams.get(meta.id);
+        activeStream?.abortController.abort();
+        state.backgroundStreams.delete(meta.id);
+        if (state.session.id === meta.id) state.session = new ChatSession();
         await ChatHistory.deleteSession(meta.id);
         loadHistoryList(root);
       });

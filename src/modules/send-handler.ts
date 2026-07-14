@@ -1,7 +1,7 @@
 import { h, scrollToBottomIfNeeded } from "../utils/dom";
 import { formatToolStatus } from "../utils/format";
 import { getPref } from "../utils/prefs";
-import { chatWithTools, StreamCallback, ChatMessage, TokenUsage, IterationRecord } from "./llm-client";
+import { chatWithTools, ChatMessage, TokenUsage, IterationRecord } from "./llm-client";
 import { runAgentLoop, AgentCallbacks } from "./agent-loop";
 import { getToolDefinitions } from "./tools";
 import { renderMarkdown } from "./markdown-renderer";
@@ -9,19 +9,17 @@ import { logLLMRequest, logLLMResponse } from "./debug-log";
 import * as ChatHistory from "./chat-history";
 import { ToolCallRecord } from "./chat-session";
 import {
-  session, setSession, chatInput, isStreaming, setIsStreaming,
-  currentAbortController, setCurrentAbortController,
-  backgroundStreams, StreamState,
+  getPanelState, StreamState,
   abortCurrentStream, createAbortController,
   setSendButtonToStop, setSendButtonToSend,
-  showingHistory,
 } from "./panel-state";
 import { appendMessage, createToolBlock, updateUsageBar, renderChatHistory, appendUsageMeta } from "./message-renderer";
 import { refreshSourceChips, convertSource } from "./source-chips";
 
 /** Auto-save the current session to disk. */
-export async function autoSaveSession(): Promise<void> {
-  if (!session.hasMessages()) return;
+export async function autoSaveSession(root: HTMLElement, force = false): Promise<void> {
+  const { session } = getPanelState(root);
+  if (!force && !session.hasMessages() && session.getSources().length === 0) return;
   try {
     await ChatHistory.saveSession(session.toSavedSession());
   } catch (err: any) {
@@ -30,14 +28,15 @@ export async function autoSaveSession(): Promise<void> {
 }
 
 /** Extract plain text and mention source keys from the TipTap editor. */
-function extractInputContent(_root: HTMLElement): { text: string; sourceKeys: string[] } {
-  if (!chatInput) return { text: "", sourceKeys: [] };
-  return { text: chatInput.getText(), sourceKeys: chatInput.getMentionKeys() };
+function extractInputContent(root: HTMLElement): { text: string; sourceKeys: string[] } {
+  const input = getPanelState(root).chatInput;
+  if (!input) return { text: "", sourceKeys: [] };
+  return { text: input.getText(), sourceKeys: input.getMentionKeys() };
 }
 
 /** Clear the TipTap editor. */
-function clearEditableInput(_root: HTMLElement): void {
-  if (chatInput) chatInput.clear();
+function clearEditableInput(root: HTMLElement): void {
+  getPanelState(root).chatInput?.clear();
 }
 
 /** Get the current model profile name. */
@@ -46,7 +45,7 @@ function getCurrentProfileName(): string {
 }
 
 /** Generate an LLM-based title for a session. */
-async function generateTitle(targetSession: import("./chat-session").ChatSession): Promise<void> {
+async function generateTitle(targetSession: import("./chat-session").ChatSession, root: HTMLElement): Promise<void> {
   if (targetSession.titleSource === "user") return;
   const history = targetSession.getHistory();
   if (history.length < 2) return;
@@ -76,7 +75,7 @@ async function generateTitle(targetSession: import("./chat-session").ChatSession
     await ChatHistory.saveSession(targetSession.toSavedSession());
     Zotero.debug(`[ChatPDF] Generated title: "${title}"`);
 
-    if (showingHistory) {
+    if (getPanelState(root).showingHistory) {
       const { loadHistoryList } = await import("./history-view");
       for (const win of Zotero.getMainWindows()) {
         const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
@@ -90,6 +89,8 @@ async function generateTitle(targetSession: import("./chat-session").ChatSession
 
 /** Convert all pending sources then send -- triggered by Ctrl+Enter. */
 export async function handleConvertAndSend(root: HTMLElement): Promise<void> {
+  const state = getPanelState(root);
+  const { session } = state;
   const pendingSources = session.getSources().filter(s => s.status === "pending");
   if (pendingSources.length === 0) {
     handleSend(root);
@@ -97,15 +98,15 @@ export async function handleConvertAndSend(root: HTMLElement): Promise<void> {
   }
 
   const sendBtn = root.querySelector("#chatpdf-send") as HTMLButtonElement;
-  if (chatInput) chatInput.setEditable(false);
+  state.chatInput?.setEditable(false);
   if (sendBtn) sendBtn.disabled = true;
 
   try {
     await Promise.all(
-      pendingSources.map(s => convertSource(s, () => refreshSourceChips(root)).catch(() => {}))
+      pendingSources.map(s => convertSource(s, () => refreshSourceChips(root), undefined, state).catch(() => {}))
     );
   } finally {
-    if (chatInput) chatInput.setEditable(true);
+    state.chatInput?.setEditable(true);
     if (sendBtn) sendBtn.disabled = false;
   }
 
@@ -114,16 +115,19 @@ export async function handleConvertAndSend(root: HTMLElement): Promise<void> {
 
 /** Main send handler -- builds messages, calls LLM, renders streaming response. */
 export async function handleSend(root: HTMLElement): Promise<void> {
+  const state = getPanelState(root);
   const sendBtn = root.querySelector("#chatpdf-send") as HTMLButtonElement;
-  if (!chatInput || !sendBtn) return;
+  if (!state.chatInput || !sendBtn) return;
 
-  const { text: userText } = extractInputContent(root);
+  const { text: userText, sourceKeys } = extractInputContent(root);
   if (!userText) return;
+
+  const turnScope = state.session.resolveTurnScope(sourceKeys);
 
   Zotero.debug(`[ChatPDF] handleSend: userText="${userText.slice(0, 80)}"`);
 
   // Block sending when any source is pending or converting
-  const notReady = session.getSources().filter((s) => s.status === "pending" || s.status === "converting");
+  const notReady = state.session.getSources().filter((s) => turnScope.has(s.id) && (s.status === "pending" || s.status === "converting"));
   if (notReady.length > 0) {
     const existing = root.querySelector(".chatpdf-send-warning");
     if (existing) existing.remove();
@@ -137,26 +141,25 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     return;
   }
 
-  abortCurrentStream();
+  abortCurrentStream(root);
 
-  const streamSession = session;
+  const streamSession = state.session;
   const streamSessionId = streamSession.id;
 
   clearEditableInput(root);
 
   // Snapshot ready sources at send time
-  const msgSources = streamSession.getSources()
-    .filter(s => s.status === "ready")
-    .map(s => ({ key: s.key, title: s.title, ...(s.parentKey ? { parentKey: s.parentKey } : {}) }));
+  const msgSources = streamSession.snapshotSources(turnScope)
+    .filter((snapshot) => streamSession.getSource(snapshot.id)?.status === "ready");
 
   const userMsgIndex = streamSession.getHistoryLength();
   const userMsgTimestamp = Date.now();
   appendMessage(root, "user", userText, userMsgIndex, undefined, userMsgTimestamp, msgSources);
 
-  chatInput.setEditable(false);
-  setIsStreaming(true);
-  const { controller, signal } = createAbortController();
-  setCurrentAbortController(controller);
+  state.chatInput.setEditable(false);
+  state.isStreaming = true;
+  const { controller, signal } = createAbortController(root.ownerDocument?.defaultView || undefined);
+  state.currentAbortController = controller;
   setSendButtonToStop(sendBtn);
 
   const streamState: StreamState = {
@@ -169,7 +172,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     thinkingStartTime: 0,
     iterations: [],
   };
-  backgroundStreams.set(streamSessionId, streamState);
+  state.backgroundStreams.set(streamSessionId, streamState);
 
   const doc = root.ownerDocument!;
 
@@ -213,13 +216,13 @@ export async function handleSend(root: HTMLElement): Promise<void> {
 
     const win = doc.defaultView!;
 
-    const isActiveSession = () => session === streamSession && row.isConnected;
+    const isActiveSession = () => state.session === streamSession && row.isConnected;
 
     function setBubbleHtml(text: string) {
       try {
         const rendered = renderMarkdown(text);
         if (thinkingDots.parentNode) thinkingDots.remove();
-        bubble.querySelectorAll(".chatpdf-live-content").forEach((node) => node.remove());
+        bubble.querySelectorAll(".chatpdf-live-content").forEach((node: Element) => node.remove());
         const blocks = bubble.querySelectorAll(".chatpdf-iteration-block, .chatpdf-reasoning-block, .chatpdf-tool-block, .chatpdf-tool-status");
         const contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
         contentWrap.className = "chatpdf-live-content";
@@ -236,14 +239,12 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     }
 
     // Agent mode is the only supported chat path.
-      const messages = streamSession.buildAgentMessages(userText);
+      const messages = streamSession.buildAgentMessages(userText, turnScope);
       streamSession.addUserMessage(userText, msgSources);
 
-      ChatHistory.saveSession(streamSession.toSavedSession()).catch((e: any) => {
-        Zotero.debug(`[ChatPDF] early save error: ${e.message}`);
-      });
+      await ChatHistory.saveSession(streamSession.toSavedSession());
 
-      const tools = getToolDefinitions(streamSession);
+      const tools = getToolDefinitions();
       Zotero.debug(`[ChatPDF] handleSend: agent mode, ${tools.length} tools available`);
 
       logLLMRequest(messages, model).catch(() => {});
@@ -422,7 +423,13 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         },
       };
 
-      const agentResult = await runAgentLoop(messages, tools, streamSession, agentCallbacks, signal);
+      const windowId = state.windowId;
+      const requestId = crypto.randomUUID?.() ?? Zotero.Utilities.randomString(24);
+      const agentResult = await runAgentLoop(messages, tools, streamSession, agentCallbacks, signal, {
+        requestId,
+        windowId,
+        turnScope,
+      });
       fullText = agentResult.content;
       fullReasoning = agentResult.reasoning || "";
       agentToolHistory = undefined;
@@ -474,14 +481,14 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     }
 
     if (streamSession.getHistoryLength() === 2 && streamSession.titleSource !== "user") {
-      generateTitle(streamSession).catch(err => Zotero.debug(`[ChatPDF] generateTitle error: ${err.message}`));
+      generateTitle(streamSession, root).catch(err => Zotero.debug(`[ChatPDF] generateTitle error: ${err.message}`));
     }
 
     Zotero.debug(`[ChatPDF] Background stream completed for session ${streamSessionId}, isActive=${isActiveSession()}`);
 
-    if (!isActiveSession() && session.id === streamSessionId) {
+    if (!isActiveSession() && state.session.id === streamSessionId) {
       Zotero.debug(`[ChatPDF] User returned to streaming session — refreshing display`);
-      setSession(streamSession);
+      state.session = streamSession;
       const msgs = root.querySelector("#chatpdf-messages");
       if (msgs) msgs.innerHTML = "";
       renderChatHistory(root);
@@ -490,7 +497,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
   } catch (err: any) {
     Zotero.debug(`[ChatPDF] handleSend error: ${err?.name}: ${err?.message}\n${err?.stack}`);
     if (err.name === "AbortError") {
-      if (session === streamSession) {
+      if (state.session === streamSession) {
         const messagesEl = root.querySelector("#chatpdf-messages");
         const lastBubble = messagesEl?.querySelector(".chatpdf-msg-row-assistant:last-child .chatpdf-message-assistant") as HTMLElement;
         if (lastBubble) {
@@ -500,25 +507,38 @@ export async function handleSend(root: HTMLElement): Promise<void> {
           lastBubble.appendChild(stoppedMarker);
         }
       }
-      if (fullText) {
-        streamSession.addAssistantMessage(fullText, fullReasoning || undefined);
-      }
+      streamSession.addAssistantMessage(
+        fullText || "Generation stopped before any answer was produced.",
+        fullReasoning || undefined,
+        undefined,
+        undefined,
+        agentIterations,
+        agentUsage,
+        "cancelled",
+      );
       try {
         await ChatHistory.saveSession(streamSession.toSavedSession());
       } catch (saveErr: any) {
         Zotero.debug(`[ChatPDF] autoSaveSession error: ${saveErr.message}`);
       }
     } else {
-      if (session === streamSession) {
-        appendMessage(root, "assistant", `Error: ${err.message}`);
+      const errorText = `Error: ${err.message || "Unknown error"}`;
+      if (state.session === streamSession) {
+        appendMessage(root, "assistant", errorText);
+      }
+      streamSession.addAssistantMessage(errorText, fullReasoning || undefined, undefined, undefined, agentIterations, agentUsage, "error", err.message);
+      try {
+        await ChatHistory.saveSession(streamSession.toSavedSession());
+      } catch (saveErr: any) {
+        Zotero.debug(`[ChatPDF] error-terminal save failed: ${saveErr.message}`);
       }
     }
   } finally {
-    backgroundStreams.delete(streamSessionId);
-    setIsStreaming(false);
-    setCurrentAbortController(null);
-    if (session === streamSession) {
-      if (chatInput) { chatInput.setEditable(true); chatInput.focus(); }
+    state.backgroundStreams.delete(streamSessionId);
+    state.isStreaming = false;
+    state.currentAbortController = null;
+    if (state.session === streamSession) {
+      if (state.chatInput) { state.chatInput.setEditable(true); state.chatInput.focus(); }
       setSendButtonToSend(sendBtn);
     }
   }

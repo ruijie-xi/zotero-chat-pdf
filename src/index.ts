@@ -4,7 +4,7 @@ import { config } from "../package.json";
 
 const basicTool = new BasicTool();
 
-if (!basicTool.getGlobal("Zotero")[config.addonInstance]) {
+if (!(basicTool.getGlobal("Zotero") as any)[config.addonInstance]) {
   _globalThis.addon = new Addon();
   defineGlobal("ztoolkit", () => {
     return _globalThis.addon.data.ztoolkit;

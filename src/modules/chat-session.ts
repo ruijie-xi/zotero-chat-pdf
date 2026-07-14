@@ -1,6 +1,7 @@
 import { ChatMessage, MessageSource, IterationRecord, TokenUsage } from "./llm-client";
 import { getPref } from "../utils/prefs";
 import { SavedSession } from "./chat-history";
+import { makeSourceId, parseSourceId, sourceCacheKey } from "./source-identity";
 
 export interface ToolCallRecord {
   toolName: string;
@@ -38,7 +39,10 @@ export const DEFAULT_NO_DOCS_PROMPT_CN =
   "你是一个专业的学术研究助手。用户尚未添加任何PDF文档。请提示他们添加文档以开始对话。始终使用与用户相同的语言回复。";
 
 export interface SourceItem {
+  id: string; // Stable library-qualified source identity
   key: string; // Zotero attachment key
+  libraryID?: number;
+  cacheKey: string;
   title: string; // Paper/item title
   parentKey?: string; // Zotero parent bibliographic item key
   markdown?: string; // Loaded markdown content
@@ -62,47 +66,82 @@ export class ChatSession {
     this.updatedAt = Date.now();
   }
 
-  addSource(key: string, title: string, parentKey?: string): SourceItem {
-    if (this.sources.has(key)) {
-      return this.sources.get(key)!;
+  addSource(key: string, title: string, parentKey?: string, libraryID?: number): SourceItem {
+    const id = makeSourceId(key, libraryID);
+    if (this.sources.has(id)) {
+      return this.sources.get(id)!;
     }
-    const item: SourceItem = { key, title, status: "pending" };
+    const item: SourceItem = {
+      id,
+      key,
+      libraryID,
+      cacheKey: sourceCacheKey({ key, libraryID }),
+      title,
+      status: "pending",
+    };
     if (parentKey) item.parentKey = parentKey;
-    this.sources.set(key, item);
+    this.sources.set(id, item);
     this.updatedAt = Date.now();
     return item;
   }
 
-  removeSource(key: string): void {
-    this.sources.delete(key);
+  removeSource(identifier: string, libraryID?: number): void {
+    const source = this.getSource(identifier, libraryID);
+    if (source) this.sources.delete(source.id);
     this.updatedAt = Date.now();
   }
 
-  getSource(key: string): SourceItem | undefined {
-    return this.sources.get(key);
+  getSource(identifier: string, libraryID?: number): SourceItem | undefined {
+    const parsed = parseSourceId(identifier, libraryID);
+    const exact = this.sources.get(makeSourceId(parsed.key, parsed.libraryID));
+    if (exact) return exact;
+    const matches = this.getSources().filter((source) => source.key === parsed.key);
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   getSources(): SourceItem[] {
     return Array.from(this.sources.values());
   }
 
-  setSourceReady(key: string, markdown: string): void {
-    const item = this.sources.get(key);
+  resolveTurnScope(requestedIds: string[]): Set<string> {
+    const requested = requestedIds
+      .map((identifier) => this.getSource(identifier)?.id)
+      .filter((id): id is string => !!id);
+    return new Set(requested.length > 0 ? requested : this.getSources().map((source) => source.id));
+  }
+
+  snapshotSources(scope: Set<string>): MessageSource[] {
+    return this.getSources()
+      .filter((source) => scope.has(source.id))
+      .map((source) => ({
+        id: source.id,
+        key: source.key,
+        libraryID: source.libraryID,
+        title: source.title,
+        parentKey: source.parentKey,
+      }));
+  }
+
+  setSourceReady(identifier: string, markdown: string): void {
+    const item = this.getSource(identifier);
     if (item) {
       item.markdown = markdown;
       item.status = "ready";
+      item.errorMessage = undefined;
+      this.updatedAt = Date.now();
     }
   }
 
   setSourceStatus(
-    key: string,
+    identifier: string,
     status: SourceItem["status"],
     errorMessage?: string,
   ): void {
-    const item = this.sources.get(key);
+    const item = this.getSource(identifier);
     if (item) {
       item.status = status;
       item.errorMessage = errorMessage;
+      this.updatedAt = Date.now();
     }
   }
 
@@ -124,13 +163,15 @@ export class ChatSession {
     this.updatedAt = Date.now();
   }
 
-  addAssistantMessage(content: string, reasoning?: string, modelLabel?: string, toolHistory?: ToolCallRecord[], iterations?: IterationRecord[], usage?: TokenUsage): void {
+  addAssistantMessage(content: string, reasoning?: string, modelLabel?: string, toolHistory?: ToolCallRecord[], iterations?: IterationRecord[], usage?: TokenUsage, status: ChatMessage["status"] = "complete", errorMessage?: string): void {
     const msg: ChatMessage = { role: "assistant", content, timestamp: Date.now() };
     if (reasoning) msg.reasoning = reasoning;
     if (modelLabel) msg.modelLabel = modelLabel;
     if (toolHistory?.length) msg.toolHistory = toolHistory;
     if (iterations?.length) msg.iterations = iterations;
     if (usage) msg.usage = usage;
+    msg.status = status;
+    if (errorMessage) msg.errorMessage = errorMessage;
     this.history.push(msg);
     this.updatedAt = Date.now();
   }
@@ -143,9 +184,12 @@ export class ChatSession {
   getAllReferencedParentKeys(): string[] {
     const keys = new Set<string>();
 
-    const resolve = (attachmentKey: string): string | undefined => {
+    const resolve = (attachmentKey: string, libraryID?: number): string | undefined => {
       // Look up the Zotero item for this attachment key and return its parent's key.
-      for (const lib of (Zotero as any).Libraries.getAll()) {
+      const libraries = libraryID !== undefined
+        ? [{ libraryID }]
+        : (Zotero as any).Libraries.getAll();
+      for (const lib of libraries) {
         try {
           const att = (Zotero as any).Items.getByLibraryAndKey(lib.libraryID, attachmentKey);
           if (!att) continue;
@@ -160,7 +204,7 @@ export class ChatSession {
       if (s.parentKey) {
         keys.add(s.parentKey);
       } else {
-        const resolved = resolve(s.key);
+        const resolved = resolve(s.key, s.libraryID);
         if (resolved) { s.parentKey = resolved; keys.add(resolved); }
       }
     }
@@ -170,7 +214,7 @@ export class ChatSession {
           if (s.parentKey) {
             keys.add(s.parentKey);
           } else {
-            const resolved = resolve(s.key);
+            const resolved = resolve(s.key, s.libraryID);
             if (resolved) keys.add(resolved);
           }
         }
@@ -181,6 +225,7 @@ export class ChatSession {
 
   clearHistory(): void {
     this.history = [];
+    this.updatedAt = Date.now();
   }
 
   /** Remove all messages from the given index onwards (inclusive). */
@@ -198,6 +243,7 @@ export class ChatSession {
   toSavedSession(): SavedSession {
     const sources = this.getSources();
     return {
+      schemaVersion: 2,
       id: this.id,
       title: this.title,
       titleSource: this.titleSource,
@@ -205,8 +251,18 @@ export class ChatSession {
       sourceTitles: sources.map((s) => s.title),
       sourceParentKeys: sources.map((s) => s.parentKey || ""),
       referencedParentKeys: this.getAllReferencedParentKeys(),
+      sources: sources.map((source) => ({
+        id: source.id,
+        key: source.key,
+        libraryID: source.libraryID,
+        cacheKey: source.cacheKey,
+        title: source.title,
+        parentKey: source.parentKey,
+        status: source.status === "converting" ? "pending" : source.status,
+        errorMessage: source.errorMessage,
+      })),
       messages: this.history.map((m) => {
-        const saved: Record<string, unknown> = { role: m.role, content: m.content };
+        const saved: SavedSession["messages"][number] = { role: m.role, content: m.content };
         if (m.reasoning) saved.reasoning = m.reasoning;
         if (m.timestamp) saved.timestamp = m.timestamp;
         if (m.sources?.length) saved.sources = m.sources;
@@ -214,6 +270,8 @@ export class ChatSession {
         if (m.toolHistory?.length) saved.toolHistory = m.toolHistory;
         if (m.iterations?.length) saved.iterations = m.iterations;
         if (m.usage) saved.usage = m.usage;
+        if (m.status) saved.status = m.status;
+        if (m.errorMessage) saved.errorMessage = m.errorMessage;
         return saved;
       }),
       createdAt: this.createdAt,
@@ -233,7 +291,12 @@ export class ChatSession {
       if (msg.role === "user") {
         const m: ChatMessage = { role: "user", content: msg.content };
         if (msg.timestamp) m.timestamp = msg.timestamp;
-        if (msg.sources?.length) m.sources = msg.sources;
+        if (msg.sources?.length) {
+          m.sources = msg.sources.map((source) => ({
+            ...source,
+            id: source.id || makeSourceId(source.key, source.libraryID),
+          }));
+        }
         session.history.push(m);
       } else if (msg.role === "assistant") {
         const m: ChatMessage = { role: "assistant", content: msg.content };
@@ -249,19 +312,22 @@ export class ChatSession {
           m.iterations = [{ toolCalls: (msg as any).toolHistory }];
         }
         if ((msg as any).usage) m.usage = (msg as any).usage;
+        if (msg.status) m.status = msg.status;
+        if (msg.errorMessage) m.errorMessage = msg.errorMessage;
         session.history.push(m);
       }
     }
 
-    // Restore session-level sources: prefer last user message's sources (most recent working set),
-    // fall back to session-level sourceKeys for backward compat.
-    const lastUserMsg = [...session.history].reverse().find(m => m.role === "user");
-    if (lastUserMsg?.sources?.length) {
-      for (const s of lastUserMsg.sources) {
-        session.addSource(s.key, s.title, s.parentKey);
+    // Session-level sources are authoritative. Per-message sources are immutable
+    // turn snapshots and must never replace the current session working set.
+    if (data.sources?.length) {
+      for (const saved of data.sources) {
+        const source = session.addSource(saved.key, saved.title, saved.parentKey, saved.libraryID);
+        source.status = saved.status === "converting" ? "pending" : saved.status;
+        source.errorMessage = saved.errorMessage;
       }
     } else {
-      for (let i = 0; i < data.sourceKeys.length; i++) {
+      for (let i = 0; i < (data.sourceKeys || []).length; i++) {
         const parentKey = data.sourceParentKeys?.[i] || undefined;
         session.addSource(data.sourceKeys[i], data.sourceTitles[i] || "Untitled", parentKey);
       }
@@ -385,7 +451,7 @@ export class ChatSession {
 
     if (totalRawLen <= docBudget) {
       // Everything fits — include all documents in full
-      for (const { source, rawLen } of docSizes) {
+      for (const { source } of docSizes) {
         source.contextRatio = 1.0;
         prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;
         prompt += source.markdown!;
@@ -441,9 +507,13 @@ export class ChatSession {
     return prompt;
   }
 
-  buildAgentMessages(userMessage: string): ChatMessage[] {
-    const maxChars = Number.POSITIVE_INFINITY;
-    const systemPrompt = this.buildAgentSystemPrompt();
+  buildAgentMessages(userMessage: string, turnScope?: Set<string>): ChatMessage[] {
+    // Full tool outputs remain persisted and visible. Historical requests only
+    // carry compact provenance so earlier multi-megabyte reads do not silently
+    // overwhelm provider context windows.
+    const configuredMax = Number(getPref("contextMaxChars") || 240_000);
+    const maxChars = Number.isFinite(configuredMax) ? Math.max(20_000, configuredMax) : 240_000;
+    const systemPrompt = this.buildAgentSystemPrompt(turnScope);
 
     Zotero.debug(`[ChatPDF] buildAgentMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
 
@@ -452,7 +522,7 @@ export class ChatSession {
         if (msg.role === "system") return null; // skip system messages
         if (msg.role !== "user" && msg.role !== "assistant") return null;
 
-        // For assistant messages with tool history, prepend condensed tool results
+        // Preserve what was called without replaying every historical tool byte.
         let content = msg.content;
         if (msg.role === "assistant" && msg.iterations?.length) {
           const allToolCalls = msg.iterations.flatMap(it => it.toolCalls);
@@ -461,7 +531,7 @@ export class ChatSession {
               const argsStr = Object.keys(tc.args).length > 0
                 ? `(${Object.entries(tc.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`
                 : "";
-              return `- ${tc.toolName}${argsStr}: ${tc.result}`;
+              return `- ${tc.toolName}${argsStr}: ${tc.result.length} characters returned`;
             });
             content = `[Previous tool results:\n${summaryLines.join("\n")}\n]\n\n${content}`;
           }
@@ -480,8 +550,11 @@ export class ChatSession {
     return messages;
   }
 
-  private buildAgentSystemPrompt(): string {
-    const sources = Array.from(this.sources.values());
+  private buildAgentSystemPrompt(turnScope?: Set<string>): string {
+    const allSources = Array.from(this.sources.values());
+    const sources = turnScope
+      ? allSources.filter((source) => turnScope.has(source.id))
+      : allSources;
     const customPrompt = (getPref("systemPrompt") as string) || "";
 
     const baseInstructions = customPrompt ||
@@ -507,7 +580,7 @@ export class ChatSession {
       "- Cite the document title and section when answering\n";
 
     const sourceList = sources.length > 0
-      ? `\n\nThis session has ${sources.length} document(s): ${sources.map(s => `"${s.title}" (${s.status})`).join(", ")}`
+      ? `\n\nThis turn can access ${sources.length} document(s): ${sources.map(s => `"${s.title}" [${s.id}] (${s.status})`).join(", ")}`
       : "\n\nNo documents added yet. If the user asks about papers or documents, search the Zotero library for candidates before saying there are no documents in the chat.";
 
     const prompt = baseInstructions + toolInstructions + sourceList;

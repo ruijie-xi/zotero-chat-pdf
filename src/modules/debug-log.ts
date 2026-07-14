@@ -1,89 +1,73 @@
 import { getCacheDir, ensureDir } from "../utils/cache-dir";
+import { getPref } from "../utils/prefs";
+import { atomicWriteJson } from "../utils/atomic-storage";
 import { ChatMessage } from "./llm-client";
+
+type DebugLogMode = "off" | "metadata" | "full";
 
 function getLogDir(): string {
   return PathUtils.join(getCacheDir(), "debug-logs");
 }
 
-async function ensureLogDir(): Promise<void> {
-  await ensureDir(getLogDir());
+function mode(): DebugLogMode {
+  const configured = String(getPref("debugLogMode") || "metadata");
+  return configured === "off" || configured === "full" ? configured : "metadata";
 }
 
 function timestamp(): string {
-  const d = new Date();
-  return d.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-/** Log the full request sent to the LLM, with truncated document content for readability. */
-export async function logLLMRequest(messages: ChatMessage[], model: string): Promise<void> {
-  try {
-    await ensureLogDir();
-
-    const summary: any[] = messages.map((m) => {
-      const entry: any = { role: m.role, contentLength: m.content.length };
-      if (m.role === "system") {
-        // Truncate document bodies in system prompt for readability
-        const lines = m.content.split("\n");
-        const truncated: string[] = [];
-        let inDoc = false;
-        for (const line of lines) {
-          if (line.startsWith("--- BEGIN DOCUMENT:")) {
-            inDoc = true;
-            truncated.push(line);
-            truncated.push("  [... document content truncated in log ...]");
-          } else if (line.startsWith("--- END DOCUMENT:")) {
-            inDoc = false;
-            truncated.push(line);
-          } else if (!inDoc) {
-            truncated.push(line);
-          }
-        }
-        entry.contentPreview = truncated.join("\n");
-        entry.fullContentLength = m.content.length;
-      } else {
-        entry.content = m.content;
-      }
-      return entry;
-    });
-
-    const logData = {
-      timestamp: new Date().toISOString(),
-      model,
-      messageCount: messages.length,
-      totalChars: messages.reduce((sum, m) => sum + m.content.length, 0),
-      messages: summary,
-    };
-
-    const filename = `req-${timestamp()}.json`;
-    const path = PathUtils.join(getLogDir(), filename);
-    const encoder = new TextEncoder();
-    await IOUtils.write(path, encoder.encode(JSON.stringify(logData, null, 2)));
-    Zotero.debug(`[ChatPDF] Debug log saved: ${path}`);
-  } catch (err: any) {
-    Zotero.debug(`[ChatPDF] Failed to write debug log: ${err.message}`);
+async function prepareLogDir(): Promise<void> {
+  await ensureDir(getLogDir());
+  const retentionDays = Math.max(1, Number(getPref("debugLogRetentionDays") || 7));
+  const cutoff = Date.now() - retentionDays * 86_400_000;
+  const children = await (IOUtils as any).getChildren?.(getLogDir()) || [];
+  for (const path of children as string[]) {
+    if (!/\b(?:req|res)-.*\.json$/i.test(path)) continue;
+    try {
+      const stat = await IOUtils.stat(path);
+      if (Number((stat as any).lastModified || 0) < cutoff) await IOUtils.remove(path);
+    } catch { /* best-effort retention cleanup */ }
   }
 }
 
-/** Log the full LLM response. */
-export async function logLLMResponse(response: string, reasoning?: string): Promise<void> {
+export async function logLLMRequest(messages: ChatMessage[], model: string): Promise<void> {
+  const logMode = mode();
+  if (logMode === "off") return;
   try {
-    await ensureLogDir();
-
-    const logData: any = {
+    await prepareLogDir();
+    const entries = messages.map((message) => ({
+      role: message.role,
+      contentLength: message.content.length,
+      ...(logMode === "full" ? { content: message.content } : {}),
+    }));
+    await atomicWriteJson(PathUtils.join(getLogDir(), `req-${timestamp()}.json`), {
       timestamp: new Date().toISOString(),
-      responseLength: response.length,
-      response,
-    };
-    if (reasoning) {
-      logData.reasoningLength = reasoning.length;
-      logData.reasoning = reasoning;
-    }
+      mode: logMode,
+      model,
+      messageCount: messages.length,
+      totalChars: messages.reduce((sum, message) => sum + message.content.length, 0),
+      messages: entries,
+    });
+  } catch (error: any) {
+    Zotero.debug(`[ChatPDF] Failed to write request debug log: ${error.message}`);
+  }
+}
 
-    const filename = `res-${timestamp()}.json`;
-    const path = PathUtils.join(getLogDir(), filename);
-    const encoder = new TextEncoder();
-    await IOUtils.write(path, encoder.encode(JSON.stringify(logData, null, 2)));
-  } catch (err: any) {
-    Zotero.debug(`[ChatPDF] Failed to write response log: ${err.message}`);
+export async function logLLMResponse(response: string, reasoning?: string): Promise<void> {
+  const logMode = mode();
+  if (logMode === "off") return;
+  try {
+    await prepareLogDir();
+    await atomicWriteJson(PathUtils.join(getLogDir(), `res-${timestamp()}.json`), {
+      timestamp: new Date().toISOString(),
+      mode: logMode,
+      responseLength: response.length,
+      reasoningLength: reasoning?.length || 0,
+      ...(logMode === "full" ? { response, reasoning } : {}),
+    });
+  } catch (error: any) {
+    Zotero.debug(`[ChatPDF] Failed to write response debug log: ${error.message}`);
   }
 }

@@ -1,6 +1,41 @@
 # Changelog
 
+[简体中文](CHANGELOG.zh-CN.md)
+
 ## Unreleased
+
+### Fixed
+
+- Read Firefox DNS callback results through `nsIDNSAddrRecord`, restoring `web_search` and `web_fetch` in Zotero 7 while retaining private-network validation.
+
+### Security
+
+- Replace regex-only Markdown cleanup with a DOM tag/attribute allowlist and regression tests for dangerous elements, event handlers, URL schemes, SVG, and privileged local images.
+- Route web tools through a safe HTTP client that blocks local/private/reserved targets, revalidates redirects, checks DNS and MIME, enforces timeouts, and streams bounded responses.
+- Default LLM debug logs to metadata-only mode, with explicit off/full options and retention cleanup.
+- Update vulnerable transitive dependencies through reviewed package overrides; the production and development dependency audit now reports no known vulnerabilities.
+
+### Changed
+
+- Introduce library-qualified `libraryID:key` source identities, cache keys, and Zotero tool parameters while keeping legacy caches readable.
+- Define per-turn source scope from editor mentions; turns without mentions use all session sources, and only in-scope pending conversions block sending.
+- Propagate request cancellation through the LLM client, tools, web requests, MinerU polling/download/extraction, session mutations, and UI callbacks.
+- Run read-only tool batches concurrently and all batches containing mutations serially in model order.
+- Preserve complete current tool output and add explicit size/token estimates, while compacting old tool bodies into provenance records for later prompts.
+- Add a configurable `contextMaxChars` budget that fails explicitly before provider submission.
+- Replace module-global panel state with per-Zotero-window state and deterministic editor/listener/stream cleanup.
+- Make session, history-index, document, chunk, and manifest writes serialized and atomic; rebuild missing/corrupt indexes and prevent deleted sessions from being resurrected by late background saves.
+- Persist failed and cancelled assistant terminal states, and persist cleared or source-only sessions.
+- Add configurable MinerU language and timeout settings with accurate stage-specific errors.
+- Improve narrow-pane behavior with container queries, wrapping controls, and scrollable expanded tool results.
+
+### Developer Experience
+
+- Add TypeScript, ESLint, Vitest, CI, and the unified `npm run verify` command.
+- Add regression tests for source identity/TurnScope, safe web access, Markdown sanitization, session restoration, and context budgeting.
+- Rewrite the README as a concise user guide and maintain the contributor guide, LLM workflow, and changelog in matching English and Simplified Chinese versions.
+- Add a real Zotero screenshot and clarify the project's personal-use scope and AI-assisted customization path.
+- Remove obsolete Claude-specific files, roadmap/review artifacts, unused legacy code and exports, localization scaffolding, and template icons.
 
 ## 0.8.0
 

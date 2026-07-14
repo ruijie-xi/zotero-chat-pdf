@@ -1,16 +1,12 @@
 import { config } from "../../package.json";
 import { ChatSession, SourceItem } from "./chat-session";
-import { createChatInput, ChatInputEditor } from "./tiptap-input";
+import { createChatInput } from "./tiptap-input";
 import { getPref, setPref } from "../utils/prefs";
 import { h, XUL_NS } from "../utils/dom";
 import {
-  session, setSession, showingHistory, setShowingHistory,
-  chatInput, setChatInput,
-  isStreaming,
-  conversionAbortControllers,
+  createPanelState, getPanelState, destroyPanelState,
   abortCurrentStream, resetStreamingUI,
-  ModelProfile, copyHandler, setCopyHandler,
-  activePollIntervals,
+  ModelProfile,
 } from "./panel-state";
 import { showFilteredHistory, showHistoryView, hideHistoryView } from "./history-view";
 import { refreshSourceChips, convertSource } from "./source-chips";
@@ -67,14 +63,13 @@ function refreshProfileSelect(root: HTMLElement): void {
 
 // ---- Session management ----
 
-export async function addItemToSession(item: Zotero.Item): Promise<void> {
-  await addZoteroItemToSession(item, session);
+export async function addItemToSession(item: Zotero.Item, target: Window | HTMLElement): Promise<void> {
+  await addZoteroItemToSession(item, getPanelState(target).session);
 }
 
 /** Insert an inline mention chip into the TipTap editor. */
-function insertInputChip(source: SourceItem, _doc: Document, _root: HTMLElement): void {
-  if (!chatInput) return;
-  chatInput.insertMention({ key: source.key, title: source.title });
+function insertInputChip(source: SourceItem, _doc: Document, root: HTMLElement): void {
+  getPanelState(root).chatInput?.insertMention({ key: source.id, title: source.title });
 }
 
 // ---- Side panel injection ----
@@ -97,25 +92,27 @@ export function injectChatPanel(win: Window): void {
     return;
   }
 
+  const state = createPanelState(win);
+
   // --- Inject CSS ---
   const katexLink = doc.createElementNS("http://www.w3.org/1999/xhtml", "link") as HTMLLinkElement;
   katexLink.rel = "stylesheet";
   katexLink.href = `chrome://${config.addonRef}/content/katex.css`;
   katexLink.id = "chatpdf-katex-css";
-  doc.documentElement.appendChild(katexLink);
+  doc.documentElement?.appendChild(katexLink);
 
   const cssLink = doc.createElementNS("http://www.w3.org/1999/xhtml", "link") as HTMLLinkElement;
   cssLink.rel = "stylesheet";
   cssLink.href = `chrome://${config.addonRef}/content/chatpdf.css`;
   cssLink.id = "chatpdf-main-css";
-  doc.documentElement.appendChild(cssLink);
+  doc.documentElement?.appendChild(cssLink);
 
-  const splitter = doc.createElementNS(XUL_NS, "splitter");
+  const splitter = doc.createElementNS(XUL_NS, "splitter") as HTMLElement;
   splitter.id = "chatpdf-splitter";
   splitter.setAttribute("resizebefore", "closest");
   splitter.setAttribute("resizeafter", "closest");
 
-  const vbox = doc.createElementNS(XUL_NS, "vbox");
+  const vbox = doc.createElementNS(XUL_NS, "vbox") as HTMLElement;
   vbox.id = "chatpdf-panel-container";
   vbox.setAttribute("width", "350");
   vbox.setAttribute("flex", "0");
@@ -123,6 +120,7 @@ export function injectChatPanel(win: Window): void {
 
   const root = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
   root.id = "chatpdf-root";
+  root.dataset.chatpdfWindowId = state.windowId;
   vbox.appendChild(root);
 
   // --- Create minimized bar (hidden by default) ---
@@ -171,31 +169,38 @@ export function injectChatPanel(win: Window): void {
 /** Remove injected panel elements from a window. */
 export function removeChatPanel(win: Window): void {
   const doc = win.document;
+  const state = getPanelState(win);
+  const root = doc.querySelector("#chatpdf-root") as HTMLElement | null;
+  if (root) autoSaveSession(root).catch((error: any) => Zotero.debug(`[ChatPDF] unload save failed: ${error.message}`));
 
   // Clean up copy handler
-  if (copyHandler) {
-    doc.removeEventListener("copy", copyHandler);
-    setCopyHandler(null);
+  if (state.copyHandler) {
+    doc.removeEventListener("copy", state.copyHandler);
+    state.copyHandler = null;
   }
 
   // Clean up poll intervals
-  for (const id of activePollIntervals) {
+  for (const id of state.activePollIntervals) {
     win.clearInterval(id);
   }
-  activePollIntervals.clear();
+  state.activePollIntervals.clear();
+  state.chatInput?.destroy();
+  state.chatInput = null;
 
   doc.getElementById("chatpdf-panel-container")?.remove();
   doc.getElementById("chatpdf-splitter")?.remove();
   doc.getElementById("chatpdf-katex-css")?.remove();
   doc.getElementById("chatpdf-main-css")?.remove();
+  destroyPanelState(win);
 }
 
 // ---- UI Building ----
 
 function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   const doc = root.ownerDocument!;
+  const state = getPanelState(root);
   root.innerHTML = "";
-  setShowingHistory(false);
+  state.showingHistory = false;
 
   // 0. Title bar with minimize button
   const titleBar = h(doc, "div", { className: "chatpdf-title-bar" });
@@ -239,7 +244,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
     }
   };
   doc.addEventListener("copy", handler);
-  setCopyHandler(handler);
+  state.copyHandler = handler;
 
   root.appendChild(messagesArea);
 
@@ -306,18 +311,18 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   const inputWrapper = h(doc, "div", { className: "chatpdf-input-wrapper" });
 
   try {
-    setChatInput(createChatInput(
+    state.chatInput = createChatInput(
       doc,
-      () => { if (!isStreaming) handleSend(root); },
-      () => { if (!isStreaming) handleConvertAndSend(root); },
-    ));
+      () => { if (!state.isStreaming) handleSend(root); },
+      () => { if (!state.isStreaming) handleConvertAndSend(root); },
+    );
   } catch (err: any) {
     Zotero.debug(`[ChatPDF] TipTap creation FAILED: ${err.message}\n${err.stack}`);
   }
 
   const sendBtn = h(doc, "button", { className: "chatpdf-send-btn", id: "chatpdf-send", title: "Send" }, "\u2191");
 
-  if (chatInput) inputWrapper.appendChild(chatInput.element);
+  if (state.chatInput) inputWrapper.appendChild(state.chatInput.element);
   inputWrapper.appendChild(sendBtn);
   inputArea.appendChild(inputWrapper);
 
@@ -355,8 +360,9 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
     }
 
     async function handleDroppedItem(item: Zotero.Item) {
-      await addItemToSession(item);
-      const src = session.getSource(getPdfAttachment(item)?.key || "");
+      await addItemToSession(item, root);
+      const pdf = getPdfAttachment(item);
+      const src = state.session.getSource(pdf?.key || "", Number((pdf as any)?.libraryID) || undefined);
       if (src) insertInputChip(src, doc, root);
       refreshSourceChips(root);
     }
@@ -437,16 +443,17 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   // ---- Event handlers ----
 
   sendBtn.addEventListener("click", () => {
-    if (isStreaming) {
-      abortCurrentStream();
+    if (state.isStreaming) {
+      abortCurrentStream(root);
     } else {
       handleSend(root);
     }
   });
 
-  clearLink.addEventListener("click", () => {
-    abortCurrentStream();
-    session.clearHistory();
+  clearLink.addEventListener("click", async () => {
+    abortCurrentStream(root);
+    state.session.clearHistory();
+    await autoSaveSession(root, true);
     const msgs = root.querySelector("#chatpdf-messages");
     if (msgs) {
       msgs.innerHTML = "";
@@ -455,13 +462,13 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   });
 
   convertAllLink.addEventListener("click", () => {
-    for (const s of session.getSources().filter((s) => s.status === "pending")) {
-      convertSource(s, () => refreshSourceChips(root)).catch(() => {});
+    for (const s of state.session.getSources().filter((s) => s.status === "pending")) {
+      convertSource(s, () => refreshSourceChips(root), undefined, state).catch(() => {});
     }
   });
 
   historyBtn.addEventListener("click", () => {
-    if (showingHistory) {
+    if (state.showingHistory) {
       hideHistoryView(root);
     } else {
       showHistoryView(root);
@@ -469,9 +476,9 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   });
 
   const handleNewChat = async () => {
-    abortCurrentStream();
-    await autoSaveSession();
-    setSession(new ChatSession());
+    abortCurrentStream(root);
+    await autoSaveSession(root);
+    state.session = new ChatSession();
     resetStreamingUI(root);
     hideHistoryView(root);
     const msgs = root.querySelector("#chatpdf-messages");
@@ -515,19 +522,19 @@ export function registerContextMenu(): void {
         menuType: "menuitem",
         l10nID: "chatpdf-menuitem-addtochatpdf",
         onCommand: async (_event: Event, context: _ZoteroTypes.MenuManager.LibraryMenuContext) => {
+          const win = Zotero.getMainWindow() as Window;
+          const root = win?.document?.querySelector("#chatpdf-root") as HTMLElement | null;
+          if (!root) return;
           for (const item of context.items ?? []) {
-            await addItemToSession(item);
+            await addItemToSession(item, root);
           }
-          for (const win of Zotero.getMainWindows()) {
-            const root = (win as any).document?.querySelector("#chatpdf-root") as HTMLElement | null;
-            if (!root) continue;
-            refreshSourceChips(root);
-            for (const item of context.items ?? []) {
-              const pdf = getPdfAttachment(item);
-              if (!pdf) continue;
-              const src = session.getSource(pdf.key);
-              if (src) insertInputChip(src, root.ownerDocument!, root);
-            }
+          refreshSourceChips(root);
+          const state = getPanelState(root);
+          for (const item of context.items ?? []) {
+            const pdf = getPdfAttachment(item);
+            if (!pdf) continue;
+            const src = state.session.getSource(pdf.key, Number((pdf as any).libraryID) || undefined);
+            if (src) insertInputChip(src, root.ownerDocument!, root);
           }
         },
       },
@@ -545,8 +552,3 @@ export function registerContextMenu(): void {
     ],
   });
 }
-
-// ---- Exports ----
-
-export function getSession(): ChatSession { return session; }
-export function resetSession(): void { setSession(new ChatSession()); }

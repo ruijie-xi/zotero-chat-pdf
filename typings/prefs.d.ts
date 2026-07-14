@@ -8,6 +8,8 @@ declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
       "mineruToken": string;
+      "mineruLanguage": string;
+      "mineruTimeoutMinutes": number;
       "llmApiBase": string;
       "llmApiKey": string;
       "llmModel": string;
@@ -18,8 +20,11 @@ declare namespace _ZoteroTypes {
       "modelProfiles": string;
       "activeProfile": string;
       "agentMaxIterations": number;
+      "contextMaxChars": number;
       "enableWebTools": boolean;
       "braveSearchApiKey": string;
+      "debugLogMode": string;
+      "debugLogRetentionDays": number;
     };
   }
 }

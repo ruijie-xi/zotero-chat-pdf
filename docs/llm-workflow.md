@@ -1,328 +1,197 @@
-# ChatPDF LLM Workflow — Developer Reference
+# ChatPDF LLM and Tool Workflow
 
-## Architecture Overview
+[简体中文](llm-workflow.zh-CN.md)
 
-```
-User types message
-       │
-       ▼
-  chat-panel.ts          (UI layer — captures input, renders streaming output)
-       │
-       ▼
-  chat-session.ts        (Session layer — builds the message array with system prompt)
-       │
-       ▼
-  llm-client.ts          (API layer — sends OpenAI-compatible HTTP request, handles SSE streaming)
-       │
-       ▼
-  OpenAI-compatible API  (default: DeepSeek)
-```
+This document describes the agent-only workflow in the `0.8.0` working tree after the 2026-07-14 architecture remediation.
 
-There are two separate external APIs used by the plugin:
-- **MinerU API** (`mineru-client.ts`) — converts PDF files to Markdown text
-- **LLM API** (`llm-client.ts`) — chat completion using the converted Markdown as context
+## Runtime Boundary
 
----
+ChatPDF runs in Zotero's privileged Firefox chrome context, not Node.js.
 
-## Step-by-Step Workflow
+- UI nodes must be valid XHTML or XUL.
+- Local I/O uses `IOUtils` and `PathUtils`.
+- Network calls use the runtime `fetch` implementation and Zotero-specific fallbacks already present in the code.
+- Runtime modules must not assume Node globals or packages are available.
+- MinerU and the configured OpenAI-compatible LLM provider are independent external services.
 
-### 1. PDF → Markdown Conversion (before any chat happens)
+## Main Components
 
-When a source paper is added and the user clicks "Convert" (or "Convert all"):
+| Component | Responsibility |
+| --- | --- |
+| `hooks.ts` | Add-on startup/shutdown, preferences, menu registration, and window injection |
+| `chat-panel.ts` | Side-panel DOM, toolbar, resizing, drag/drop, and session/source coordination |
+| `panel-state.ts` | One `PanelState` per Zotero window: session, editor, streams, abort controllers, polling, and listeners |
+| `send-handler.ts` | Turn scoping, send lifecycle, streaming UI, terminal states, autosave, and title generation |
+| `agent-loop.ts` | LLM/tool iterations, safe tool scheduling, callbacks, and usage accumulation |
+| `llm-client.ts` | OpenAI-compatible request construction, SSE parsing, tool fragments, and provider thinking fields |
+| `tools.ts` | Tool schemas, risk metadata, validation, dispatch, and result accounting |
+| `safe-web-client.ts` | Public HTTP(S) validation, redirect checks, timeout, MIME, and streamed byte limits |
+| `chat-session.ts` | Session library, TurnScope messages, prompt construction, history, and schema-v2 serialization |
+| `chat-history.ts` | Atomic session/index repository, index recovery, and deletion tombstones |
+| `source-identity.ts` | Stable library-qualified source IDs and cache keys |
+| `source-chips.ts` | Source UI, user-owned conversion lifecycle, stop, removal, and lazy cache loading |
+| `mineru-client.ts` | PDF chunk planning, upload, polling, ZIP download/extraction, progress, and stage errors |
+| `md-cache.ts` | Atomic document/chunk/manifest storage and legacy cache reads |
+| `markdown-renderer.ts` | Markdown/KaTeX rendering, XHTML conversion, and DOM allowlist sanitization |
+| `debug-log.ts` | Metadata/off/full debug logging and retention cleanup |
 
-1. `chat-panel.ts:convertSource()` is called
-2. It reads the PDF file from disk via `IOUtils.read(pdfPath)`
-3. It calls `mineru-client.ts:convertPdf()` which:
-   - **Uploads** the PDF to MinerU's cloud API (`PUT` to a presigned URL)
-   - **Polls** `GET /api/v4/extract-results/batch/{batch_id}` every 3 seconds (timeout: 6 min)
-   - **Downloads** the result ZIP when state is `"done"`
-   - **Extracts** the `.md` file from the ZIP using `nsIZipReader`
-4. The resulting Markdown string is cached locally via `md-cache.ts` at `~/.chatpdf-cache/{attachmentKey}.md`
-5. The source's status becomes `"ready"` and its `.markdown` field is populated
+## Source Model
 
-**Result:** Each PDF source becomes a plain Markdown string stored in `session.sources`.
+Every source has a stable ID:
 
-### 2. User Sends a Message
-
-When the user presses Enter or clicks Send, `chat-panel.ts:handleSend()` runs:
-
-```
-handleSend(root)
-  ├── 1. Read and clear the textarea
-  ├── 2. Append user message bubble to the UI
-  ├── 3. session.buildMessages(userText)     ← builds the full message array
-  ├── 4. session.addUserMessage(userText)     ← adds to history AFTER building
-  ├── 5. Create assistant bubble with thinking animation
-  ├── 6. llmChat(messages, streamCallback)   ← calls the LLM API
-  ├── 7. Stream chunks into the bubble (80ms throttle)
-  ├── 8. session.addAssistantMessage(fullResponse)
-  ├── 9. refreshSourceChips()                ← update context usage indicators
-  └── 10. autoSaveSession()                  ← persist to disk
+```text
+<libraryID>:<attachmentKey>
 ```
 
-**Important ordering:** `buildMessages()` is called BEFORE `addUserMessage()`. This is because `buildMessages()` includes the current user message in its output. If we added to history first, the message would appear twice (once from history, once as the new message).
+Legacy bare attachment keys are accepted only when they resolve uniquely. Cache directories use a filesystem-safe derivative of the stable ID. Old root-level and bare-key caches remain readable.
 
-### 3. Message Array Construction — `session.buildMessages(userMessage)`
+There are two distinct source sets:
 
-This is the core of how context is assembled for the LLM. It returns a `ChatMessage[]` array.
+- **SessionLibrary**: all sources currently attached to the chat session.
+- **TurnScope**: the sources authorized for one user turn.
 
-#### 3a. System Prompt (`buildSystemPrompt()`)
+The editor returns both visible text and mention IDs. If the user includes source mentions, those IDs become the TurnScope. If no mentions are present, TurnScope defaults to the full SessionLibrary. Pending/converting guards apply only to the active TurnScope.
 
-The system prompt is always the **first message** in the array (role: `"system"`).
+The user message persists a source snapshot for historical display. Reloading a session restores SessionLibrary from the serialized session source list, never from the last message snapshot.
 
-**If no sources are ready (no PDFs converted):**
-```
-You are a helpful research assistant. The user has not added any PDF documents yet.
-Ask them to add documents to chat about. Always reply in the same language the user uses.
-```
+## Send Lifecycle
 
-**If sources are ready (one or more PDFs converted):**
-```
-You are a helpful research assistant. Answer questions based on the following document(s).
-Cite specific sections when possible. If the answer is not in the documents, say so.
+`handleSend(root)` performs this sequence:
 
-IMPORTANT formatting rules:
-- Always reply in the same language the user uses. If the user writes in Chinese, reply in Chinese. If in English, reply in English.
-- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).
-- For mathematical expressions, use LaTeX syntax with dollar sign delimiters: $...$ for inline math and $$...$$ for display math.
-  For example: The equation $E = mc^2$ or a display formula:
-  $$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$
+1. Resolve the window-owned `PanelState` and extract editor text plus source mentions.
+2. Reject empty input and resolve TurnScope.
+3. Reject only pending/converting sources required by that TurnScope.
+4. Create a request ID and one `AbortController` owned by this send.
+5. Build provider messages before appending the current user message, preventing duplication.
+6. Save the user message with its TurnScope snapshot and persist immediately.
+7. Register a background stream record and switch Send to Stop.
+8. Run the agent loop with `ToolExecutionContext` containing session, TurnScope, signal, request ID, and window ID.
+9. Stream reasoning, tool iterations, answer text, and usage to the active UI when that session remains visible.
+10. Persist a completed, failed, or cancelled assistant terminal message.
+11. Optionally generate the first-session title in a separate background call.
+12. Restore controls and release stream ownership.
 
---- BEGIN DOCUMENT: {Paper Title 1} ---
-{Markdown content of paper 1 — possibly truncated}
---- END DOCUMENT: {Paper Title 1} ---
+Switching sessions does not cancel a background response. Closing a window or disabling the add-on aborts work owned by that window and destroys its TipTap editor and listeners.
 
---- BEGIN DOCUMENT: {Paper Title 2} ---
-{Markdown content of paper 2 — possibly truncated}
---- END DOCUMENT: {Paper Title 2} ---
-```
+## Prompt Construction and Context Budget
 
-**Document truncation (`maxDocumentChars` budget):**
+The provider message order is:
 
-The `buildSystemPrompt()` method enforces a character budget for document content:
-
-1. `docBudget = maxDocumentChars - instructionText.length`
-2. Delimiter overhead (BEGIN/END markers) is subtracted from the budget
-3. The remaining content budget is distributed **proportionally** across sources by their raw markdown length
-4. Documents that fit within their allocation are included in full (`contextRatio = 1.0`)
-5. Documents that exceed their allocation are truncated with a marker:
-   `[... content truncated (X% of original included) ...]`
-6. Each source's `contextRatio` field (0–1) is set, and the UI displays this
-
-**Key points about the system prompt:**
-- All document content is embedded directly in the system prompt as plain text
-- Documents are wrapped with `--- BEGIN DOCUMENT: {title} ---` / `--- END DOCUMENT: {title} ---` delimiters
-- Only sources with `status === "ready"` AND a non-empty `.markdown` field are included
-- The prompt instructs the LLM to respond in the user's language and use Markdown + LaTeX formatting
-- Large documents are truncated to fit within `maxDocumentChars` rather than silently omitted
-
-#### 3b. Conversation History (context window management)
-
-After the system prompt, the method adds conversation history + the new user message:
-
-```typescript
-const allUserMessages = [...this.history, { role: "user", content: userMessage }];
-let totalChars = systemPrompt.length;
-
-// Work backwards to keep most recent messages
-const recentMessages: ChatMessage[] = [];
-for (let i = allUserMessages.length - 1; i >= 0; i--) {
-  const msg = allUserMessages[i];
-  if (totalChars + msg.content.length > maxChars) {
-    break;
-  }
-  totalChars += msg.content.length;
-  recentMessages.unshift(msg);
-}
+```text
+system instructions
+prior user/assistant history
+current user message
 ```
 
-**How the truncation works:**
-1. Start with `totalChars = systemPrompt.length` (already capped by `maxDocumentChars`)
-2. Iterate through all messages **from newest to oldest**
-3. Keep adding messages as long as `totalChars` stays under `maxDocumentChars` (default: 300,000)
-4. Once a message would exceed the limit, **stop** — all older messages are dropped
-5. The kept messages are re-ordered chronologically
+Converted PDFs are not embedded into the system prompt. The model reads them through tools.
 
-**This means:**
-- The system prompt (with truncated documents) is always included and counts toward the limit
-- The most recent messages are always preserved
-- Older conversation turns are silently dropped when the context gets too long
-- Document truncation ensures there is always room for conversation history
+The system prompt lists only the active TurnScope and teaches the model the available document/Zotero/web workflow. Current tool results are returned in full and persisted in the assistant iteration record. When an old assistant iteration is replayed in a later prompt, its full tool body is replaced by a provenance record containing the tool name, result size, and stable request/call identity. This avoids hidden result truncation while preventing indefinite prompt amplification.
 
-#### 3c. Final Message Array Structure
+`contextMaxChars` defaults to 240,000. Prompt construction fails locally with an explicit size error if the total would exceed the budget.
 
-```
-[
-  { role: "system",    content: "<system prompt with documents (possibly truncated)>" },
-  { role: "user",      content: "<older user message (if fits)>" },
-  { role: "assistant", content: "<older assistant reply (if fits)>" },
-  ...
-  { role: "user",      content: "<current user message>" }
-]
-```
+## Agent Loop and Tool Scheduling
 
-### 4. LLM API Call — `llm-client.ts:chat()`
+`runAgentLoop()` reads `agentMaxIterations`, calls the model, and repeats until it receives final text or reaches the iteration cap.
 
-#### Configuration (from plugin preferences)
+For each tool-call batch:
 
-| Preference        | Default                         | Description                          |
-|-------------------|---------------------------------|--------------------------------------|
-| `llmApiBase`      | `https://api.deepseek.com/v1`  | Base URL of the API                  |
-| `llmApiKey`       | (empty — required)              | Bearer token                         |
-| `llmModel`        | `deepseek-chat`                 | Model identifier                     |
-| `maxDocumentChars`| `300000`                        | Max chars for documents + context    |
+- arguments are parsed and validated;
+- tool metadata identifies read-only, session-mutating, network, and costly operations;
+- an all-read-only batch may execute concurrently;
+- any batch containing a mutation executes every call serially in model order;
+- result messages are appended in original call order;
+- abort errors leave the tool layer and terminate the turn instead of becoming model-visible error strings.
 
-#### HTTP Request
+Provider replay preserves DeepSeek `reasoning_content` and Gemini thought-signature fields when present.
 
-```
-POST {llmApiBase}/chat/completions
-Headers:
-  Content-Type: application/json
-  Authorization: Bearer {llmApiKey}
+## Tool Families
 
-Body:
-{
-  "model": "{llmModel}",
-  "messages": [ ...the message array from buildMessages()... ],
-  "stream": true
-}
-```
+### Document Tools
 
-**Notes:**
-- The endpoint is always `/chat/completions` (OpenAI-compatible format)
-- Trailing slashes on `llmApiBase` are stripped
-- Streaming is enabled whenever a `StreamCallback` is provided (always true in the UI flow)
-- **No other parameters** are sent — no `temperature`, `max_tokens`, `top_p`, etc. The model's defaults are used
+- `list_sources`
+- `read_document`
+- `list_document_chunks`
+- `read_document_chunk`
+- `search_document`
 
-#### Streaming (SSE)
+These tools accept stable source IDs and refuse sources outside TurnScope. Full-document reads and searches expose exact character counts and rough token estimates.
 
-When `stream: true`, the API returns Server-Sent Events:
+### Zotero Tools
 
-```
-data: {"choices":[{"delta":{"content":"Hello"}}]}
-data: {"choices":[{"delta":{"content":" world"}}]}
-data: [DONE]
-```
+- `search_zotero_library`
+- `get_zotero_item`
+- `list_zotero_collections`
+- `list_collection_items`
+- `get_current_zotero_selection`
+- `add_zotero_item_to_session`
+- `convert_session_source`
+- `add_and_convert_zotero_item`
 
-The client:
-1. Reads the response body as a stream via `res.body.getReader()`
-2. Decodes chunks with `TextDecoder` using `{ stream: true }` for multi-byte safety
-3. Splits on newlines, processes `data: ` prefixed lines
-4. Extracts `choices[0].delta.content` from each JSON chunk
-5. Calls `onStream(content, false)` for each chunk
-6. Calls `onStream("", true)` when `[DONE]` is received
-7. Returns the full accumulated text
+Lookup schemas support `library_id`. List/search tools do not silently impose hidden result caps; optional caller limits remain explicit.
 
-**Non-streaming fallback:** If no callback is provided, a regular JSON response is read and `choices[0].message.content` is returned. (This path is not currently used by the UI.)
+### Web Tools
 
-### 5. Streaming Render — back in `chat-panel.ts`
+When enabled, `web_search` uses Brave if configured and otherwise the DuckDuckGo HTML fallback. `web_fetch` goes through `SafeWebClient`:
 
-The stream callback in `handleSend()` throttles rendering to every 80ms:
+1. only HTTP(S) URLs are accepted;
+2. credentials, localhost, loopback, private, link-local, multicast, reserved, and metadata addresses are rejected;
+3. DNS answers are checked before a request;
+4. redirects are handled manually and every target is revalidated;
+5. a request timeout and redirect count apply;
+6. only supported textual MIME types are accepted;
+7. the body is streamed with a normal 5 MiB limit and a 25 MiB hard ceiling.
 
-```typescript
-const fullResponse = await llmChat(messages, (chunk, done) => {
-  if (!done) {
-    fullText += chunk;
-    if (!renderTimer) {
-      renderTimer = win.setTimeout(() => {
-        renderTimer = null;
-        setBubbleHtml(fullText);  // re-render entire accumulated text
-        messagesEl.scrollTop = messagesEl.scrollHeight;  // auto-scroll
-      }, 80);
-    }
-  } else {
-    // Final render
-    clearTimeout(renderTimer);
-    setBubbleHtml(fullText);
-  }
-});
+Oversized or unsafe responses fail explicitly. They are never silently shortened.
+
+## Cancellation
+
+The request signal reaches:
+
+- streaming and non-streaming LLM requests;
+- all agent tool handlers;
+- safe web requests and body reads;
+- MinerU upload URL requests, PDF upload, polling delays, result downloads, and extraction;
+- session mutations and UI callbacks that follow those operations.
+
+A conversion launched directly from a source chip has a separate controller owned by that chip and window. Removing the source aborts that controller.
+
+## MinerU Conversion and Cache
+
+The configurable defaults are language `ch` and timeout 15 minutes. PDFs up to 120 pages use one task; longer PDFs use resumable 25-page chunks. Each successful chunk is stored before the next begins.
+
+```text
+<cacheDir>/
+  documents/<library-qualified-cache-key>/
+    document.md
+    manifest.json
+    chunks/<index>.md
+    attachments/full/...
+    attachments/chunk-<index>/...
+  history/
+  debug-logs/
 ```
 
-The `setBubbleHtml()` function calls `renderMarkdown()` which:
-1. Extracts `$$...$$` and `$...$` math blocks, renders them to HTML via KaTeX
-2. Renders the remaining text as GFM Markdown via `marked`
-3. Re-inserts the KaTeX HTML
-4. Sanitizes (strips `<script>`, `on*` handlers, `javascript:` URLs)
-5. Converts HTML5 void elements to XHTML self-closing form (`<br>` → `<br/>`)
+Document, chunk, manifest, session, and history-index writes use temporary files followed by atomic replacement. Errors retain their stage so upload, polling, ZIP download, and extraction failures remain distinguishable.
 
-If rendering throws (e.g. malformed XHTML), it falls back to `bubble.textContent = text`.
+## Rendering and Debug Privacy
 
-### 6. After the Response
+Assistant Markdown is parsed by `marked`, math is rendered through KaTeX placeholders, and the HTML is normalized for XHTML. A DOM allowlist then removes disallowed elements, event/style attributes, dangerous protocols, namespaced attack surfaces, and privileged local image URLs before the result enters `innerHTML`.
 
-1. `session.addAssistantMessage(fullResponse)` — stores in history
-2. `refreshSourceChips(root)` — updates context usage indicators on source chips
-3. `autoSaveSession()` — persists the session to `~/.chatpdf-cache/history/{id}.json`
-4. UI is re-enabled (textarea + send button)
+Debug log modes:
 
----
+- `metadata` (default): request/session correlation, sizes, model, timing, status, and usage without prompt/answer bodies;
+- `off`: no request files;
+- `full`: explicit diagnostic mode that may contain sensitive prompts, answers, reasoning, and tool results.
 
-## Data Flow Diagram
+Old logs are cleaned according to `debugLogRetentionDays` (default 7).
 
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Zotero PDF  │────▶│  MinerU API  │────▶│  MD Cache    │
-│  (on disk)   │     │  (cloud)     │     │  (~/.cache/) │
-└─────────────┘     └──────────────┘     └──────┬──────┘
-                                                 │
-                                    session.sources[key].markdown
-                                                 │
-┌─────────────┐     ┌──────────────┐     ┌──────▼──────┐
-│  User Input  │────▶│ ChatSession  │────▶│  LLM API    │
-│  (textarea)  │     │ buildMessages│     │  (DeepSeek) │
-└─────────────┘     └──────────────┘     └──────┬──────┘
-                                                 │
-                                          SSE stream
-                                                 │
-                                         ┌───────▼──────┐
-                                         │ renderMarkdown│
-                                         │ (marked+katex)│
-                                         └───────┬──────┘
-                                                 │
-                                         ┌───────▼──────┐
-                                         │  Chat bubble  │
-                                         │  (innerHTML)  │
-                                         └──────────────┘
+## Verification
+
+Run the complete local gate with:
+
+```bash
+npm run verify
+npm audit --audit-level=low
 ```
 
----
-
-## Configuration Reference
-
-All preferences are stored under the plugin's pref prefix (accessed via `getPref(key)`):
-
-| Key                   | Type    | Default                        | Used by             |
-|-----------------------|---------|--------------------------------|---------------------|
-| `mineruToken`         | string  | `""`                           | mineru-client.ts    |
-| `llmApiBase`          | string  | `"https://api.deepseek.com/v1"`| llm-client.ts       |
-| `llmApiKey`           | string  | `""`                           | llm-client.ts       |
-| `llmModel`            | string  | `"deepseek-chat"`              | llm-client.ts       |
-| `cacheDir`            | string  | `""` (→ `~/.chatpdf-cache/`)   | utils/cache-dir.ts  |
-| `maxDocumentChars`    | number  | `300000`                       | chat-session.ts     |
-| `systemPrompt`        | string  | `""`                           | chat-session.ts     |
-| `modelProfiles`       | string  | `"[]"`                         | chat-panel.ts       |
-| `activeProfile`       | string  | `""`                           | chat-panel.ts       |
-| `enableAgentMode`     | boolean | `true`                         | send-handler.ts     |
-| `agentMaxIterations`  | number  | `10`                           | agent-loop.ts       |
-| `enableWebTools`      | boolean | `false`                        | tools.ts            |
-| `braveSearchApiKey`   | string  | `""`                           | tools.ts            |
-
----
-
-## API Compatibility
-
-The LLM client uses the **OpenAI Chat Completions** format. Any API that implements this interface will work:
-- OpenAI (`https://api.openai.com/v1`)
-- DeepSeek (`https://api.deepseek.com/v1`) — default
-- Ollama (`http://localhost:11434/v1`)
-- OpenRouter, Together, Groq, Azure OpenAI, etc.
-
-Just change `llmApiBase`, `llmApiKey`, and `llmModel` in preferences.
-
----
-
-## Potential Improvement Areas
-
-1. **No token counting** — context truncation uses raw character count, not tokens. A 300K char limit is ~75-150K tokens depending on language. Could use a tokenizer for accuracy.
-2. **No parameters exposed** — temperature, max_tokens, top_p, etc. are not configurable. The model's defaults are used.
-3. **Entire documents in system prompt** (classic mode) — every API call re-sends all document text. Agent mode mitigates this with tool-based document reading.
-4. **No error retry** — if the API call fails, the error is shown once and the user must retry manually.
+The isolated Zotero smoke test validates temporary add-on installation and real panel behavior without accessing the user's normal profile or credentials. Provider and MinerU network behavior still requires explicit credentialed test runs.

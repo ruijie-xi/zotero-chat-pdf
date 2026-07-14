@@ -17,17 +17,20 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 24
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci --ignore-scripts
 
-      - name: Build plugin
-        run: npm run build
+      - name: Verify release
+        run: |
+          npm audit --audit-level=low
+          npm run verify
 
       - name: Get version
         id: version
@@ -54,7 +57,7 @@ jobs:
           echo "$BODY" > .release-body.md
 
       - name: Release
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ steps.version.outputs.tag }}
@@ -69,7 +72,7 @@ jobs:
 
       # Upload update.json to a fixed "release" tag so Zotero can always find it
       - name: Update release manifest
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: release

@@ -4,7 +4,7 @@ import { PDFDocument } from "pdf-lib";
 
 const MINERU_API_BASE = "https://mineru.net";
 const POLL_INTERVAL_MS = 3000;
-const POLL_TIMEOUT_MS = 900000; // 15 minutes
+const DEFAULT_POLL_TIMEOUT_MS = 900000; // 15 minutes
 export const MINERU_LONG_PDF_CHUNK_THRESHOLD = 120;
 export const MINERU_LONG_PDF_CHUNK_SIZE = 25;
 
@@ -71,8 +71,22 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const win = Zotero.getMainWindow() as any;
+    const timer = win.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      win.clearTimeout(timer);
+      const error = new Error("Conversion aborted by user");
+      error.name = "AbortError";
+      reject(error);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
 }
 
 function describeRequestTarget(input: string | URL | Request): string {
@@ -207,6 +221,7 @@ async function mineruFetch(
     throw new Error(
       `${stage} failed before receiving a response from ${target}: ${message}. ` +
       `Check network/proxy settings and extension host permissions.${cdnHint}`,
+      { cause: err },
     );
   }
 }
@@ -269,12 +284,14 @@ async function downloadResultZip(zipUrl: string, signal?: AbortSignal): Promise<
           `MinerU result download failed with fetch, Zotero.HTTP, and curl.exe fallback from ${describeRequestTarget(zipUrl)}: ` +
           `Zotero.HTTP: ${message}; curl.exe: ${curlMessage}.` +
           makeCdnDiagnosticHint(zipUrl),
+          { cause: curlErr },
         );
       }
     }
     throw new Error(
       `MinerU result download failed with fetch and Zotero.HTTP fallback from ${describeRequestTarget(zipUrl)}: ${message}.` +
       makeCdnDiagnosticHint(zipUrl),
+      { cause: httpErr },
     );
   } finally {
     signal?.removeEventListener("abort", abortFallback);
@@ -461,7 +478,7 @@ async function convertPdfBytes(
   const requestBody = {
     enable_formula: true,
     enable_table: true,
-    language: "en",
+    language: String(getPref("mineruLanguage") || "ch").trim() || "ch",
     model_version: "pipeline",
     files: [fileRequest],
   };
@@ -526,15 +543,19 @@ async function convertPdfBytes(
   // Step 4: Poll for results
   onProgress?.("processing", "Converting PDF to Markdown...");
   const startTime = Date.now();
+  const configuredTimeoutMinutes = Number(getPref("mineruTimeoutMinutes") || 15);
+  const pollTimeoutMs = Number.isFinite(configuredTimeoutMinutes)
+    ? Math.max(60_000, configuredTimeoutMinutes * 60_000)
+    : DEFAULT_POLL_TIMEOUT_MS;
 
   while (true) {
     throwIfAborted(signal);
 
-    if (Date.now() - startTime > POLL_TIMEOUT_MS) {
-      throw new Error("MinerU conversion timed out after 6 minutes");
+    if (Date.now() - startTime > pollTimeoutMs) {
+      throw new Error(`MinerU result polling timed out after ${Math.round(pollTimeoutMs / 60_000)} minutes`);
     }
 
-    await delay(POLL_INTERVAL_MS);
+    await delay(POLL_INTERVAL_MS, signal);
     throwIfAborted(signal);
 
     const pollRes = await mineruFetch(
@@ -583,7 +604,13 @@ async function convertPdfBytes(
       onProgress?.("downloading", "Downloading results...");
       const zipBytes = await downloadResultZip(zipUrl, signal);
       log("Downloaded ZIP size:", zipBytes.length, "bytes");
-      const extracted = await extractMarkdownFromZip(zipBytes, outputDir, assetPrefix);
+      let extracted: MineruJobResult;
+      try {
+        extracted = await extractMarkdownFromZip(zipBytes, outputDir, assetPrefix, signal);
+      } catch (error: any) {
+        if (error?.name === "AbortError") throw error;
+        throw new Error(`MinerU result extraction failed: ${error?.message || String(error)}`, { cause: error });
+      }
       log("Extracted markdown length:", extracted.markdown.length, "asset count:", extracted.assetCount);
       onProgress?.("done", "Conversion complete");
       return extracted;
@@ -624,7 +651,7 @@ function joinSafeRelativePath(base: string, relativePath: string): string {
 
 function readZipEntryBytes(zipReader: any, entry: string): Uint8Array {
   const inputStream = zipReader.getInputStream(entry);
-  const scriptableStream = Components.classes[
+  const scriptableStream = (Components.classes as any)[
     "@mozilla.org/scriptableinputstream;1"
   ].createInstance(Components.interfaces.nsIScriptableInputStream);
   scriptableStream.init(inputStream);
@@ -701,7 +728,9 @@ async function extractMarkdownFromZip(
   zipBytes: Uint8Array,
   outputDir?: string,
   assetPrefix?: string,
+  signal?: AbortSignal,
 ): Promise<MineruJobResult> {
+  throwIfAborted(signal);
   const tempDir = PathUtils.join(PathUtils.tempDir, `chatpdf-${Date.now()}`);
   const tempZip = tempDir + ".zip";
 
@@ -709,11 +738,11 @@ async function extractMarkdownFromZip(
     await IOUtils.write(tempZip, zipBytes);
 
     // Use Zotero's built-in ZIP extraction
-    const zipReader = Components.classes[
+    const zipReader = (Components.classes as any)[
       "@mozilla.org/libjar/zip-reader;1"
     ].createInstance(Components.interfaces.nsIZipReader);
 
-    const zipFile = Components.classes[
+    const zipFile = (Components.classes as any)[
       "@mozilla.org/file/local;1"
     ].createInstance(Components.interfaces.nsIFile);
     zipFile.initWithPath(tempZip);
@@ -766,7 +795,7 @@ async function extractMarkdownFromZip(
         await ensureDir(assetRoot);
 
         for (const entry of assetEntries) {
-          throwIfAborted();
+          throwIfAborted(signal);
           const outputEntry = getAssetOutputEntry(entry, mdEntry);
           const outputPath = joinSafeRelativePath(assetRoot, outputEntry);
           const parent = PathUtils.parent(outputPath);

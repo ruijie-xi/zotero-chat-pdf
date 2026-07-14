@@ -1,9 +1,8 @@
 import { ChatMessage, ToolCall, Tool, chatWithTools, StreamCallback, TokenUsage, IterationRecord } from "./llm-client";
-import { executeTool } from "./tools";
-import { ChatSession, ToolCallRecord } from "./chat-session";
+import { executeTool, getToolMetadata, ToolExecutionContext } from "./tools";
+import { ChatSession } from "./chat-session";
 import { getPref } from "../utils/prefs";
 
-export { ToolCallRecord } from "./chat-session";
 export { IterationRecord } from "./llm-client";
 
 /**
@@ -38,17 +37,37 @@ export interface AgentResult {
   usage?: TokenUsage;
 }
 
+export interface AgentExecutionContext {
+  requestId: string;
+  windowId: string;
+  turnScope: Set<string>;
+}
+
+function abortError(message = "The request was cancelled."): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
 export async function runAgentLoop(
   messages: ChatMessage[],
   tools: Tool[],
   session: ChatSession,
   callbacks: AgentCallbacks = {},
   signal?: AbortSignal,
+  execution?: AgentExecutionContext,
 ): Promise<AgentResult> {
   const maxIterations = (getPref("agentMaxIterations") as number | undefined) ?? 10;
   const iterations: IterationRecord[] = [];
   const currentMessages: Record<string, unknown>[] = messages.map(m => ({ ...m }));
   const totalUsage: TokenUsage = {};
+  const toolContext: ToolExecutionContext = {
+    session,
+    signal,
+    requestId: execution?.requestId || `request-${Date.now()}`,
+    windowId: execution?.windowId || "unknown-window",
+    turnScope: execution?.turnScope || new Set(session.getSources().map((source) => source.id)),
+  };
 
   function accumulateUsage(u?: TokenUsage) {
     if (!u) return;
@@ -121,7 +140,7 @@ export async function runAgentLoop(
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) {
       Zotero.debug(`[ChatPDF] runAgentLoop: aborted at iteration ${iteration + 1}`);
-      break;
+      throw abortError();
     }
 
     Zotero.debug(`[ChatPDF] runAgentLoop: iteration ${iteration + 1}/${maxIterations}, messages=${currentMessages.length}`);
@@ -138,7 +157,7 @@ export async function runAgentLoop(
       const thinking = makeThinkingWrapper();
 
       const result = await chatWithTools(
-        currentMessages as ChatMessage[],
+        currentMessages as unknown as ChatMessage[],
         iterationTools,
         callbacks.onStream
           ? (chunk: string, done: boolean) => { if (!done) callbacks.onStream!(chunk, false); }
@@ -180,39 +199,58 @@ export async function runAgentLoop(
         }
         currentMessages.push(assistantMsg);
 
-        // Execute tools in parallel
-        const iterToolCalls: ToolCallRecord[] = [];
-        const toolResults = await Promise.all(
-          result.tool_calls.map(async (tc: ToolCall) => {
+        const parsedCalls = result.tool_calls.map((tc: ToolCall) => {
             let args: Record<string, unknown> = {};
             try { args = JSON.parse(tc.function.arguments || "{}"); } catch {
               Zotero.debug(`[ChatPDF] runAgentLoop: failed to parse args for ${tc.function.name}, raw=${tc.function.arguments}`);
             }
 
+            return { tc, args };
+        });
+
+        const executeOne = async ({ tc, args }: typeof parsedCalls[number]) => {
+            if (signal?.aborted) throw abortError();
+
             callbacks.onToolCallStart?.(tc.function.name, args);
             const t0 = Date.now();
-            const toolResult = await executeTool(tc.function.name, args, session);
+            const toolResult = await executeTool(tc.function.name, args, toolContext);
             const durationMs = Date.now() - t0;
 
             Zotero.debug(`[ChatPDF] runAgentLoop: tool ${tc.function.name} done in ${durationMs}ms, result=${toolResult.length} chars`);
             callbacks.onToolCallEnd?.(tc.function.name, toolResult, durationMs);
 
-            iterToolCalls.push({ toolName: tc.function.name, args, result: toolResult, durationMs });
-
             return {
-              role: "tool" as const,
-              content: toolResult,
-              tool_call_id: tc.id,
-              name: tc.function.name,
+              message: {
+                role: "tool" as const,
+                content: toolResult,
+                tool_call_id: tc.id,
+                name: tc.function.name,
+              },
+              record: { toolName: tc.function.name, args, result: toolResult, durationMs },
             };
-          })
-        );
+        };
 
-        for (const msg of toolResults) currentMessages.push(msg);
+        // Read-only tools are safe to parallelize. Any session mutation is
+        // executed in model-specified order so add/convert operations cannot race.
+        const allReadOnly = parsedCalls.every(({ tc }) => getToolMetadata(tc.function.name).readOnly);
+        const executed = allReadOnly
+          ? await Promise.all(parsedCalls.map(executeOne))
+          : await parsedCalls.reduce<Promise<Awaited<ReturnType<typeof executeOne>>[]>>(
+              async (pending, call) => {
+                const records = await pending;
+                records.push(await executeOne(call));
+                return records;
+              },
+              Promise.resolve([]),
+            );
+
+        if (signal?.aborted) throw abortError();
+
+        for (const item of executed) currentMessages.push(item.message);
 
         const iterRecord: IterationRecord = {
           reasoning: result.reasoning,
-          toolCalls: iterToolCalls,
+          toolCalls: executed.map((item) => item.record),
         };
         iterations.push(iterRecord);
         callbacks.onIterationComplete?.(iteration + 1, maxIterations, iterRecord);
@@ -241,7 +279,7 @@ export async function runAgentLoop(
       const thinking = makeThinkingWrapper();
 
       const result = await chatWithTools(
-        currentMessages as ChatMessage[],
+        currentMessages as unknown as ChatMessage[],
         undefined, // no tools
         callbacks.onStream
           ? (chunk: string, done: boolean) => { if (!done) callbacks.onStream!(chunk, false); }
@@ -280,7 +318,7 @@ export async function runAgentLoop(
   const thinking = makeThinkingWrapper();
 
   const finalResult = await chatWithTools(
-    currentMessages as ChatMessage[],
+    currentMessages as unknown as ChatMessage[],
     undefined,
     callbacks.onStream
       ? (chunk: string, done: boolean) => { if (!done) callbacks.onStream!(chunk, false); }

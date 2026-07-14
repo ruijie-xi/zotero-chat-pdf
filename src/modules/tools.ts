@@ -4,6 +4,11 @@ import { getPref } from "../utils/prefs";
 import { Tool } from "./llm-client";
 import { convertSource, refreshSourceChips } from "./source-chips";
 import {
+  DEFAULT_WEB_MAX_BYTES,
+  HARD_WEB_MAX_BYTES,
+  safeFetchText,
+} from "./safe-web-client";
+import {
   addZoteroItemToSession,
   getAllCollections,
   getAllLibraryItems,
@@ -14,11 +19,68 @@ import {
   ZoteroItemSummary,
 } from "./zotero-items";
 
-const DEFAULT_READ_LINE_LIMIT = 400;
-const MAX_SEARCH_RESULTS = 20;
+function positiveIntegerOrUndefined(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return Math.floor(numeric);
+}
+
+function nonNegativeIntegerOrDefault(value: unknown, defaultValue: number): number {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return defaultValue;
+  return Math.floor(numeric);
+}
+
+function limitResults<T>(items: T[], maxResults?: number): T[] {
+  return maxResults === undefined ? items : items.slice(0, maxResults);
+}
+
+function countLabel(returned: number, total: number): string {
+  return returned === total ? `${total} total` : `${returned} of ${total} returned`;
+}
 
 export interface ToolOptions {
   enableWebTools?: boolean;
+}
+
+export interface ToolExecutionContext {
+  session: ChatSession;
+  signal?: AbortSignal;
+  requestId: string;
+  windowId: string;
+  /** Mutable IDs allowed for this turn. Newly-added sources are appended here. */
+  turnScope: Set<string>;
+}
+
+export interface ToolMetadata {
+  readOnly: boolean;
+  mutatesSession: boolean;
+  network: boolean;
+  costly: boolean;
+}
+
+const TOOL_METADATA: Record<string, ToolMetadata> = {
+  list_sources: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  read_document: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  list_document_chunks: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  read_document_chunk: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  search_document: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  search_zotero_library: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  get_zotero_item: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  list_zotero_collections: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  list_collection_items: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  get_current_zotero_selection: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  add_zotero_item_to_session: { readOnly: false, mutatesSession: true, network: false, costly: false },
+  convert_session_source: { readOnly: false, mutatesSession: true, network: true, costly: true },
+  add_and_convert_zotero_item: { readOnly: false, mutatesSession: true, network: true, costly: true },
+  web_search: { readOnly: true, mutatesSession: false, network: true, costly: false },
+  web_fetch: { readOnly: true, mutatesSession: false, network: true, costly: false },
+};
+
+export function getToolMetadata(name: string): ToolMetadata {
+  return TOOL_METADATA[name] || { readOnly: false, mutatesSession: true, network: true, costly: true };
 }
 
 function extractHeadings(markdown: string): { heading: string; line: number }[] {
@@ -29,10 +91,10 @@ function extractHeadings(markdown: string): { heading: string; line: number }[] 
       headings.push({ heading: lines[i].trim(), line: i + 1 });
     }
   }
-  return headings.slice(0, 30);
+  return headings;
 }
 
-export function getToolDefinitions(session: ChatSession, options?: ToolOptions): Tool[] {
+export function getToolDefinitions(options?: ToolOptions): Tool[] {
   const tools: Tool[] = [
     {
       type: "function",
@@ -55,7 +117,7 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
         description:
           "Read the content of a specific document by its key. " +
           "Use start_line and end_line to read specific sections (1-based line numbers). " +
-          "For long documents, omit line ranges only for a preview; use list_document_chunks, read_document_chunk, or search_document to navigate.",
+          "Omit line ranges to read the whole document.",
         parameters: {
           type: "object",
           properties: {
@@ -137,11 +199,11 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
             },
             max_results: {
               type: "integer",
-              description: "Maximum number of matches to return (default 10, max 20)",
+              description: "Optional cap on the number of matches to return. Omit to return all matches.",
             },
             context_lines: {
               type: "integer",
-              description: "Number of surrounding lines to include around each match (default 2, max 5)",
+              description: "Number of surrounding lines to include around each match (default 2)",
             },
           },
           required: ["key", "query"],
@@ -160,7 +222,7 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
           type: "object",
           properties: {
             query: { type: "string", description: "Title, author, keyword, tag, or abstract text to search for" },
-            max_results: { type: "integer", description: "Maximum number of results (default 10, max 20)" },
+            max_results: { type: "integer", description: "Optional cap on the number of matching items. Omit to return all matches." },
             year_from: { type: "integer", description: "Earliest publication year to include" },
             year_to: { type: "integer", description: "Latest publication year to include" },
             item_type: { type: "string", description: "Zotero item type filter, e.g. journalArticle, preprint, book" },
@@ -180,6 +242,7 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
           type: "object",
           properties: {
             key: { type: "string", description: "Zotero item key or PDF attachment key" },
+            library_id: { type: "integer", description: "Zotero library ID from search results; required when keys may be ambiguous across libraries" },
           },
           required: ["key"],
         },
@@ -194,7 +257,7 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
           type: "object",
           properties: {
             query: { type: "string", description: "Optional collection name filter" },
-            max_results: { type: "integer", description: "Maximum number of collections (default 10, max 30)" },
+            max_results: { type: "integer", description: "Optional cap on the number of collections. Omit to return all collections." },
           },
           required: [],
         },
@@ -210,7 +273,8 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
           type: "object",
           properties: {
             collection_key: { type: "string", description: "Zotero collection key" },
-            max_results: { type: "integer", description: "Maximum number of items (default 10, max 20)" },
+            library_id: { type: "integer", description: "Zotero library ID from list_zotero_collections" },
+            max_results: { type: "integer", description: "Optional cap on the number of items. Omit to return all matching items." },
             has_pdf: { type: "boolean", description: "If true, only return items with PDFs; if false, only without PDFs" },
           },
           required: ["collection_key"],
@@ -241,6 +305,7 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
           type: "object",
           properties: {
             item_key: { type: "string", description: "Zotero parent item key or PDF attachment key" },
+            library_id: { type: "integer", description: "Zotero library ID from search results" },
           },
           required: ["item_key"],
         },
@@ -273,6 +338,7 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
           type: "object",
           properties: {
             item_key: { type: "string", description: "Zotero parent item key or PDF attachment key" },
+            library_id: { type: "integer", description: "Zotero library ID from search results" },
           },
           required: ["item_key"],
         },
@@ -291,7 +357,7 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
           type: "object",
           properties: {
             query: { type: "string", description: "Search query" },
-            max_results: { type: "integer", description: "Maximum number of results (default 5, max 10)" },
+            max_results: { type: "integer", description: "Optional cap on the number of results. Omit to use the search provider's returned set." },
           },
           required: ["query"],
         },
@@ -301,11 +367,15 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
       type: "function",
       function: {
         name: "web_fetch",
-        description: "Fetch the text content of a web page. Returns cleaned text (HTML stripped), truncated to 50KB.",
+        description: "Fetch the full text content of a web page. Returns cleaned text with HTML stripped.",
         parameters: {
           type: "object",
           properties: {
             url: { type: "string", description: "URL to fetch (must be http:// or https://)" },
+            max_bytes: {
+              type: "integer",
+              description: `Visible response safety budget in bytes (default ${DEFAULT_WEB_MAX_BYTES}, hard maximum ${HARD_WEB_MAX_BYTES}). Oversized responses fail instead of being truncated.`,
+            },
           },
           required: ["url"],
         },
@@ -319,8 +389,9 @@ export function getToolDefinitions(session: ChatSession, options?: ToolOptions):
 export async function executeTool(
   name: string,
   args: Record<string, unknown>,
-  session: ChatSession,
+  context: ToolExecutionContext,
 ): Promise<string> {
+  const { session } = context;
   const startTime = Date.now();
   Zotero.debug(`[ChatPDF] executeTool: ${name} args=${JSON.stringify(args)}`);
 
@@ -329,19 +400,19 @@ export async function executeTool(
 
     switch (name) {
       case "list_sources":
-        result = await executeListSources(session);
+        result = await executeListSources(context);
         break;
       case "read_document":
-        result = await executeReadDocumentSafe(args, session);
+        result = await executeReadDocumentSafe(args, context);
         break;
       case "list_document_chunks":
-        result = await executeListDocumentChunks(args, session);
+        result = await executeListDocumentChunks(args, context);
         break;
       case "read_document_chunk":
-        result = await executeReadDocumentChunk(args, session);
+        result = await executeReadDocumentChunk(args, context);
         break;
       case "search_document":
-        result = await executeSearchDocument(args, session);
+        result = await executeSearchDocument(args, context);
         break;
       case "search_zotero_library":
         result = await executeSearchZoteroLibrary(args, session);
@@ -359,19 +430,19 @@ export async function executeTool(
         result = await executeGetCurrentZoteroSelection(session);
         break;
       case "add_zotero_item_to_session":
-        result = await executeAddZoteroItemToSession(args, session);
+        result = await executeAddZoteroItemToSession(args, context);
         break;
       case "convert_session_source":
-        result = await executeConvertSessionSource(args, session);
+        result = await executeConvertSessionSource(args, context);
         break;
       case "add_and_convert_zotero_item":
-        result = await executeAddAndConvertZoteroItem(args, session);
+        result = await executeAddAndConvertZoteroItem(args, context);
         break;
       case "web_search":
-        result = await executeWebSearch(args);
+        result = await executeWebSearch(args, context.signal);
         break;
       case "web_fetch":
-        result = await executeWebFetch(args);
+        result = await executeWebFetch(args, context.signal);
         break;
       default:
         result = `Unknown tool: ${name}`;
@@ -379,26 +450,30 @@ export async function executeTool(
 
     const durationMs = Date.now() - startTime;
     Zotero.debug(`[ChatPDF] executeTool: ${name} done in ${durationMs}ms, result=${result.length} chars`);
-    return result;
+    const estimatedTokens = Math.ceil(result.length / 4);
+    return `${result}\n\n[Tool result metadata: ${result.length} characters; approximately ${estimatedTokens} tokens; no hidden truncation applied.]`;
   } catch (err: any) {
+    if (context.signal?.aborted || err?.name === "AbortError") throw err;
     Zotero.debug(`[ChatPDF] executeTool: ${name} error: ${err.message}`);
     return `Error executing ${name}: ${err.message}`;
   }
 }
 
-function validateSourceKey(key: string, session: ChatSession, toolName: string): string | null {
-  const validKeys = session.getSources().map(s => s.key);
-  if (!validKeys.includes(key)) {
-    Zotero.debug(`[ChatPDF] ${toolName}: security rejection - key "${key}" not in session sources [${validKeys.join(",")}]`);
-    return `Error: document key "${key}" is not in the current session. Use list_sources to see available keys.`;
+function validateSourceKey(identifier: string, context: ToolExecutionContext, toolName: string): string | null {
+  const source = context.session.getSource(identifier);
+  if (!source || !context.turnScope.has(source.id)) {
+    const validIds = context.session.getSources().filter((item) => context.turnScope.has(item.id)).map((item) => item.id);
+    Zotero.debug(`[ChatPDF] ${toolName}: scope rejection - source "${identifier}" not in turn scope [${validIds.join(",")}]`);
+    return `Error: document source "${identifier}" is outside this turn's source scope. Use list_sources to see available sources.`;
   }
   return null;
 }
 
 async function loadDocumentContent(
   key: string,
-  session: ChatSession,
+  context: ToolExecutionContext,
 ): Promise<{ markdown: string; manifest: MDCache.DocumentManifest | null; title: string } | string> {
+  const { session } = context;
   const source = session.getSource(key);
   if (!source) {
     return `Error: document "${key}" not found.`;
@@ -410,9 +485,9 @@ async function loadDocumentContent(
 
   let markdown = source.markdown;
   if (!markdown) {
-    if (await MDCache.has(key)) {
-      markdown = await MDCache.read(key);
-      session.setSourceReady(key, markdown);
+    if (await MDCache.has(source.cacheKey, source.key)) {
+      markdown = await MDCache.read(source.cacheKey, source.key);
+      session.setSourceReady(source.id, markdown);
     } else {
       return `Error: document "${source.title}" content not available in cache.`;
     }
@@ -420,13 +495,13 @@ async function loadDocumentContent(
 
   return {
     markdown,
-    manifest: await MDCache.readManifest(key),
+    manifest: await MDCache.readManifest(source.cacheKey, source.key),
     title: source.title,
   };
 }
 
-async function executeListSources(session: ChatSession): Promise<string> {
-  const sources = session.getSources();
+async function executeListSources(context: ToolExecutionContext): Promise<string> {
+  const sources = context.session.getSources().filter((source) => context.turnScope.has(source.id));
   const readyCount = sources.filter(s => s.status === "ready").length;
   Zotero.debug(`[ChatPDF] list_sources: ${sources.length} sources, ${readyCount} ready`);
 
@@ -437,15 +512,19 @@ async function executeListSources(session: ChatSession): Promise<string> {
   const lines: string[] = [`Available documents (${sources.length} total):\n`];
 
   for (const source of sources) {
+    if (source.status === "ready" && !source.markdown && await MDCache.has(source.cacheKey, source.key)) {
+      source.markdown = await MDCache.read(source.cacheKey, source.key);
+    }
     lines.push(`## Document: "${source.title}"`);
-    lines.push(`- key: ${source.key}`);
+    lines.push(`- key: ${source.id}`);
+    lines.push(`- Zotero attachment key: ${source.key}`);
     lines.push(`- status: ${source.status}`);
 
     if (source.status === "ready" && source.markdown) {
       const charCount = source.markdown.length;
       const lineCount = source.markdown.split("\n").length;
       lines.push(`- size: ${charCount} chars, ${lineCount} lines`);
-      const manifest = await MDCache.readManifest(source.key);
+      const manifest = await MDCache.readManifest(source.cacheKey, source.key);
       if (manifest && manifest.chunks.length > 1) {
         const readyChunks = manifest.chunks.filter((chunk) => chunk.status === "ready").length;
         lines.push(`- pages: ${manifest.pageCount}`);
@@ -474,35 +553,17 @@ async function executeListSources(session: ChatSession): Promise<string> {
   return result;
 }
 
-async function executeReadDocument(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeReadDocumentSafe(args: Record<string, unknown>, context: ToolExecutionContext): Promise<string> {
   const key = args.key as string;
   const startLine = args.start_line as number | undefined;
   const endLine = args.end_line as number | undefined;
 
-  const validKeys = session.getSources().map(s => s.key);
-  if (!validKeys.includes(key)) {
-    Zotero.debug(`[ChatPDF] read_document: security rejection — key "${key}" not in session sources [${validKeys.join(",")}]`);
-    return `Error: document key "${key}" is not in the current session. Use list_sources to see available keys.`;
-  }
+  const validationError = validateSourceKey(key, context, "read_document");
+  if (validationError) return validationError;
 
-  const source = session.getSource(key);
-  if (!source) {
-    return `Error: document "${key}" not found.`;
-  }
-
-  if (source.status !== "ready") {
-    return `Error: document "${source.title}" is not ready (status: ${source.status}). It needs to be converted first.`;
-  }
-
-  let markdown = source.markdown;
-  if (!markdown) {
-    if (await MDCache.has(key)) {
-      markdown = await MDCache.read(key);
-      session.setSourceReady(key, markdown);
-    } else {
-      return `Error: document "${source.title}" content not available in cache.`;
-    }
-  }
+  const loaded = await loadDocumentContent(key, context);
+  if (typeof loaded === "string") return loaded;
+  const { markdown, title } = loaded;
 
   const allLines = markdown.split("\n");
   const totalLines = allLines.length;
@@ -514,57 +575,19 @@ async function executeReadDocument(args: Record<string, unknown>, session: ChatS
 
   const selectedLines = allLines.slice(start - 1, end);
   const content = selectedLines.join("\n");
-
-  const header = `Document: "${source.title}" (lines ${start}-${end} of ${totalLines})\n${"=".repeat(60)}\n`;
+  const header = `Document: "${title}" (lines ${start}-${end} of ${totalLines})\n${"=".repeat(60)}\n`;
   const result = header + content;
 
   Zotero.debug(`[ChatPDF] read_document: returning ${result.length} chars`);
   return result;
 }
 
-async function executeReadDocumentSafe(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeListDocumentChunks(args: Record<string, unknown>, context: ToolExecutionContext): Promise<string> {
   const key = args.key as string;
-  const startLine = args.start_line as number | undefined;
-  const endLine = args.end_line as number | undefined;
-
-  const validationError = validateSourceKey(key, session, "read_document");
+  const validationError = validateSourceKey(key, context, "list_document_chunks");
   if (validationError) return validationError;
 
-  const loaded = await loadDocumentContent(key, session);
-  if (typeof loaded === "string") return loaded;
-  const { markdown, manifest, title } = loaded;
-
-  const allLines = markdown.split("\n");
-  const totalLines = allLines.length;
-
-  const start = startLine !== undefined ? Math.max(1, startLine) : 1;
-  let end = endLine !== undefined ? Math.min(totalLines, endLine) : totalLines;
-  let truncated = false;
-  if (startLine === undefined && endLine === undefined && manifest && manifest.chunks.length > 1) {
-    end = Math.min(totalLines, DEFAULT_READ_LINE_LIMIT);
-    truncated = end < totalLines;
-  }
-
-  Zotero.debug(`[ChatPDF] read_document: key="${key}", lines ${start}-${end} of ${totalLines}, total chars=${markdown.length}`);
-
-  const selectedLines = allLines.slice(start - 1, end);
-  const content = selectedLines.join("\n");
-  const header = `Document: "${title}" (lines ${start}-${end} of ${totalLines})\n${"=".repeat(60)}\n`;
-  const guidance = truncated
-    ? `\n\n[Preview only. This is a long document with ${manifest?.chunks.length} chunks. Use list_document_chunks, read_document_chunk, search_document, or read_document with start_line/end_line for targeted reading.]`
-    : "";
-  const result = header + content + guidance;
-
-  Zotero.debug(`[ChatPDF] read_document: returning ${result.length} chars`);
-  return result;
-}
-
-async function executeListDocumentChunks(args: Record<string, unknown>, session: ChatSession): Promise<string> {
-  const key = args.key as string;
-  const validationError = validateSourceKey(key, session, "list_document_chunks");
-  if (validationError) return validationError;
-
-  const loaded = await loadDocumentContent(key, session);
+  const loaded = await loadDocumentContent(key, context);
   if (typeof loaded === "string") return loaded;
   const { markdown, manifest, title } = loaded;
 
@@ -591,17 +614,17 @@ async function executeListDocumentChunks(args: Record<string, unknown>, session:
   return lines.join("\n");
 }
 
-async function executeReadDocumentChunk(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeReadDocumentChunk(args: Record<string, unknown>, context: ToolExecutionContext): Promise<string> {
   const key = args.key as string;
   const chunkIndex = Number(args.chunk_index);
-  const validationError = validateSourceKey(key, session, "read_document_chunk");
+  const validationError = validateSourceKey(key, context, "read_document_chunk");
   if (validationError) return validationError;
 
   if (!Number.isFinite(chunkIndex) || chunkIndex < 1) {
     return "Error: chunk_index must be a positive integer.";
   }
 
-  const loaded = await loadDocumentContent(key, session);
+  const loaded = await loadDocumentContent(key, context);
   if (typeof loaded === "string") return loaded;
   const { markdown, manifest, title } = loaded;
 
@@ -619,7 +642,8 @@ async function executeReadDocumentChunk(args: Record<string, unknown>, session: 
 
   let content: string;
   try {
-    content = await MDCache.readChunk(key, chunk.index);
+    const source = context.session.getSource(key)!;
+    content = await MDCache.readChunk(source.cacheKey, chunk.index, source.key);
   } catch {
     if (!chunk.lineStart || !chunk.lineEnd) {
       return `Error: chunk ${chunkIndex} content is not available in cache.`;
@@ -631,16 +655,16 @@ async function executeReadDocumentChunk(args: Record<string, unknown>, session: 
   return header + content;
 }
 
-async function executeSearchDocument(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeSearchDocument(args: Record<string, unknown>, context: ToolExecutionContext): Promise<string> {
   const key = args.key as string;
   const query = String(args.query || "").trim();
-  const maxResults = Math.min(MAX_SEARCH_RESULTS, Math.max(1, Number(args.max_results) || 10));
-  const contextLines = Math.min(5, Math.max(0, Number(args.context_lines) || 2));
-  const validationError = validateSourceKey(key, session, "search_document");
+  const maxResults = positiveIntegerOrUndefined(args.max_results);
+  const contextLines = nonNegativeIntegerOrDefault(args.context_lines, 2);
+  const validationError = validateSourceKey(key, context, "search_document");
   if (validationError) return validationError;
   if (!query) return "Error: query is required.";
 
-  const loaded = await loadDocumentContent(key, session);
+  const loaded = await loadDocumentContent(key, context);
   if (typeof loaded === "string") return loaded;
   const { markdown, manifest, title } = loaded;
 
@@ -649,7 +673,7 @@ async function executeSearchDocument(args: Record<string, unknown>, session: Cha
   const lines = markdown.split("\n");
   const matches: string[] = [];
 
-  for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const lineLower = lines[i].toLowerCase();
     const isMatch = lineLower.includes(lowerQuery) || terms.every((term) => lineLower.includes(term));
     if (!isMatch) continue;
@@ -668,13 +692,14 @@ async function executeSearchDocument(args: Record<string, unknown>, session: Cha
       ? `line ${lineNumber}, chunk ${chunk.index}, pages ${chunk.startPage}-${chunk.endPage}`
       : `line ${lineNumber}`;
     matches.push(`## Match ${matches.length + 1} (${location})\n${snippet}`);
+    if (maxResults !== undefined && matches.length >= maxResults) break;
   }
 
   if (matches.length === 0) {
     return `No matches for "${query}" in "${title}".`;
   }
 
-  return `Search results for "${query}" in "${title}" (${matches.length} shown):\n\n${matches.join("\n\n")}`;
+  return `Search results for "${query}" in "${title}" (${matches.length} returned):\n\n${matches.join("\n\n")}`;
 }
 
 function normalizeYear(value: unknown): number | undefined {
@@ -684,13 +709,12 @@ function normalizeYear(value: unknown): number | undefined {
 
 function formatCreators(creators: string[]): string {
   if (creators.length === 0) return "unknown";
-  if (creators.length <= 3) return creators.join(", ");
-  return `${creators.slice(0, 3).join(", ")} et al.`;
+  return creators.join(", ");
 }
 
 function sessionStatusForItem(item: ZoteroItemSummary, session: ChatSession): string {
   if (!item.pdfKey) return "not in session";
-  const source = session.getSource(item.pdfKey);
+  const source = session.getSource(item.pdfKey, item.libraryID);
   return source ? `in session (${source.status})` : "not in session";
 }
 
@@ -698,6 +722,7 @@ function formatZoteroItemSummary(item: ZoteroItemSummary, session?: ChatSession,
   const prefix = index !== undefined ? `${index}. ` : "";
   const lines = [`${prefix}${item.title}`];
   lines.push(`   key: ${item.key}`);
+  if (item.libraryID !== undefined) lines.push(`   libraryID: ${item.libraryID}`);
   if (item.pdfKey) lines.push(`   pdf_key: ${item.pdfKey}`);
   if (item.itemType) lines.push(`   type: ${item.itemType}`);
   if (item.year) lines.push(`   year: ${item.year}`);
@@ -705,7 +730,7 @@ function formatZoteroItemSummary(item: ZoteroItemSummary, session?: ChatSession,
   lines.push(`   has_pdf: ${item.hasPdf ? "yes" : "no"}`);
   if (session) lines.push(`   session_status: ${sessionStatusForItem(item, session)}`);
   if (item.collections.length) lines.push(`   collections: ${item.collections.join(", ")}`);
-  if (item.tags.length) lines.push(`   tags: ${item.tags.slice(0, 8).join(", ")}`);
+  if (item.tags.length) lines.push(`   tags: ${item.tags.join(", ")}`);
   if (item.abstractNote) lines.push(`   abstract: ${item.abstractNote}`);
   return lines.join("\n");
 }
@@ -776,27 +801,27 @@ async function executeSearchZoteroLibrary(args: Record<string, unknown>, session
   const query = String(args.query || "").trim();
   if (!query) return "Error: query is required.";
 
-  const maxResults = Math.min(MAX_SEARCH_RESULTS, Math.max(1, Number(args.max_results) || 10));
+  const maxResults = positiveIntegerOrUndefined(args.max_results);
   const yearFrom = normalizeYear(args.year_from);
   const yearTo = normalizeYear(args.year_to);
   const itemType = String(args.item_type || "").trim().toLowerCase();
   const hasPdf = typeof args.has_pdf === "boolean" ? args.has_pdf : undefined;
 
-  const summaries = (await getAllLibraryItems())
+  const allSummaries = (await getAllLibraryItems())
     .map(summarizeZoteroItem)
     .filter((item) => matchesLibraryQuery(item, query))
     .filter((item) => yearFrom === undefined || Number(item.year) >= yearFrom)
     .filter((item) => yearTo === undefined || Number(item.year) <= yearTo)
     .filter((item) => !itemType || (item.itemType || "").toLowerCase() === itemType)
     .filter((item) => hasPdf === undefined || item.hasPdf === hasPdf)
-    .sort((a, b) => libraryQueryScore(b, query) - libraryQueryScore(a, query))
-    .slice(0, maxResults);
+    .sort((a, b) => libraryQueryScore(b, query) - libraryQueryScore(a, query));
+  const summaries = limitResults(allSummaries, maxResults);
 
-  if (summaries.length === 0) {
+  if (allSummaries.length === 0) {
     return `No Zotero library items found for "${query}".`;
   }
 
-  const lines = [`Zotero library results for "${query}" (${summaries.length} shown):`, ""];
+  const lines = [`Zotero library results for "${query}" (${countLabel(summaries.length, allSummaries.length)}):`, ""];
   summaries.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
   lines.push("These results are read-only. You may add or convert relevant PDFs if needed to answer; use judgment and warn the user about cost/time before extreme bulk conversions.");
   return lines.join("\n");
@@ -805,32 +830,34 @@ async function executeSearchZoteroLibrary(args: Record<string, unknown>, session
 async function executeGetZoteroItem(args: Record<string, unknown>, session: ChatSession): Promise<string> {
   const key = String(args.key || "").trim();
   if (!key) return "Error: key is required.";
-  const item = getItemByKey(key);
+  const libraryID = positiveIntegerOrUndefined(args.library_id);
+  const item = getItemByKey(key, libraryID);
   if (!item) return `Error: Zotero item "${key}" was not found.`;
   return formatZoteroItemSummary(summarizeZoteroItem(item), session);
 }
 
 async function executeListZoteroCollections(args: Record<string, unknown>): Promise<string> {
   const query = String(args.query || "").trim().toLowerCase();
-  const maxResults = Math.min(30, Math.max(1, Number(args.max_results) || 10));
-  const collections = (await getAllCollections())
+  const maxResults = positiveIntegerOrUndefined(args.max_results);
+  const allCollections = (await getAllCollections())
     .filter((collection) => !query || fuzzyTextScore(collection.name, query) > 0)
-    .sort((a, b) => fuzzyTextScore(b.name, query) - fuzzyTextScore(a.name, query))
-    .slice(0, maxResults);
+    .sort((a, b) => fuzzyTextScore(b.name, query) - fuzzyTextScore(a.name, query));
+  const collections = limitResults(allCollections, maxResults);
 
-  if (collections.length === 0) {
+  if (allCollections.length === 0) {
     return query ? `No Zotero collections found for "${query}".` : "No Zotero collections found.";
   }
 
   return [
-    `Zotero collections (${collections.length} shown):`,
+    `Zotero collections (${countLabel(collections.length, allCollections.length)}):`,
     "",
     ...collections.map((collection, i) => formatCollectionSummary(collection, i + 1)),
   ].join("\n\n");
 }
 
-function getCollectionByKey(key: string): any | null {
+function getCollectionByKey(key: string, libraryID?: number): any | null {
   for (const lib of Zotero.Libraries.getAll()) {
+    if (libraryID !== undefined && lib.libraryID !== libraryID) continue;
     try {
       const collection = (Zotero.Collections as any).getByLibraryAndKey?.(lib.libraryID, key);
       if (collection) return collection;
@@ -844,12 +871,12 @@ function getCollectionByKey(key: string): any | null {
 async function executeListCollectionItems(args: Record<string, unknown>, session: ChatSession): Promise<string> {
   const key = String(args.collection_key || "").trim();
   if (!key) return "Error: collection_key is required.";
-  const collection = getCollectionByKey(key);
+  const collection = getCollectionByKey(key, positiveIntegerOrUndefined(args.library_id));
   if (!collection) return `Error: Zotero collection "${key}" was not found.`;
 
-  const maxResults = Math.min(MAX_SEARCH_RESULTS, Math.max(1, Number(args.max_results) || 10));
+  const maxResults = positiveIntegerOrUndefined(args.max_results);
   const hasPdf = typeof args.has_pdf === "boolean" ? args.has_pdf : undefined;
-  let rawItems: any[] = [];
+  let rawItems: any[];
   try {
     const maybeItems = collection.getChildItems?.() || [];
     rawItems = typeof maybeItems?.then === "function" ? await maybeItems : maybeItems;
@@ -857,18 +884,18 @@ async function executeListCollectionItems(args: Record<string, unknown>, session
     return `Error reading collection "${collection.name || key}": ${e.message}`;
   }
 
-  const items = rawItems
+  const allItems = rawItems
     .map((itemOrID) => typeof itemOrID === "number" ? Zotero.Items.get(itemOrID) : itemOrID)
     .filter((item): item is Zotero.Item => !!item && (item.isRegularItem?.() || (item.isPDFAttachment?.() && !item.parentItem)))
     .map(summarizeZoteroItem)
-    .filter((item) => hasPdf === undefined || item.hasPdf === hasPdf)
-    .slice(0, maxResults);
+    .filter((item) => hasPdf === undefined || item.hasPdf === hasPdf);
+  const items = limitResults(allItems, maxResults);
 
-  if (items.length === 0) {
+  if (allItems.length === 0) {
     return `No matching items found in Zotero collection "${collection.name || key}".`;
   }
 
-  const lines = [`Items in Zotero collection "${collection.name || key}" (${items.length} shown):`, ""];
+  const lines = [`Items in Zotero collection "${collection.name || key}" (${countLabel(items.length, allItems.length)}):`, ""];
   items.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
   return lines.join("\n");
 }
@@ -942,21 +969,24 @@ function refreshOpenSourceChips(): void {
   }
 }
 
-async function executeAddZoteroItemToSession(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeAddZoteroItemToSession(args: Record<string, unknown>, context: ToolExecutionContext): Promise<string> {
+  const { session } = context;
   const key = String(args.item_key || "").trim();
   if (!key) return "Error: item_key is required.";
-  const item = getItemByKey(key);
+  const item = getItemByKey(key, positiveIntegerOrUndefined(args.library_id));
   if (!item) return `Error: Zotero item "${key}" was not found.`;
 
   const added = await addZoteroItemToSession(item, session);
+  if (added.sourceKey) context.turnScope.add(added.sourceKey);
   refreshOpenSourceChips();
   return added.message;
 }
 
-async function executeConvertSessionSource(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeConvertSessionSource(args: Record<string, unknown>, context: ToolExecutionContext): Promise<string> {
+  const { session } = context;
   const key = String(args.source_key || "").trim();
   if (!key) return "Error: source_key is required.";
-  const validationError = validateSourceKey(key, session, "convert_session_source");
+  const validationError = validateSourceKey(key, context, "convert_session_source");
   if (validationError) return validationError;
   const source = session.getSource(key);
   if (!source) return `Error: source "${key}" not found.`;
@@ -966,7 +996,7 @@ async function executeConvertSessionSource(args: Record<string, unknown>, sessio
   if (source.status === "converting") {
     return `Source "${source.title}" is already converting.`;
   }
-  await convertSource(source, refreshOpenSourceChips);
+  await convertSource(source, refreshOpenSourceChips, context.signal, undefined, session);
   refreshOpenSourceChips();
   const updated = session.getSource(key);
   if (updated?.status === "ready") {
@@ -975,10 +1005,11 @@ async function executeConvertSessionSource(args: Record<string, unknown>, sessio
   return `Conversion finished for "${source.title}" with status: ${updated?.status || "unknown"}.`;
 }
 
-async function executeAddAndConvertZoteroItem(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeAddAndConvertZoteroItem(args: Record<string, unknown>, context: ToolExecutionContext): Promise<string> {
+  const { session } = context;
   const key = String(args.item_key || "").trim();
   if (!key) return "Error: item_key is required.";
-  const item = getItemByKey(key);
+  const item = getItemByKey(key, positiveIntegerOrUndefined(args.library_id));
   if (!item) return `Error: Zotero item "${key}" was not found.`;
   const summary = summarizeZoteroItem(item);
   if (!getPdfAttachment(item)) {
@@ -986,6 +1017,7 @@ async function executeAddAndConvertZoteroItem(args: Record<string, unknown>, ses
   }
 
   const added = await addZoteroItemToSession(item, session);
+  if (added.sourceKey) context.turnScope.add(added.sourceKey);
   refreshOpenSourceChips();
   if (!added.sourceKey) return added.message;
   const source = session.getSource(added.sourceKey);
@@ -996,51 +1028,57 @@ async function executeAddAndConvertZoteroItem(args: Record<string, unknown>, ses
   if (source.status === "converting") {
     return `${added.message}\nSource is already converting.`;
   }
-  await convertSource(source, refreshOpenSourceChips);
+  await convertSource(source, refreshOpenSourceChips, context.signal, undefined, session);
   refreshOpenSourceChips();
   const updated = session.getSource(added.sourceKey);
   return `${added.message}\nConversion status: ${updated?.status || "unknown"}.`;
 }
 
-async function executeWebSearch(args: Record<string, unknown>): Promise<string> {
-  const query = args.query as string;
-  const maxResults = Math.min(10, (args.max_results as number | undefined) ?? 5);
+async function executeWebSearch(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+  const query = String(args.query || "").trim();
+  if (!query) return "Error: query is required.";
+  const maxResults = positiveIntegerOrUndefined(args.max_results);
 
   const braveKey = (getPref("braveSearchApiKey") as string | undefined) || "";
 
   if (braveKey) {
     Zotero.debug(`[ChatPDF] web_search: using Brave Search, query="${query}"`);
-    return await braveSearch(query, maxResults, braveKey);
+    return await braveSearch(query, maxResults, braveKey, signal);
   } else {
     Zotero.debug(`[ChatPDF] web_search: using DuckDuckGo fallback, query="${query}"`);
-    return await duckDuckGoSearch(query, maxResults);
+    return await duckDuckGoSearch(query, maxResults, signal);
   }
 }
 
-async function braveSearch(query: string, maxResults: number, apiKey: string): Promise<string> {
-  const params = new URLSearchParams({ q: query, count: String(maxResults) });
+async function braveSearch(query: string, maxResults: number | undefined, apiKey: string, signal?: AbortSignal): Promise<string> {
+  const params = new URLSearchParams({ q: query });
+  if (maxResults !== undefined) params.set("count", String(maxResults));
   const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
 
-  const res = await fetch(url, {
+  const res = await safeFetchText(url, {
+    signal,
+    maxBytes: DEFAULT_WEB_MAX_BYTES,
+    allowedMimeTypes: /^application\/json$/i,
     headers: {
       "Accept": "application/json",
       "X-Subscription-Token": apiKey,
     },
   });
 
-  if (!res.ok) {
+  if (res.status < 200 || res.status >= 300) {
     throw new Error(`Brave Search API error (${res.status})`);
   }
 
-  const data = await res.json();
+  const data = JSON.parse(res.text);
   const results = (data.web?.results ?? []) as { title: string; description: string; url: string }[];
   Zotero.debug(`[ChatPDF] braveSearch: ${results.length} results for "${query}"`);
 
   if (results.length === 0) return `Web search results for: "${query}"\n\nNo results found.`;
 
   const lines = [`Web search results for: "${query}"\n`];
-  for (let i = 0; i < Math.min(results.length, maxResults); i++) {
-    const r = results[i];
+  const returnedResults = limitResults(results, maxResults);
+  for (let i = 0; i < returnedResults.length; i++) {
+    const r = returnedResults[i];
     lines.push(`${i + 1}. ${r.title}`);
     lines.push(`   ${r.description}`);
     lines.push(`   URL: ${r.url}`);
@@ -1049,37 +1087,42 @@ async function braveSearch(query: string, maxResults: number, apiKey: string): P
   return lines.join("\n");
 }
 
-async function duckDuckGoSearch(query: string, maxResults: number): Promise<string> {
+async function duckDuckGoSearch(query: string, maxResults: number | undefined, signal?: AbortSignal): Promise<string> {
   const params = new URLSearchParams({ q: query });
   const url = `https://html.duckduckgo.com/html/?${params}`;
 
-  const res = await fetch(url, {
+  const res = await safeFetchText(url, {
+    signal,
+    maxBytes: DEFAULT_WEB_MAX_BYTES,
+    allowedMimeTypes: /^text\/html$/i,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; ChatPDF/1.0; Zotero)" },
   });
 
-  if (!res.ok) {
+  if (res.status < 200 || res.status >= 300) {
     throw new Error(`DuckDuckGo search error (${res.status})`);
   }
 
-  const html = await res.text();
+  const html = res.text;
   Zotero.debug(`[ChatPDF] duckDuckGoSearch: got ${html.length} chars HTML for "${query}"`);
 
   const results: { title: string; snippet: string; url: string }[] = [];
   const resultPattern = /<div class="result[^"]*"[^>]*>[\s\S]*?<a class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
 
   let m;
-  while ((m = resultPattern.exec(html)) !== null && results.length < maxResults) {
+  while ((m = resultPattern.exec(html)) !== null) {
     const rawUrl = m[1].trim();
     const title = m[2].replace(/<[^>]+>/g, "").trim();
     const snippet = m[3].replace(/<[^>]+>/g, "").trim();
     results.push({ url: rawUrl, title, snippet });
+    if (maxResults !== undefined && results.length >= maxResults) break;
   }
 
   // Fallback: simpler extraction
   if (results.length === 0) {
     const titlePattern = /<a class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/g;
-    while ((m = titlePattern.exec(html)) !== null && results.length < maxResults) {
+    while ((m = titlePattern.exec(html)) !== null) {
       results.push({ url: m[1].trim(), title: m[2].trim(), snippet: "" });
+      if (maxResults !== undefined && results.length >= maxResults) break;
     }
   }
 
@@ -1100,41 +1143,36 @@ async function duckDuckGoSearch(query: string, maxResults: number): Promise<stri
   return lines.join("\n");
 }
 
-async function executeWebFetch(args: Record<string, unknown>): Promise<string> {
-  const url = args.url as string;
+function htmlToText(html: string): string {
+  const Parser = (globalThis as any).DOMParser || (globalThis as any).Zotero?.getMainWindow?.()?.DOMParser;
+  if (!Parser) return html;
+  const doc = new Parser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script,style,noscript,template,svg,math,iframe,object,embed").forEach((node: Element) => node.remove());
+  return (doc.body?.textContent || "").replace(/\s+/g, " ").trim();
+}
 
-  if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    Zotero.debug(`[ChatPDF] web_fetch: blocked non-http URL: ${url}`);
-    return `Error: only http:// and https:// URLs are allowed.`;
-  }
+async function executeWebFetch(args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+  const url = String(args.url || "").trim();
+  if (!url) return "Error: url is required.";
+  const requestedMax = positiveIntegerOrUndefined(args.max_bytes) ?? DEFAULT_WEB_MAX_BYTES;
+  const maxBytes = Math.min(HARD_WEB_MAX_BYTES, requestedMax);
 
   Zotero.debug(`[ChatPDF] web_fetch: fetching ${url}`);
 
-  const res = await fetch(url, {
+  const res = await safeFetchText(url, {
+    signal,
+    maxBytes,
     headers: { "User-Agent": "Mozilla/5.0 (compatible; ChatPDF/1.0; Zotero)" },
   });
 
   Zotero.debug(`[ChatPDF] web_fetch: status=${res.status}, url=${url}`);
 
-  if (!res.ok) {
+  if (res.status < 200 || res.status >= 300) {
     return `Error fetching ${url}: HTTP ${res.status}`;
   }
 
-  const html = await res.text();
-  Zotero.debug(`[ChatPDF] web_fetch: raw content ${html.length} chars from ${url}`);
-
-  let text = html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const maxLen = 50 * 1024;
-  if (text.length > maxLen) {
-    text = text.slice(0, maxLen) + "\n\n[... content truncated at 50KB ...]";
-  }
+  const text = /html|xhtml/i.test(res.contentType) ? htmlToText(res.text) : res.text;
 
   Zotero.debug(`[ChatPDF] web_fetch: cleaned content ${text.length} chars from ${url}`);
-  return `Content from ${url}:\n\n${text}`;
+  return `Content from ${res.finalUrl} (${res.bytesRead} bytes, ${text.length} text characters):\n\n${text}`;
 }

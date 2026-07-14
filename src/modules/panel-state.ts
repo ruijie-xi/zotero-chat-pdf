@@ -2,25 +2,17 @@ import { ChatSession } from "./chat-session";
 import { ChatInputEditor } from "./tiptap-input";
 import { IterationRecord } from "./llm-client";
 
-/** Live state of an active stream (foreground or background). */
 export interface StreamState {
   session: ChatSession;
   abortController: AbortLike;
-  /** Accumulated content text so far. */
   fullText: string;
-  /** Accumulated reasoning/thinking text so far. */
   fullReasoning: string;
-  /** Whether the thinking phase is done. */
   thinkingDone: boolean;
-  /** Total thinking time in seconds (set when thinking completes). */
   thinkingElapsed: number;
-  /** Timestamp when thinking started (for live timer display). */
   thinkingStartTime: number;
-  /** Completed iteration records (for stacked display). */
   iterations: IterationRecord[];
 }
 
-/** Model profile for switching between LLM configurations. */
 export interface ModelProfile {
   name: string;
   apiBase: string;
@@ -30,95 +22,114 @@ export interface ModelProfile {
   thinkEffort?: string;
 }
 
-/** Minimal AbortController-like interface. */
 export interface AbortLike {
-  abort(): void;
+  abort(reason?: unknown): void;
   signal: AbortSignal;
 }
 
-// ---- Singleton mutable state ----
+export interface PanelState {
+  readonly windowId: string;
+  readonly win: Window;
+  session: ChatSession;
+  showingHistory: boolean;
+  chatInput: ChatInputEditor | null;
+  isStreaming: boolean;
+  currentAbortController: AbortLike | null;
+  historyFilterParentKey: string | null;
+  historyFilterTitle: string | null;
+  conversionAbortControllers: Map<string, AbortLike>;
+  backgroundStreams: Map<string, StreamState>;
+  activePollIntervals: Set<number>;
+  copyHandler: ((event: Event) => void) | null;
+}
 
-export let session = new ChatSession();
-export let showingHistory = false;
-export let chatInput: ChatInputEditor | null = null;
-export let isStreaming = false;
-export let currentAbortController: AbortLike | null = null;
+const states = new Map<Window, PanelState>();
 
-/** History filter state */
-export let historyFilterParentKey: string | null = null;
-export let historyFilterTitle: string | null = null;
+function windowFor(target: Window | Document | HTMLElement): Window {
+  if ((target as Window).document) return target as Window;
+  if ((target as Document).defaultView) return (target as Document).defaultView!;
+  const win = (target as HTMLElement).ownerDocument?.defaultView;
+  if (!win) throw new Error("ChatPDF panel is not attached to a window.");
+  return win;
+}
 
-/** AbortControllers for in-progress MinerU conversions, keyed by source key. */
-export const conversionAbortControllers = new Map<string, AbortLike>();
+export function createPanelState(win: Window): PanelState {
+  const existing = states.get(win);
+  if (existing) return existing;
+  const state: PanelState = {
+    windowId: `window-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    win,
+    session: new ChatSession(),
+    showingHistory: false,
+    chatInput: null,
+    isStreaming: false,
+    currentAbortController: null,
+    historyFilterParentKey: null,
+    historyFilterTitle: null,
+    conversionAbortControllers: new Map(),
+    backgroundStreams: new Map(),
+    activePollIntervals: new Set(),
+    copyHandler: null,
+  };
+  states.set(win, state);
+  return state;
+}
 
-/**
- * Track active streams keyed by session ID.
- * When a stream is running for a session that the user navigated away from,
- * this map keeps the live state so we can resume the UI if the user comes back.
- */
-export const backgroundStreams = new Map<string, StreamState>();
+export function getPanelState(target: Window | Document | HTMLElement): PanelState {
+  return createPanelState(windowFor(target));
+}
 
-/** Track active poll intervals for cleanup. */
-export const activePollIntervals = new Set<number>();
+export function destroyPanelState(win: Window): void {
+  const state = states.get(win);
+  if (!state) return;
+  state.currentAbortController?.abort();
+  for (const controller of state.conversionAbortControllers.values()) controller.abort();
+  for (const stream of state.backgroundStreams.values()) stream.abortController.abort();
+  for (const interval of state.activePollIntervals) win.clearInterval(interval);
+  state.chatInput?.destroy();
+  states.delete(win);
+}
 
-/** Store copy handler reference for cleanup in removeChatPanel. */
-export let copyHandler: ((e: Event) => void) | null = null;
-
-// ---- Setters for module-level state ----
-
-export function setSession(s: ChatSession): void { session = s; }
-export function setShowingHistory(v: boolean): void { showingHistory = v; }
-export function setChatInput(v: ChatInputEditor | null): void { chatInput = v; }
-export function setIsStreaming(v: boolean): void { isStreaming = v; }
-export function setCurrentAbortController(v: AbortLike | null): void { currentAbortController = v; }
-export function setHistoryFilterParentKey(v: string | null): void { historyFilterParentKey = v; }
-export function setHistoryFilterTitle(v: string | null): void { historyFilterTitle = v; }
-export function setCopyHandler(v: ((e: Event) => void) | null): void { copyHandler = v; }
-
-// ---- Abort / streaming helpers ----
-
-/** Create an AbortController -- works in both chrome and content contexts. */
-export function createAbortController(): { controller: AbortLike; signal: AbortSignal } {
+export function createAbortController(win?: Window): { controller: AbortLike; signal: AbortSignal } {
   const Ctor = (typeof AbortController !== "undefined")
     ? AbortController
-    : (Zotero.getMainWindow() as any).AbortController;
-  const controller = new Ctor();
+    : (win as any)?.AbortController || (Zotero.getMainWindow() as any).AbortController;
+  const controller = new Ctor() as AbortLike;
   return { controller, signal: controller.signal };
 }
 
-/** Abort the current LLM stream if one is active. */
-export function abortCurrentStream(): void {
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
+export function abortCurrentStream(target?: Window | Document | HTMLElement): void {
+  if (!target) {
+    for (const state of states.values()) abortStateStream(state);
+    return;
   }
-  isStreaming = false;
+  abortStateStream(getPanelState(target));
 }
 
-/** Reset the input UI to the non-streaming state.
- *  Call this whenever switching to a different session so the textarea
- *  and send button aren't stuck in the old stream's "stop" mode.
- *  IMPORTANT: This detaches the currentAbortController so that background
- *  streams continue running even though the UI has moved on. */
+function abortStateStream(state: PanelState): void {
+  state.currentAbortController?.abort();
+  state.currentAbortController = null;
+  state.isStreaming = false;
+}
+
 export function resetStreamingUI(root: HTMLElement): void {
-  currentAbortController = null;
-  isStreaming = false;
-  if (chatInput) chatInput.setEditable(true);
-  const sb = root.querySelector("#chatpdf-send") as HTMLButtonElement;
-  if (sb) setSendButtonToSend(sb);
+  const state = getPanelState(root);
+  state.currentAbortController = null;
+  state.isStreaming = false;
+  state.chatInput?.setEditable(true);
+  const button = root.querySelector("#chatpdf-send") as HTMLButtonElement | null;
+  if (button) setSendButtonToSend(button);
 }
-
-// ---- Send button appearance ----
 
 export function setSendButtonToStop(sendBtn: HTMLButtonElement): void {
-  sendBtn.textContent = "\u25A0"; // square stop icon
+  sendBtn.textContent = "\u25A0";
   sendBtn.title = "Stop";
   sendBtn.classList.add("chatpdf-send-btn-stop");
   sendBtn.disabled = false;
 }
 
 export function setSendButtonToSend(sendBtn: HTMLButtonElement): void {
-  sendBtn.textContent = "\u2191"; // up arrow
+  sendBtn.textContent = "\u2191";
   sendBtn.title = "Send";
   sendBtn.classList.remove("chatpdf-send-btn-stop");
 }

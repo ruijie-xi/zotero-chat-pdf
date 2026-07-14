@@ -9,7 +9,6 @@ class Addon {
     env: "development" | "production";
     initialized?: boolean;
     ztoolkit: ZToolkit;
-    locale?: { current: any };
   };
   public hooks: typeof hooks;
   public api: object;

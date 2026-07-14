@@ -9,14 +9,12 @@ import {
 } from "./mineru-client";
 import * as MDCache from "./md-cache";
 import * as ChatHistory from "./chat-history";
-import {
-  session, conversionAbortControllers, createAbortController,
-} from "./panel-state";
+import { createAbortController, getPanelState, PanelState } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
 
-async function loadCachedChunks(key: string): Promise<Map<number, string>> {
+async function loadCachedChunks(key: string, legacyKey?: string): Promise<Map<number, string>> {
   const chunks = new Map<number, string>();
-  const manifest = await MDCache.readManifest(key);
+  const manifest = await MDCache.readManifest(key, legacyKey);
   if (!manifest) return chunks;
   if (manifest.version < 2) {
     Zotero.debug(`[ChatPDF] Ignoring stale chunk cache for ${key}: manifest version=${manifest.version}`);
@@ -30,7 +28,7 @@ async function loadCachedChunks(key: string): Promise<Map<number, string>> {
   for (const chunk of manifest.chunks) {
     if (chunk.status !== "ready") continue;
     try {
-      chunks.set(chunk.index, await MDCache.readChunk(key, chunk.index));
+      chunks.set(chunk.index, await MDCache.readChunk(key, chunk.index, legacyKey));
     } catch (err: any) {
       Zotero.debug(`[ChatPDF] Failed to read cached chunk ${chunk.index} for ${key}: ${err.message}`);
     }
@@ -119,14 +117,26 @@ function withLineRanges(
 }
 
 /** Convert a pending source to markdown via MinerU. */
-export async function convertSource(source: SourceItem, onProgress?: (msg: string) => void): Promise<void> {
-  session.setSourceStatus(source.key, "converting");
-  const { controller: convController, signal: convSignal } = createAbortController();
-  conversionAbortControllers.set(source.key, convController);
+export async function convertSource(
+  source: SourceItem,
+  onProgress?: (msg: string) => void,
+  externalSignal?: AbortSignal,
+  panelState?: PanelState,
+  targetSession = panelState?.session,
+): Promise<void> {
+  if (!targetSession) throw new Error("Conversion requires an owning chat session.");
+  const controllers = panelState?.conversionAbortControllers ?? new Map();
+  targetSession.setSourceStatus(source.id, "converting");
+  const { controller: convController, signal: convSignal } = createAbortController(panelState?.win);
+  controllers.set(source.id, convController);
+  const forwardAbort = () => convController.abort(externalSignal?.reason);
+  externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+  if (externalSignal?.aborted) forwardAbort();
   onProgress?.("Starting conversion...");
   try {
     let attItem: Zotero.Item | null = null;
     for (const lib of Zotero.Libraries.getAll()) {
+      if (source.libraryID !== undefined && lib.libraryID !== source.libraryID) continue;
       try {
         const found = Zotero.Items.getByLibraryAndKey(lib.libraryID, source.key);
         if (found) { attItem = found; break; }
@@ -139,52 +149,54 @@ export async function convertSource(source: SourceItem, onProgress?: (msg: strin
     const pdfPath = await attItem.getFilePathAsync();
     if (!pdfPath) throw new Error("PDF file not found on disk");
 
-    const cachedChunks = await loadCachedChunks(source.key);
+    const cachedChunks = await loadCachedChunks(source.cacheKey, source.key);
     let manifest: MDCache.DocumentManifest | null = null;
     const result = await convertPdf(
       pdfPath,
       (_status, msg) => onProgress?.(msg),
       convSignal,
       {
-        outputDir: MDCache.getDocDir(source.key),
+        outputDir: MDCache.getDocDir(source.cacheKey),
         cachedChunks,
         onPlan: async (pageCount, chunkSize, plan) => {
           manifest = makeManifest(source.key, source.title, pageCount, chunkSize, plan, cachedChunks);
-          await MDCache.writeManifest(source.key, manifest);
+          await MDCache.writeManifest(source.cacheKey, manifest);
         },
         onChunkConverted: async (chunk) => {
-          await MDCache.writeChunk(source.key, chunk.index, chunk.markdown);
+          await MDCache.writeChunk(source.cacheKey, chunk.index, chunk.markdown);
           if (manifest) {
             manifest = markChunkReady(manifest, chunk);
-            await MDCache.writeManifest(source.key, manifest);
+            await MDCache.writeManifest(source.cacheKey, manifest);
           }
         },
       },
     );
-    await MDCache.write(source.key, result.markdown);
+    await MDCache.write(source.cacheKey, result.markdown);
     if (manifest) {
-      await MDCache.writeManifest(source.key, withLineRanges(manifest, result.markdown));
+      await MDCache.writeManifest(source.cacheKey, withLineRanges(manifest, result.markdown));
     }
-    session.setSourceReady(source.key, result.markdown);
+    targetSession.setSourceReady(source.id, result.markdown);
     onProgress?.("Ready");
   } catch (err: any) {
     if (err.name === "AbortError") {
       Zotero.debug(`[ChatPDF] convertSource aborted for ${source.key}`);
-      session.setSourceStatus(source.key, "pending");
+      targetSession.setSourceStatus(source.id, "pending");
       onProgress?.("Conversion stopped");
     } else {
       Zotero.debug(`[ChatPDF] convertSource error: ${err.message}\n${err.stack}`);
-      session.setSourceStatus(source.key, "error", err.message);
+      targetSession.setSourceStatus(source.id, "error", err.message);
       onProgress?.(err.message);
       throw err;
     }
   } finally {
-    conversionAbortControllers.delete(source.key);
+    externalSignal?.removeEventListener("abort", forwardAbort);
+    controllers.delete(source.id);
   }
 }
 
-function saveCurrentSession(): void {
-  if (!session.hasMessages()) return;
+function saveCurrentSession(root: HTMLElement): void {
+  const { session } = getPanelState(root);
+  if (!session.hasMessages() && session.getSources().length === 0) return;
   ChatHistory.saveSession(session.toSavedSession()).catch((err: any) => {
     Zotero.debug(`[ChatPDF] save after source removal failed: ${err.message}`);
   });
@@ -192,6 +204,8 @@ function saveCurrentSession(): void {
 
 /** Refresh the source chips UI in the panel. */
 export function refreshSourceChips(root: HTMLElement): void {
+  const state = getPanelState(root);
+  const { session } = state;
   const container = root.querySelector("#chatpdf-source-chips");
   if (!container) return;
   const doc = root.ownerDocument!;
@@ -204,7 +218,7 @@ export function refreshSourceChips(root: HTMLElement): void {
     const chipTitle = source.errorMessage || "Open PDF";
     const chip = h(doc, "div", { className: `chatpdf-source-chip chatpdf-source-chip-${source.status}`, title: chipTitle });
     chip.addEventListener("click", () => {
-      openPdfForSourceKey(source.key).catch((err: any) => {
+      openPdfForSourceKey(source.key, source.libraryID).catch((err: any) => {
         Zotero.debug(`[ChatPDF] open source chip failed for ${source.key}: ${err.message}`);
       });
     });
@@ -244,7 +258,7 @@ export function refreshSourceChips(root: HTMLElement): void {
       const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: "Convert" }, "Convert");
       convertBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();
-        convertSource(source, () => refreshSourceChips(root)).catch(() => refreshSourceChips(root));
+        convertSource(source, () => refreshSourceChips(root), undefined, state).catch(() => refreshSourceChips(root));
         refreshSourceChips(root);
       });
       actions.appendChild(convertBtn);
@@ -254,7 +268,7 @@ export function refreshSourceChips(root: HTMLElement): void {
       const stopBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-stop-btn", title: "Stop conversion" }, "Stop");
       stopBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();
-        const controller = conversionAbortControllers.get(source.key);
+        const controller = state.conversionAbortControllers.get(source.id);
         if (controller) {
           Zotero.debug(`[ChatPDF] User stopped conversion for ${source.key}`);
           controller.abort();
@@ -267,14 +281,14 @@ export function refreshSourceChips(root: HTMLElement): void {
     const removeBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-remove-btn", title: "Remove source" }, "Remove");
     removeBtn.addEventListener("click", (e: Event) => {
       e.stopPropagation();
-      const controller = conversionAbortControllers.get(source.key);
+      const controller = state.conversionAbortControllers.get(source.id);
       if (controller) {
         Zotero.debug(`[ChatPDF] Removing source ${source.key}; aborting active conversion`);
         controller.abort();
-        conversionAbortControllers.delete(source.key);
+        state.conversionAbortControllers.delete(source.id);
       }
-      session.removeSource(source.key);
-      saveCurrentSession();
+      session.removeSource(source.id);
+      saveCurrentSession(root);
       refreshSourceChips(root);
     });
     actions.appendChild(removeBtn);

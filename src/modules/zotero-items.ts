@@ -120,8 +120,7 @@ export function getItemCreators(item: Zotero.Item): string[] {
   try {
     return ((item as any).getCreators?.() || [])
       .map(creatorName)
-      .filter(Boolean)
-      .slice(0, 6);
+      .filter(Boolean);
   } catch {
     return [];
   }
@@ -142,8 +141,7 @@ function getItemTags(item: Zotero.Item): string[] {
   try {
     return ((item as any).getTags?.() || [])
       .map((tag: any) => typeof tag === "string" ? tag : tag.tag)
-      .filter(Boolean)
-      .slice(0, 20);
+      .filter(Boolean);
   } catch {
     return [];
   }
@@ -170,8 +168,7 @@ export function getItemCollections(item: Zotero.Item): ZoteroCollectionSummary[]
     return ((item as any).getCollections?.() || [])
       .map((id: number) => (Zotero.Collections as any).get(id))
       .filter(Boolean)
-      .map(summarizeCollection)
-      .slice(0, 10);
+      .map(summarizeCollection);
   } catch {
     return [];
   }
@@ -190,7 +187,7 @@ export function summarizeZoteroItem(item: Zotero.Item): ZoteroItemSummary {
     creators: getItemCreators(source),
     year: getItemYear(source),
     itemType: getItemType(source),
-    abstractNote: abstractNote ? abstractNote.slice(0, 800) : undefined,
+    abstractNote: abstractNote || undefined,
     tags: getItemTags(source),
     collections: getItemCollectionNames(source),
     hasPdf: !!pdf,
@@ -206,20 +203,21 @@ export async function addZoteroItemToSession(item: Zotero.Item, session: ChatSes
   }
 
   const key = pdf.key;
+  const libraryID = Number((pdf as any).libraryID || (item as any).libraryID) || undefined;
   const title = getItemTitle(item);
   const parentKey: string | undefined = item.isRegularItem?.()
     ? item.key
     : (item.parentItem?.key || pdf.parentItem?.key || undefined);
-  const existing = session.getSource(key);
-  const source = session.addSource(key, title, parentKey);
+  const existing = session.getSource(key, libraryID);
+  const source = session.addSource(key, title, parentKey, libraryID);
 
-  if (await MDCache.has(key)) {
-    const md = await MDCache.read(key);
-    session.setSourceReady(key, md);
+  if (await MDCache.has(source.cacheKey, key)) {
+    const md = await MDCache.read(source.cacheKey, key);
+    session.setSourceReady(source.id, md);
   }
 
   return {
-    sourceKey: key,
+    sourceKey: source.id,
     message: existing
       ? `Already in this chat session: "${source.title}" (source key: ${key}, status: ${source.status}).`
       : `Added to this chat session: "${source.title}" (source key: ${key}, status: ${source.status}).`,
@@ -271,8 +269,8 @@ export async function getAllCollections(): Promise<ZoteroCollectionSummary[]> {
   return uniqueByKey(discovered, (collection) => `${collection.libraryID || ""}:${collection.key}`);
 }
 
-export async function openPdfForSourceKey(key: string): Promise<boolean> {
-  const item = getItemByKey(key);
+export async function openPdfForSourceKey(key: string, libraryID?: number): Promise<boolean> {
+  const item = getItemByKey(key, libraryID);
   if (!item) return false;
   const pdf = getPdfAttachment(item);
   if (!pdf) return false;

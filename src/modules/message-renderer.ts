@@ -3,24 +3,21 @@ import { formatTokens, formatMsgTime } from "../utils/format";
 import { renderMarkdown } from "./markdown-renderer";
 import { TokenUsage, IterationRecord } from "./llm-client";
 import { ToolCallRecord } from "./chat-session";
-import {
-  session, backgroundStreams, activePollIntervals, StreamState,
-} from "./panel-state";
+import { getPanelState, StreamState } from "./panel-state";
 import { handleSend } from "./send-handler";
-import { chatInput } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
 
 // Re-export for use by other modules
 export { refreshSourceChips } from "./source-chips";
 
 /** Render small per-message source chips (right-aligned, for user messages). */
-function renderMsgSources(doc: Document, sources: { key: string; title: string }[]): HTMLElement {
+function renderMsgSources(doc: Document, sources: { key: string; libraryID?: number; title: string }[]): HTMLElement {
   const container = h(doc, "div", { className: "chatpdf-msg-sources" });
   for (const src of sources) {
     const chip = h(doc, "button", { className: "chatpdf-msg-source-chip", title: `Open PDF: ${src.title}` }, src.title);
     chip.addEventListener("click", (e: Event) => {
       e.stopPropagation();
-      openPdfForSourceKey(src.key).catch((err: any) => {
+      openPdfForSourceKey(src.key, src.libraryID).catch((err: any) => {
         Zotero.debug(`[ChatPDF] open message source failed for ${src.key}: ${err.message}`);
       });
     });
@@ -60,10 +57,9 @@ export function createToolBlock(doc: Document, toolHistory: ToolCallRecord[], to
     const nameRow = h(doc, "div", { className: "chatpdf-tool-name" }, `${i + 1}. ${tr.toolName}`);
     entry.appendChild(nameRow);
     if (argsStr !== "{}") {
-      entry.appendChild(h(doc, "div", { className: "chatpdf-tool-args" }, argsStr.length > 200 ? argsStr.slice(0, 200) + "\u2026" : argsStr));
+      entry.appendChild(h(doc, "div", { className: "chatpdf-tool-args" }, argsStr));
     }
-    const resultPreview = tr.result.length > 200 ? tr.result.slice(0, 200) + "\u2026" : tr.result;
-    entry.appendChild(h(doc, "div", { className: "chatpdf-tool-result" }, resultPreview));
+    entry.appendChild(h(doc, "div", { className: "chatpdf-tool-result" }, tr.result));
     entry.appendChild(h(doc, "div", { className: "chatpdf-tool-duration" }, `${tr.durationMs}ms`));
     content.appendChild(entry);
   }
@@ -148,7 +144,7 @@ export function appendUsageMeta(container: HTMLElement, usage?: TokenUsage): voi
 }
 
 /** Append a message bubble to the messages area. */
-export function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string, timestamp?: number, sources?: { key: string; title: string }[], modelLabel?: string, toolHistory?: ToolCallRecord[], iterations?: IterationRecord[], usage?: TokenUsage): HTMLElement {
+export function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string, timestamp?: number, sources?: { key: string; libraryID?: number; title: string }[], modelLabel?: string, toolHistory?: ToolCallRecord[], iterations?: IterationRecord[], usage?: TokenUsage): HTMLElement {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return root;
   const doc = root.ownerDocument!;
@@ -251,6 +247,8 @@ export function appendMessage(root: HTMLElement, role: "user" | "assistant", con
 
 /** Enter inline edit mode for a user message bubble. */
 function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement, originalText: string): void {
+  const state = getPanelState(root);
+  const { session } = state;
   const doc = root.ownerDocument!;
 
   bubble.style.display = "none";
@@ -305,7 +303,7 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
     if (msgIndex >= 0) {
       session.truncateHistoryAt(msgIndex);
       // Import dynamically to avoid circular dep
-      import("./send-handler").then(m => m.autoSaveSession());
+      import("./send-handler").then(m => m.autoSaveSession(root));
     }
 
     // Clear all messages from DOM and re-render the remaining history
@@ -323,9 +321,7 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
       }
     }
 
-    if (chatInput) {
-      chatInput.setText(newText);
-    }
+    state.chatInput?.setText(newText);
     handleSend(root);
   });
 
@@ -346,7 +342,7 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
 export function renderChatHistory(root: HTMLElement): void {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return;
-  const history = session.getHistory();
+  const history = getPanelState(root).session.getHistory();
   if (history.length > 0) {
     const welcome = messagesEl.querySelector(".chatpdf-welcome");
     if (welcome) welcome.remove();
@@ -366,7 +362,8 @@ export function renderChatHistory(root: HTMLElement): void {
  * Render the current state of a live background stream as an assistant bubble
  * and set up a polling interval to live-update as the stream progresses.
  */
-export function renderLiveStreamState(root: HTMLElement, state: StreamState): void {
+export function renderLiveStreamState(root: HTMLElement, stream: StreamState): void {
+  const panelState = getPanelState(root);
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return;
   const doc = root.ownerDocument!;
@@ -415,53 +412,53 @@ export function renderLiveStreamState(root: HTMLElement, state: StreamState): vo
   }
 
   function updateReasoning() {
-    if (!state.fullReasoning) return;
+    if (!stream.fullReasoning) return;
     if (dots && dots.parentNode) dots.remove();
     ensureReasoningBlock();
 
-    if (state.fullReasoning.length !== lastReasoningLen) {
-      reasoningContentEl!.textContent = state.fullReasoning;
-      lastReasoningLen = state.fullReasoning.length;
+    if (stream.fullReasoning.length !== lastReasoningLen) {
+      reasoningContentEl!.textContent = stream.fullReasoning;
+      lastReasoningLen = stream.fullReasoning.length;
       scrollToBottomIfNeeded(messagesEl!);
     }
 
-    if (!state.thinkingDone && state.thinkingStartTime > 0 && reasoningTimerEl) {
-      const elapsed = Math.floor((Date.now() - state.thinkingStartTime) / 1000);
+    if (!stream.thinkingDone && stream.thinkingStartTime > 0 && reasoningTimerEl) {
+      const elapsed = Math.floor((Date.now() - stream.thinkingStartTime) / 1000);
       reasoningTimerEl.textContent = `${elapsed}s`;
     }
 
-    if (state.thinkingDone && !wasThinkingDone) {
+    if (stream.thinkingDone && !wasThinkingDone) {
       wasThinkingDone = true;
       if (reasoningSpinner) reasoningSpinner.remove();
       if (reasoningLabel) reasoningLabel.textContent = "Thought";
       if (reasoningTimerEl) {
-        reasoningTimerEl.textContent = state.thinkingElapsed > 0 ? `${state.thinkingElapsed}s` : "";
+        reasoningTimerEl.textContent = stream.thinkingElapsed > 0 ? `${stream.thinkingElapsed}s` : "";
       }
       if (reasoningBlock) reasoningBlock.classList.remove("chatpdf-reasoning-expanded");
     }
   }
 
   function updateContent() {
-    if (state.fullText.length === lastTextLen) return;
-    lastTextLen = state.fullText.length;
+    if (stream.fullText.length === lastTextLen) return;
+    lastTextLen = stream.fullText.length;
     if (dots && dots.parentNode) dots.remove();
     if (!contentWrap) {
       contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
       bubble.appendChild(contentWrap);
     }
     try {
-      contentWrap.innerHTML = renderMarkdown(state.fullText);
+      contentWrap.innerHTML = renderMarkdown(stream.fullText);
     } catch {
-      contentWrap.textContent = state.fullText;
+      contentWrap.textContent = stream.fullText;
     }
     scrollToBottomIfNeeded(messagesEl!);
   }
 
   updateReasoning();
-  if (state.thinkingDone) wasThinkingDone = true;
+  if (stream.thinkingDone) wasThinkingDone = true;
   updateContent();
 
-  if (!state.fullText) {
+  if (!stream.fullText) {
     dots = h(doc, "div", { className: "chatpdf-thinking" });
     for (let i = 0; i < 3; i++) {
       dots.appendChild(doc.createElementNS("http://www.w3.org/1999/xhtml", "span"));
@@ -474,13 +471,13 @@ export function renderLiveStreamState(root: HTMLElement, state: StreamState): vo
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
   const pollInterval = win.setInterval(() => {
-    if (!backgroundStreams.has(state.session.id) || !row.isConnected) {
+    if (!panelState.backgroundStreams.has(stream.session.id) || !row.isConnected) {
       win.clearInterval(pollInterval);
-      activePollIntervals.delete(pollInterval);
+      panelState.activePollIntervals.delete(pollInterval);
       return;
     }
     updateReasoning();
     updateContent();
   }, 100) as unknown as number;
-  activePollIntervals.add(pollInterval);
+  panelState.activePollIntervals.add(pollInterval);
 }
