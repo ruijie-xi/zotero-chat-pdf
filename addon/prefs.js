@@ -10,6 +10,7 @@ pref("cacheDir", "");
 pref("systemPrompt", "");
 pref("modelProfiles", "[]");
 pref("activeProfile", "");
+pref("panelWidth", 350);
 pref("agentMaxIterations", 10);
 pref("contextMaxChars", 240000);
 pref("enableWebTools", false);

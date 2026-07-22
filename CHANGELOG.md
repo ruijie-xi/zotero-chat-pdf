@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+## 0.8.6
+
+### Fixed
+
+- Replace nearest-sibling XUL splitter resizing with explicit full-layout panel resizing, including reliable width persistence, window-aware clamping, keyboard resizing, and cleanup of temporary Zotero layout overrides.
+
 ## 0.8.5
 
 ### Fixed

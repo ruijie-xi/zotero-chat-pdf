@@ -22,6 +22,7 @@ export type FluentMessageId =
   | 'pref-mineru-timeout'
   | 'pref-mineru-token'
   | 'pref-model-profiles'
+  | 'pref-panel-width'
   | 'pref-profile-name'
   | 'pref-system-prompt'
   | 'pref-title';

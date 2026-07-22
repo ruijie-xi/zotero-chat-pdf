@@ -19,6 +19,7 @@ declare namespace _ZoteroTypes {
       "systemPrompt": string;
       "modelProfiles": string;
       "activeProfile": string;
+      "panelWidth": number;
       "agentMaxIterations": number;
       "contextMaxChars": number;
       "enableWebTools": boolean;

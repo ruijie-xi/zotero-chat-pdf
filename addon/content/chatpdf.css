@@ -3,25 +3,50 @@
 /* Side panel container (XUL vbox) */
 #chatpdf-panel-container {
   min-width: 280px;
+  max-width: none;
+  flex: 0 0 auto;
+  box-sizing: border-box;
   container-type: inline-size;
   background: var(--material-background, #fff);
   border-left: 1px solid var(--fill-quinary, #e0e0e0);
   overflow: hidden;
 }
 
-/* XUL splitter between item pane and chat panel */
+#chatpdf-panel-container.chatpdf-panel-minimized {
+  min-width: 36px;
+}
+
+/* Explicit resize handle between Zotero and the chat panel */
 #chatpdf-splitter {
   width: 5px;
   min-width: 5px;
+  max-width: 5px;
+  flex: 0 0 5px;
+  align-self: stretch;
   cursor: col-resize;
   background: transparent;
   border: none;
   appearance: none;
   -moz-appearance: none;
+  user-select: none;
+  -moz-user-select: none;
 }
 
 #chatpdf-splitter:hover {
   background: var(--color-accent10, rgba(66, 133, 244, 0.12));
+}
+
+#chatpdf-splitter:focus-visible {
+  background: var(--color-accent10, rgba(66, 133, 244, 0.12));
+  outline: 1px solid var(--color-accent, #4285f4);
+  outline-offset: -1px;
+}
+
+.chatpdf-panel-resizing,
+.chatpdf-panel-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+  -moz-user-select: none !important;
 }
 
 #chatpdf-root {

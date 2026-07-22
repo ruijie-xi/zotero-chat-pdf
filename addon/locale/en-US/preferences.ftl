@@ -8,6 +8,7 @@ pref-llm-model = Model Name
 pref-llm-thinking-mode = Thinking Mode
 pref-llm-think-effort = Think Effort
 pref-llm-test = LLM API Test
+pref-panel-width = Preferred panel width (pixels)
 pref-cache-dir = Cache Directory
 pref-debug-log-mode = Debug log content
 pref-debug-log-retention = Debug log retention (days)

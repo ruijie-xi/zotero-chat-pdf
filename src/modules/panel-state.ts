@@ -41,6 +41,7 @@ export interface PanelState {
   backgroundStreams: Map<string, StreamState>;
   activePollIntervals: Set<number>;
   copyHandler: ((event: Event) => void) | null;
+  panelCleanup: (() => void) | null;
 }
 
 const states = new Map<Window, PanelState>();
@@ -70,6 +71,7 @@ export function createPanelState(win: Window): PanelState {
     backgroundStreams: new Map(),
     activePollIntervals: new Set(),
     copyHandler: null,
+    panelCleanup: null,
   };
   states.set(win, state);
   return state;
@@ -86,6 +88,8 @@ export function destroyPanelState(win: Window): void {
   for (const controller of state.conversionAbortControllers.values()) controller.abort();
   for (const stream of state.backgroundStreams.values()) stream.abortController.abort();
   for (const interval of state.activePollIntervals) win.clearInterval(interval);
+  state.panelCleanup?.();
+  state.panelCleanup = null;
   state.chatInput?.destroy();
   states.delete(win);
 }

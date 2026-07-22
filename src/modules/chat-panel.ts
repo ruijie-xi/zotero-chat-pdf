@@ -18,10 +18,31 @@ import {
   getItemTitle,
   getPdfAttachment,
 } from "./zotero-items";
+import {
+  clampPanelWidth,
+  PANEL_DEFAULT_WIDTH,
+  PANEL_MIN_WIDTH,
+  PANEL_MINIMIZED_WIDTH,
+  PANEL_RESIZE_STEP,
+  normalizePreferredPanelWidth,
+  panelWidthAfterDrag,
+  relaxHostWidthConstraints,
+} from "./panel-resize";
 
 // Re-export for external consumers (hooks.ts, etc.)
 export { showFilteredHistory } from "./history-view";
 export { abortCurrentStream } from "./panel-state";
+
+const CHAT_PANEL_ID = "chatpdf-panel-container";
+
+function getPersistedPanelWidth(): number {
+  return normalizePreferredPanelWidth(getPref("panelWidth"))
+    ?? PANEL_DEFAULT_WIDTH;
+}
+
+function persistPanelWidth(width: number): void {
+  setPref("panelWidth", Math.round(width));
+}
 
 // ---- Model profile helpers ----
 
@@ -77,20 +98,21 @@ function insertInputChip(source: SourceItem, _doc: Document, root: HTMLElement):
 export function injectChatPanel(win: Window): void {
   const doc = win.document;
 
-  if (doc.getElementById("chatpdf-panel-container")) return;
+  if (doc.getElementById(CHAT_PANEL_ID)) return;
 
   const itemPane = doc.getElementById("zotero-context-pane-inner")
     || doc.getElementById("zotero-item-pane")
     || doc.getElementById("zotero-context-pane");
 
-  const layoutBox = doc.getElementById("zotero-layout")
+  const layoutBox = doc.getElementById("tabs-deck")?.parentElement
     || itemPane?.closest("hbox")
-    || doc.querySelector("#main-window hbox");
+    || doc.getElementById("browser");
 
   if (!layoutBox) {
     Zotero.debug("[ChatPDF] Could not find layout container to inject panel");
     return;
   }
+  const hostLayout = layoutBox as HTMLElement;
 
   const state = createPanelState(win);
 
@@ -107,16 +129,21 @@ export function injectChatPanel(win: Window): void {
   cssLink.id = "chatpdf-main-css";
   doc.documentElement?.appendChild(cssLink);
 
-  const splitter = doc.createElementNS(XUL_NS, "splitter") as HTMLElement;
+  // Use an XHTML handle with explicit drag logic. A native XUL splitter stops
+  // when its nearest Zotero sibling reaches min-width and creates an apparent
+  // proportional maximum.
+  const splitter = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
   splitter.id = "chatpdf-splitter";
-  splitter.setAttribute("resizebefore", "closest");
-  splitter.setAttribute("resizeafter", "closest");
+  splitter.setAttribute("role", "separator");
+  splitter.setAttribute("aria-orientation", "vertical");
+  splitter.setAttribute("aria-label", "Resize ChatPDF panel");
+  splitter.tabIndex = 0;
 
   const vbox = doc.createElementNS(XUL_NS, "vbox") as HTMLElement;
-  vbox.id = "chatpdf-panel-container";
-  vbox.setAttribute("width", "350");
+  vbox.id = CHAT_PANEL_ID;
   vbox.setAttribute("flex", "0");
-  vbox.setAttribute("persist", "width");
+  let preferredWidth = getPersistedPanelWidth();
+  vbox.setAttribute("width", String(preferredWidth));
 
   const root = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
   root.id = "chatpdf-root";
@@ -133,34 +160,148 @@ export function injectChatPanel(win: Window): void {
   minimizedBar.appendChild(minimizedLabel);
   vbox.appendChild(minimizedBar);
 
+  let minimized = false;
+  let dragging = false;
+  let dragStartX = 0;
+  let dragStartWidth = 0;
+  let panelIsAfterSplitter = true;
+
+  function layoutWidth(): number {
+    return hostLayout.getBoundingClientRect().width || win.innerWidth;
+  }
+
+  function splitterWidth(): number {
+    return splitter.getBoundingClientRect().width || 5;
+  }
+
+  function reservedLayoutWidth(): number {
+    let width = splitterWidth();
+    for (const child of Array.from(hostLayout.children)) {
+      if (child === splitter || child === vbox) continue;
+      if (child.localName !== "splitter" && !child.id.includes("splitter")) continue;
+      width += child.getBoundingClientRect().width;
+    }
+    return width;
+  }
+
+  function renderPanelWidth(): void {
+    const availableWidth = layoutWidth();
+    const reservedWidth = reservedLayoutWidth();
+    const renderedWidth = minimized
+      ? PANEL_MINIMIZED_WIDTH
+      : clampPanelWidth(preferredWidth, availableWidth, reservedWidth);
+    vbox.style.width = `${renderedWidth}px`;
+    vbox.style.flexBasis = `${renderedWidth}px`;
+    if (!minimized) {
+      vbox.setAttribute("width", String(preferredWidth));
+      splitter.setAttribute("aria-valuemin", String(Math.min(PANEL_MIN_WIDTH, Math.max(0, availableWidth - reservedWidth))));
+      splitter.setAttribute("aria-valuemax", String(Math.max(0, Math.round(availableWidth - reservedWidth))));
+      splitter.setAttribute("aria-valuenow", String(renderedWidth));
+    }
+  }
+
+  function setPreferredWidth(width: number, persist = false): void {
+    preferredWidth = clampPanelWidth(width, layoutWidth(), reservedLayoutWidth());
+    renderPanelWidth();
+    if (persist) persistPanelWidth(preferredWidth);
+  }
+
+  function finishResize() {
+    if (!dragging) return;
+    dragging = false;
+    doc.documentElement?.classList.remove("chatpdf-panel-resizing");
+    win.removeEventListener("mousemove", onResizeMove, true);
+    win.removeEventListener("mouseup", finishResize, true);
+    persistPanelWidth(preferredWidth);
+  }
+
+  function onResizeMove(event: Event) {
+    if (!dragging) return;
+    const requestedWidth = panelWidthAfterDrag(
+      dragStartWidth,
+      dragStartX,
+      (event as MouseEvent).clientX,
+      panelIsAfterSplitter,
+    );
+    setPreferredWidth(requestedWidth);
+  }
+
+  function startResize(event: Event) {
+    const mouseEvent = event as MouseEvent;
+    if (mouseEvent.button !== 0 || minimized) return;
+    mouseEvent.preventDefault();
+    mouseEvent.stopPropagation();
+    dragging = true;
+    dragStartX = mouseEvent.clientX;
+    dragStartWidth = vbox.getBoundingClientRect().width;
+    panelIsAfterSplitter = splitter.getBoundingClientRect().left <= vbox.getBoundingClientRect().left;
+    doc.documentElement?.classList.add("chatpdf-panel-resizing");
+    win.addEventListener("mousemove", onResizeMove, true);
+    win.addEventListener("mouseup", finishResize, true);
+  }
+
+  splitter.addEventListener("mousedown", startResize);
+  splitter.addEventListener("dblclick", () => setPreferredWidth(PANEL_DEFAULT_WIDTH, true));
+  splitter.addEventListener("keydown", (event: Event) => {
+    const keyEvent = event as KeyboardEvent;
+    if (keyEvent.key !== "ArrowLeft" && keyEvent.key !== "ArrowRight") return;
+    keyEvent.preventDefault();
+    const panelAfterHandle = splitter.getBoundingClientRect().left <= vbox.getBoundingClientRect().left;
+    const pointerDelta = keyEvent.key === "ArrowRight" ? PANEL_RESIZE_STEP : -PANEL_RESIZE_STEP;
+    setPreferredWidth(
+      panelWidthAfterDrag(preferredWidth, 0, pointerDelta, panelAfterHandle),
+      true,
+    );
+  });
+
   // --- Minimize / Restore logic ---
-  let savedWidth = "350";
 
   function minimizePanel() {
-    savedWidth = vbox.getAttribute("width") || "350";
+    minimized = true;
     root.style.display = "none";
     minimizedBar.style.display = "";
-    vbox.setAttribute("width", "36");
-    vbox.style.minWidth = "36px";
-    vbox.style.maxWidth = "36px";
-    splitter.setAttribute("state", "collapsed");
+    vbox.classList.add("chatpdf-panel-minimized");
     splitter.style.display = "none";
+    renderPanelWidth();
   }
 
   function restorePanel() {
+    minimized = false;
     minimizedBar.style.display = "none";
     root.style.display = "";
-    vbox.setAttribute("width", savedWidth);
-    vbox.style.minWidth = "";
-    vbox.style.maxWidth = "";
-    splitter.removeAttribute("state");
+    vbox.classList.remove("chatpdf-panel-minimized");
     splitter.style.display = "";
+    renderPanelWidth();
   }
 
   minimizedBar.addEventListener("click", restorePanel);
 
-  layoutBox.appendChild(splitter);
-  layoutBox.appendChild(vbox);
+  hostLayout.appendChild(splitter);
+  hostLayout.appendChild(vbox);
+
+  const restoreHostConstraints = relaxHostWidthConstraints(hostLayout, vbox, splitter);
+  const onWindowResize = () => renderPanelWidth();
+  const ResizeObserverCtor = (win as any).ResizeObserver as typeof ResizeObserver | undefined;
+  const layoutResizeObserver = ResizeObserverCtor
+    ? new ResizeObserverCtor(onWindowResize)
+    : null;
+  layoutResizeObserver?.observe(hostLayout);
+  win.addEventListener("resize", onWindowResize);
+  win.addEventListener("blur", finishResize, true);
+  renderPanelWidth();
+
+  let cleanedUp = false;
+  state.panelCleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    finishResize();
+    win.removeEventListener("resize", onWindowResize);
+    win.removeEventListener("blur", finishResize, true);
+    layoutResizeObserver?.disconnect();
+    splitter.removeEventListener("mousedown", startResize);
+    restoreHostConstraints();
+    doc.documentElement?.classList.remove("chatpdf-panel-resizing");
+  };
 
   // Build the chat UI once — it persists for the window lifetime
   buildChatUI(root, minimizePanel);
@@ -172,6 +313,8 @@ export function removeChatPanel(win: Window): void {
   const state = getPanelState(win);
   const root = doc.querySelector("#chatpdf-root") as HTMLElement | null;
   if (root) autoSaveSession(root).catch((error: any) => Zotero.debug(`[ChatPDF] unload save failed: ${error.message}`));
+  state.panelCleanup?.();
+  state.panelCleanup = null;
 
   // Clean up copy handler
   if (state.copyHandler) {
@@ -187,7 +330,7 @@ export function removeChatPanel(win: Window): void {
   state.chatInput?.destroy();
   state.chatInput = null;
 
-  doc.getElementById("chatpdf-panel-container")?.remove();
+  doc.getElementById(CHAT_PANEL_ID)?.remove();
   doc.getElementById("chatpdf-splitter")?.remove();
   doc.getElementById("chatpdf-katex-css")?.remove();
   doc.getElementById("chatpdf-main-css")?.remove();
