@@ -15,7 +15,7 @@ The source code is available for adaptation. You can use AI coding agents to hel
 ## Features
 
 - Chat with one or more Zotero PDFs without leaving Zotero.
-- Search your Zotero library and add relevant papers from the conversation.
+- Search your Zotero library or remembered annotation text and add relevant papers from the conversation.
 - Convert long PDFs in resumable chunks and preserve extracted images locally.
 - Stream answers with Markdown, LaTeX, reasoning, tool activity, and token usage.
 - Keep separate chat sessions, source lists, and background work in each Zotero window.
@@ -35,7 +35,7 @@ The source code is available for adaptation. You can use AI coding agents to hel
 3. Open the gear menu and select **Install Add-on From File…**.
 4. Choose the downloaded XPI and restart Zotero.
 
-Install a newer XPI the same way to upgrade. Your settings, converted documents, and chat history remain in the configured cache directory.
+The first installation still uses the XPI file. Starting with the next release, Zotero can discover later ChatPDF versions through **Tools → Add-ons → Gear → Check for Updates…**, and can install them automatically when add-on updates are enabled. Your settings, converted documents, and chat history remain in the configured cache directory.
 
 ## Setup
 

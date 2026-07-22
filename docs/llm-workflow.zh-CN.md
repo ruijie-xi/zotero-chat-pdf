@@ -119,6 +119,7 @@ ChatPDF 运行在 Zotero 的 Firefox 特权 chrome 上下文中，而不是 Node
 ### Zotero 工具
 
 - `search_zotero_library`
+- `search_zotero_annotations`
 - `get_zotero_item`
 - `list_zotero_collections`
 - `list_collection_items`
@@ -127,7 +128,7 @@ ChatPDF 运行在 Zotero 的 Firefox 特权 chrome 上下文中，而不是 Node
 - `convert_session_source`
 - `add_and_convert_zotero_item`
 
-查找 schema 支持 `library_id`。列表/搜索工具不施加隐藏结果上限；调用者可选限制仍是显式参数。
+查找 schema 支持 `library_id`。`search_zotero_annotations` 在省略 `query` 时列出标注；提供查询时搜索高亮正文、批注、标签及对应论文元数据，并返回 annotation、附件和论文条目的 key。列表/搜索工具不施加隐藏结果上限；调用者可选限制仍是显式参数。
 
 ### 网络工具
 

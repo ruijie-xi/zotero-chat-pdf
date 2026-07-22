@@ -119,6 +119,7 @@ These tools accept stable source IDs and refuse sources outside TurnScope. Full-
 ### Zotero Tools
 
 - `search_zotero_library`
+- `search_zotero_annotations`
 - `get_zotero_item`
 - `list_zotero_collections`
 - `list_collection_items`
@@ -127,7 +128,7 @@ These tools accept stable source IDs and refuse sources outside TurnScope. Full-
 - `convert_session_source`
 - `add_and_convert_zotero_item`
 
-Lookup schemas support `library_id`. List/search tools do not silently impose hidden result caps; optional caller limits remain explicit.
+Lookup schemas support `library_id`. `search_zotero_annotations` lists annotations when `query` is omitted, or searches highlighted text, comments, tags, and corresponding paper metadata when a query is provided. It returns annotation, attachment, and bibliographic item keys. List/search tools do not silently impose hidden result caps; optional caller limits remain explicit.
 
 ### Web Tools
 

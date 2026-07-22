@@ -17,7 +17,7 @@
       "id": "__addonID__",
       "strict_min_version": "6.999",
       "strict_max_version": "9.*",
-      "update_url": "https://github.com/ruijie-xi/zotero-chat-pdf/releases/download/release/update.json"
+      "update_url": "__updateURL__"
     }
   }
 }

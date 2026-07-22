@@ -1,13 +1,14 @@
 {
   "name": "zotero-plugin-chatpdf",
   "type": "module",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Chat with your PDFs using LLMs in Zotero",
   "repository": {
     "type": "git",
     "url": "https://github.com/ruijie-xi/zotero-chat-pdf.git"
   },
   "overrides": {
+    "adm-zip": "0.6.0",
     "defu": "6.1.7",
     "esbuild": "0.28.1",
     "markdown-it": "14.3.0"
@@ -17,16 +18,20 @@
     "addonID": "chatpdf@zotero-plugin",
     "addonRef": "chatpdf",
     "addonInstance": "ChatPDF",
-    "prefsPrefix": "extensions.zotero.chatpdf"
+    "prefsPrefix": "extensions.zotero.chatpdf",
+    "xpiName": "chat-pdf",
+    "xpiDownloadLink": "https://github.com/ruijie-xi/zotero-chat-pdf/releases/download/v{{version}}/{{xpiName}}.xpi",
+    "updateURL": "https://github.com/ruijie-xi/zotero-chat-pdf/releases/download/release/update.json"
   },
   "scripts": {
     "start": "zotero-plugin serve",
     "build": "zotero-plugin build",
     "typecheck": "tsc --noEmit --pretty false",
-    "lint": "eslint src tests --max-warnings 0",
+    "lint": "eslint src tests scripts --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
     "verify": "npm run typecheck && npm run lint && npm test && npm run build",
+    "verify:release": "node scripts/validate-release.mjs",
     "release": "zotero-plugin release"
   },
   "dependencies": {

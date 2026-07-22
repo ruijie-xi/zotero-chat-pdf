@@ -10,11 +10,14 @@ import {
 } from "./safe-web-client";
 import {
   addZoteroItemToSession,
+  getAllAnnotations,
   getAllCollections,
   getAllLibraryItems,
   getItemByKey,
   getPdfAttachment,
   summarizeZoteroItem,
+  summarizeZoteroAnnotation,
+  ZoteroAnnotationSummary,
   ZoteroCollectionSummary,
   ZoteroItemSummary,
 } from "./zotero-items";
@@ -68,6 +71,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
   read_document_chunk: { readOnly: true, mutatesSession: false, network: false, costly: false },
   search_document: { readOnly: true, mutatesSession: false, network: false, costly: false },
   search_zotero_library: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  search_zotero_annotations: { readOnly: true, mutatesSession: false, network: false, costly: false },
   get_zotero_item: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_zotero_collections: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_collection_items: { readOnly: true, mutatesSession: false, network: false, costly: false },
@@ -229,6 +233,27 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
             has_pdf: { type: "boolean", description: "If true, only return items with PDF attachments; if false, only without PDFs" },
           },
           required: ["query"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "search_zotero_annotations",
+        description:
+          "Search or list the user's Zotero annotations. Searches highlighted text, comments, tags, and the corresponding paper metadata. " +
+          "Omit query to list annotations. Results include annotation, attachment, and bibliographic item keys so the matching paper can be identified. " +
+          "This is read-only.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Optional text remembered from a highlight/comment, tag, paper title, author, or year. Omit to list annotations." },
+            item_key: { type: "string", description: "Optional bibliographic item, attachment, or annotation key to restrict results" },
+            library_id: { type: "integer", description: "Optional Zotero library ID, useful when keys may be ambiguous across libraries" },
+            annotation_type: { type: "string", description: "Optional type filter, e.g. highlight, underline, note, image, ink, or text" },
+            max_results: { type: "integer", description: "Optional cap on the number of annotations. Omit to return all matching annotations." },
+          },
+          required: [],
         },
       },
     },
@@ -416,6 +441,9 @@ export async function executeTool(
         break;
       case "search_zotero_library":
         result = await executeSearchZoteroLibrary(args, session);
+        break;
+      case "search_zotero_annotations":
+        result = await executeSearchZoteroAnnotations(args);
         break;
       case "get_zotero_item":
         result = await executeGetZoteroItem(args, session);
@@ -735,6 +763,24 @@ function formatZoteroItemSummary(item: ZoteroItemSummary, session?: ChatSession,
   return lines.join("\n");
 }
 
+function formatZoteroAnnotationSummary(annotation: ZoteroAnnotationSummary, index: number): string {
+  const lines = [`${index}. ${annotation.title}`];
+  lines.push(`   annotation_key: ${annotation.key}`);
+  lines.push(`   libraryID: ${annotation.libraryID}`);
+  lines.push(`   type: ${annotation.type}`);
+  if (annotation.itemKey) lines.push(`   item_key: ${annotation.itemKey}`);
+  if (annotation.attachmentKey) lines.push(`   attachment_key: ${annotation.attachmentKey}`);
+  if (annotation.pageLabel) lines.push(`   page: ${annotation.pageLabel}`);
+  if (annotation.color) lines.push(`   color: ${annotation.color}`);
+  if (annotation.year) lines.push(`   year: ${annotation.year}`);
+  lines.push(`   creators: ${formatCreators(annotation.creators)}`);
+  if (annotation.tags.length) lines.push(`   tags: ${annotation.tags.join(", ")}`);
+  if (annotation.text) lines.push(`   highlighted_text: ${annotation.text}`);
+  if (annotation.comment) lines.push(`   comment: ${annotation.comment}`);
+  if (annotation.dateModified) lines.push(`   date_modified: ${annotation.dateModified}`);
+  return lines.join("\n");
+}
+
 function formatCollectionSummary(collection: ZoteroCollectionSummary, index: number): string {
   const lines = [`${index}. ${collection.name}`];
   lines.push(`   key: ${collection.key}`);
@@ -797,6 +843,20 @@ function libraryQueryScore(item: ZoteroItemSummary, query: string): number {
   ].join(" "), query);
 }
 
+function annotationQueryScore(annotation: ZoteroAnnotationSummary, query: string): number {
+  const annotationContent = [
+    annotation.text || "",
+    annotation.comment || "",
+    annotation.tags.join(" "),
+  ].join(" ");
+  const paperMetadata = [
+    annotation.title,
+    annotation.creators.join(" "),
+    annotation.year || "",
+  ].join(" ");
+  return fuzzyTextScore(annotationContent, query) * 3 + fuzzyTextScore(paperMetadata, query);
+}
+
 async function executeSearchZoteroLibrary(args: Record<string, unknown>, session: ChatSession): Promise<string> {
   const query = String(args.query || "").trim();
   if (!query) return "Error: query is required.";
@@ -825,6 +885,47 @@ async function executeSearchZoteroLibrary(args: Record<string, unknown>, session
   summaries.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
   lines.push("These results are read-only. You may add or convert relevant PDFs if needed to answer; use judgment and warn the user about cost/time before extreme bulk conversions.");
   return lines.join("\n");
+}
+
+async function executeSearchZoteroAnnotations(args: Record<string, unknown>): Promise<string> {
+  const query = String(args.query || "").trim();
+  const itemKey = String(args.item_key || "").trim() || undefined;
+  const libraryID = positiveIntegerOrUndefined(args.library_id);
+  const annotationType = String(args.annotation_type || "").trim().toLowerCase();
+  const maxResults = positiveIntegerOrUndefined(args.max_results);
+
+  if (itemKey && !(getItemByKey(itemKey, libraryID))) {
+    return `Error: Zotero item "${itemKey}" was not found.`;
+  }
+
+  const allAnnotations = (await getAllAnnotations(itemKey, libraryID))
+    .map(summarizeZoteroAnnotation)
+    .filter((annotation) => !annotationType || annotation.type.toLowerCase() === annotationType)
+    .filter((annotation) => !query || annotationQueryScore(annotation, query) > 0)
+    .sort((a, b) => {
+      if (query) {
+        const scoreDifference = annotationQueryScore(b, query) - annotationQueryScore(a, query);
+        if (scoreDifference !== 0) return scoreDifference;
+      }
+      return String(b.dateModified || "").localeCompare(String(a.dateModified || ""));
+    });
+  const annotations = limitResults(allAnnotations, maxResults);
+
+  if (allAnnotations.length === 0) {
+    const scope = itemKey ? ` for Zotero item "${itemKey}"` : "";
+    return query
+      ? `No Zotero annotations found for "${query}"${scope}.`
+      : `No Zotero annotations found${scope}.`;
+  }
+
+  const heading = query
+    ? `Zotero annotation results for "${query}"`
+    : "Zotero annotations";
+  return [
+    `${heading} (${countLabel(annotations.length, allAnnotations.length)}):`,
+    "",
+    ...annotations.map((annotation, index) => formatZoteroAnnotationSummary(annotation, index + 1)),
+  ].join("\n\n");
 }
 
 async function executeGetZoteroItem(args: Record<string, unknown>, session: ChatSession): Promise<string> {

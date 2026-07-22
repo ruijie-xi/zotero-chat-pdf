@@ -4,6 +4,22 @@
 
 ## Unreleased
 
+## 0.8.4
+
+### New Features
+
+- Add a read-only Zotero annotation agent tool that can list annotations or search highlighted text, comments, tags, and corresponding paper metadata.
+
+### Fixed
+
+- Validate release versions, XPI metadata, update URLs, compatibility bounds, and SHA-512 hashes before publishing; keep the fixed update-manifest release from replacing the latest user-facing release.
+
+### Security
+
+- Override the vulnerable transitive `adm-zip` dependency with version 0.6.0; `npm audit --audit-level=low` reports no known vulnerabilities.
+
+## 0.8.3
+
 ### Fixed
 
 - Read Firefox DNS callback results through `nsIDNSAddrRecord`, restoring `web_search` and `web_fetch` in Zotero 7 while retaining private-network validation.

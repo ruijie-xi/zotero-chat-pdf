@@ -4,6 +4,22 @@
 
 ## 尚未发布
 
+## 0.8.4
+
+### 新功能
+
+- 新增只读 Zotero 标注 Agent 工具，可列出标注，或搜索高亮正文、批注、标签及对应论文元数据。
+
+### 修复
+
+- 发布前校验版本号、XPI 元数据、更新 URL、兼容范围和 SHA-512 哈希；固定更新清单 Release 不再覆盖面向用户的 Latest Release。
+
+### 安全
+
+- 将存在漏洞的传递依赖 `adm-zip` 覆盖为 0.6.0；`npm audit --audit-level=low` 当前无已知漏洞。
+
+## 0.8.3
+
 ### 修复
 
 - 通过 `nsIDNSAddrRecord` 读取 Firefox DNS 回调结果，恢复 Zotero 7 中的 `web_search` 和 `web_fetch`，同时保留私有网络校验。

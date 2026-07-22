@@ -19,6 +19,24 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
+      - name: Resolve and validate version
+        id: version
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${DISPATCH_VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "Release version $VERSION does not match package.json version $PACKAGE_VERSION" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
@@ -37,17 +55,8 @@ jobs:
           npm audit --audit-level=low
           npm run verify
 
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-            echo "tag=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-            echo "version=${TAG#v}" >> $GITHUB_OUTPUT
-            echo "tag=$TAG" >> $GITHUB_OUTPUT
-          fi
+      - name: Verify release artifacts and update manifest
+        run: npm run verify:release -- --version "${{ steps.version.outputs.version }}"
 
       - name: Extract changelog
         id: changelog
@@ -66,25 +75,51 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ steps.version.outputs.tag }}
+          commit: ${{ github.sha }}
           name: v${{ steps.version.outputs.version }}
           bodyFile: .release-body.md
           draft: false
           prerelease: false
+          makeLatest: true
           artifacts: ".scaffold/build/chat-pdf.xpi"
           artifactContentType: application/x-xpinstall
           allowUpdates: true
           removeArtifacts: true
 
-      # Upload update.json to a fixed "release" tag so Zotero can always find it
+      # Keep update.json at a fixed asset URL so every installed XPI can discover the next version.
       - name: Update release manifest
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: release
+          commit: ${{ github.sha }}
           name: "Update Manifest"
           body: "This release contains the update manifest for Zotero auto-update. Do not delete."
           draft: false
-          prerelease: false
+          prerelease: true
+          makeLatest: false
           artifacts: ".scaffold/build/update.json"
           allowUpdates: true
           removeArtifacts: true
+
+      - name: Verify published auto-update chain
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          UPDATE_URL=$(node -p "require('./package.json').config.updateURL")
+          XPI_URL=$(node -p "require('./package.json').config.xpiDownloadLink.replace('{{version}}', process.env.VERSION).replace('{{xpiName}}', require('./package.json').config.xpiName)")
+
+          for ATTEMPT in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location --retry 3 --retry-all-errors "$UPDATE_URL" -o published-update.json \
+              && cmp --silent published-update.json .scaffold/build/update.json; then
+              break
+            fi
+            if [ "$ATTEMPT" = "6" ]; then
+              echo "Published update manifest did not converge to the verified artifact" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors "$XPI_URL" -o published.xpi
+          cmp --silent published.xpi .scaffold/build/chat-pdf.xpi

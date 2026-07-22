@@ -24,6 +24,23 @@ export interface ZoteroCollectionSummary {
   itemCount?: number;
 }
 
+export interface ZoteroAnnotationSummary {
+  key: string;
+  libraryID: number;
+  type: string;
+  text?: string;
+  comment?: string;
+  color?: string;
+  pageLabel?: string;
+  dateModified?: string;
+  tags: string[];
+  attachmentKey?: string;
+  itemKey?: string;
+  title: string;
+  creators: string[];
+  year?: string;
+}
+
 function uniqueByKey<T>(items: T[], getKey: (item: T) => string): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
@@ -147,6 +164,38 @@ function getItemTags(item: Zotero.Item): string[] {
   }
 }
 
+function annotationSourceItems(annotation: Zotero.Item): {
+  attachment?: Zotero.Item;
+  bibliographic?: Zotero.Item;
+} {
+  const attachment = annotation.parentItem;
+  const bibliographic = attachment?.parentItem;
+  return { attachment, bibliographic };
+}
+
+export function summarizeZoteroAnnotation(annotation: Zotero.Item): ZoteroAnnotationSummary {
+  const { attachment, bibliographic } = annotationSourceItems(annotation);
+  const source = bibliographic || attachment || annotation.topLevelItem || annotation;
+  const title = String(source.getField("title") || getItemTitle(source) || "Untitled");
+
+  return {
+    key: annotation.key,
+    libraryID: annotation.libraryID,
+    type: String(annotation.annotationType || "unknown"),
+    text: annotation.annotationText || undefined,
+    comment: annotation.annotationComment || undefined,
+    color: annotation.annotationColor || undefined,
+    pageLabel: annotation.annotationPageLabel || undefined,
+    dateModified: annotation.dateModified || undefined,
+    tags: getItemTags(annotation),
+    attachmentKey: attachment?.key,
+    itemKey: bibliographic?.key,
+    title,
+    creators: getItemCreators(source),
+    year: getItemYear(source),
+  };
+}
+
 function getItemCollectionNames(item: Zotero.Item): string[] {
   return getItemCollections(item).map((collection) => collection.name);
 }
@@ -244,6 +293,49 @@ export async function getAllLibraryItems(): Promise<Zotero.Item[]> {
     }),
     (item) => `${(item as any).libraryID || ""}:${item.key}`,
   );
+}
+
+function annotationsForItem(item: Zotero.Item): Zotero.Item[] {
+  if (item.isAnnotation?.()) return [item];
+
+  if (item.isRegularItem?.()) {
+    const annotations: Zotero.Item[] = [];
+    for (const attachmentID of item.getAttachments()) {
+      const attachment = Zotero.Items.get(attachmentID);
+      if (attachment) annotations.push(...(attachment.getAnnotations?.(false) || []));
+    }
+    return annotations;
+  }
+
+  return item.getAnnotations?.(false) || [];
+}
+
+export async function getAllAnnotations(itemKey?: string, libraryID?: number): Promise<Zotero.Item[]> {
+  const normalizedKey = String(itemKey || "").trim();
+  if (normalizedKey) {
+    const item = getItemByKey(normalizedKey, libraryID);
+    if (!item) return [];
+    return uniqueByKey(
+      annotationsForItem(item).filter((annotation) => !annotation.deleted),
+      (annotation) => `${annotation.libraryID}:${annotation.key}`,
+    );
+  }
+
+  const annotations: Zotero.Item[] = [];
+  for (const lib of Zotero.Libraries.getAll()) {
+    if (libraryID !== undefined && lib.libraryID !== libraryID) continue;
+    try {
+      const maybeItems = Zotero.Items.getAll(lib.libraryID, false, false);
+      const items = typeof (maybeItems as any)?.then === "function" ? await maybeItems : maybeItems;
+      if (Array.isArray(items)) {
+        annotations.push(...items.filter((item) => item?.isAnnotation?.() && !item.deleted));
+      }
+    } catch (e: any) {
+      Zotero.debug(`[ChatPDF] getAllAnnotations failed for lib ${lib.libraryID}: ${e.message}`);
+    }
+  }
+
+  return uniqueByKey(annotations, (annotation) => `${annotation.libraryID}:${annotation.key}`);
 }
 
 export async function getAllCollections(): Promise<ZoteroCollectionSummary[]> {
