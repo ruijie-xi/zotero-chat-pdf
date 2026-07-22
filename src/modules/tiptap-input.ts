@@ -6,9 +6,9 @@
  * Solution: Patch document.createElement to route through createElementNS with
  * the XHTML namespace while the editor is active.
  *
- * ProseMirror handles Backspace/Delete/Enter with preventDefault(), and we add
- * custom arrow key handlers + key isolation to prevent Zotero's XUL <key>
- * interception.
+ * ProseMirror handles Backspace/Delete/Enter with preventDefault(), and key
+ * isolation prevents Zotero's XUL <key> interception without replacing native
+ * cursor navigation.
  */
 
 import { Editor, Extension } from "@tiptap/core";
@@ -113,10 +113,7 @@ function createKeyIsolationPlugin(): Plugin {
   });
 }
 
-/**
- * Handle arrow keys programmatically so ProseMirror calls preventDefault(),
- * preventing Zotero's XUL <key> interception.
- */
+/** Handle deletion keys that are unreliable in Zotero's XHTML context. */
 const KeyHandler = Extension.create({
   name: "keyHandler",
 
@@ -210,60 +207,9 @@ const KeyHandler = Extension.create({
         return true;
       },
 
-      ArrowLeft: ({ editor }) => {
-        const { state, dispatch } = editor.view;
-        const { selection } = state;
-        const { $from } = selection;
-        if (!selection.empty) {
-          // @ts-expect-error ProseMirror types
-          dispatch(state.tr.setSelection(state.selection.constructor.near(state.doc.resolve($from.pos))));
-          return true;
-        }
-        if ($from.pos > 0) {
-          // @ts-expect-error ProseMirror types
-          dispatch(state.tr.setSelection(state.selection.constructor.near(state.doc.resolve($from.pos - 1), -1)));
-          return true;
-        }
-        return true;
-      },
-
-      ArrowRight: ({ editor }) => {
-        const { state, dispatch } = editor.view;
-        const { selection } = state;
-        const { $to } = selection;
-        if (!selection.empty) {
-          // @ts-expect-error ProseMirror types
-          dispatch(state.tr.setSelection(state.selection.constructor.near(state.doc.resolve($to.pos))));
-          return true;
-        }
-        if ($to.pos < state.doc.content.size) {
-          // @ts-expect-error ProseMirror types
-          dispatch(state.tr.setSelection(state.selection.constructor.near(state.doc.resolve($to.pos + 1), 1)));
-          return true;
-        }
-        return true;
-      },
-
-      ArrowUp: ({ editor }) => {
-        const { state, dispatch } = editor.view;
-        const { $from } = state.selection;
-        if ($from.pos > 1) {
-          // @ts-expect-error ProseMirror types
-          dispatch(state.tr.setSelection(state.selection.constructor.near(state.doc.resolve(1), 1)));
-        }
-        return true;
-      },
-
-      ArrowDown: ({ editor }) => {
-        const { state, dispatch } = editor.view;
-        const end = state.doc.content.size - 1;
-        const { $to } = state.selection;
-        if ($to.pos < end) {
-          // @ts-expect-error ProseMirror types
-          dispatch(state.tr.setSelection(state.selection.constructor.near(state.doc.resolve(end), -1)));
-        }
-        return true;
-      },
+      // Arrow keys intentionally remain native. The previous handlers moved by
+      // document positions and sent ArrowUp/ArrowDown straight to the start/end
+      // of the whole editor, which broke normal multiline and IME navigation.
     };
   },
 });

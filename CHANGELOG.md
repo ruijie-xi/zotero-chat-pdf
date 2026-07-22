@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+## 0.8.5
+
+### Fixed
+
+- Remove the 50%-of-window maximum width so the ChatPDF side panel can be resized across the available Zotero workspace.
+- Preserve normal native cursor navigation and avoid stealing focus from another editor when an asynchronous response or conversion-and-send flow finishes.
+
 ## 0.8.4
 
 ### New Features

@@ -39,6 +39,23 @@ function clearEditableInput(root: HTMLElement): void {
   getPanelState(root).chatInput?.clear();
 }
 
+/**
+ * Restore focus after an asynchronous send only when doing so will not steal it
+ * from another control the user started editing while the response was running.
+ */
+export function shouldRestoreChatInputFocus(
+  doc: Document,
+  inputElement: HTMLElement,
+  sendButton: HTMLElement | null,
+): boolean {
+  const active = doc.activeElement;
+  return !active
+    || active === doc.body
+    || active === doc.documentElement
+    || active === sendButton
+    || inputElement.contains(active);
+}
+
 /** Get the current model profile name. */
 function getCurrentProfileName(): string {
   return (getPref("activeProfile") as string) || "";
@@ -538,7 +555,11 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     state.isStreaming = false;
     state.currentAbortController = null;
     if (state.session === streamSession) {
-      if (state.chatInput) { state.chatInput.setEditable(true); state.chatInput.focus(); }
+      if (state.chatInput) {
+        const restoreFocus = shouldRestoreChatInputFocus(doc, state.chatInput.element, sendBtn);
+        state.chatInput.setEditable(true);
+        if (restoreFocus) state.chatInput.focus();
+      }
       setSendButtonToSend(sendBtn);
     }
   }
