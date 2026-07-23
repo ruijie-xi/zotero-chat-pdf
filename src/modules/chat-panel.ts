@@ -24,9 +24,11 @@ import {
   PANEL_MIN_WIDTH,
   PANEL_MINIMIZED_WIDTH,
   PANEL_RESIZE_STEP,
+  controlHostContentWidth,
+  findPanelHost,
   normalizePreferredPanelWidth,
   panelWidthAfterDrag,
-  relaxHostWidthConstraints,
+  recoverCorruptZoteroContextWidth,
 } from "./panel-resize";
 
 // Re-export for external consumers (hooks.ts, etc.)
@@ -100,18 +102,12 @@ export function injectChatPanel(win: Window): void {
 
   if (doc.getElementById(CHAT_PANEL_ID)) return;
 
-  const itemPane = doc.getElementById("zotero-context-pane-inner")
-    || doc.getElementById("zotero-item-pane")
-    || doc.getElementById("zotero-context-pane");
-
-  const layoutBox = doc.getElementById("tabs-deck")?.parentElement
-    || itemPane?.closest("hbox")
-    || doc.getElementById("browser");
-
-  if (!layoutBox) {
+  const panelHost = findPanelHost(doc);
+  if (!panelHost) {
     Zotero.debug("[ChatPDF] Could not find layout container to inject panel");
     return;
   }
+  const { layoutBox, hostContent } = panelHost;
   const hostLayout = layoutBox as HTMLElement;
 
   const state = createPanelState(win);
@@ -165,6 +161,7 @@ export function injectChatPanel(win: Window): void {
   let dragStartX = 0;
   let dragStartWidth = 0;
   let panelIsAfterSplitter = true;
+  let hostContentWidthController: ReturnType<typeof controlHostContentWidth> | null = null;
 
   function layoutWidth(): number {
     return hostLayout.getBoundingClientRect().width || win.innerWidth;
@@ -177,9 +174,11 @@ export function injectChatPanel(win: Window): void {
   function reservedLayoutWidth(): number {
     let width = splitterWidth();
     for (const child of Array.from(hostLayout.children)) {
-      if (child === splitter || child === vbox) continue;
-      if (child.localName !== "splitter" && !child.id.includes("splitter")) continue;
-      width += child.getBoundingClientRect().width;
+      if (child === splitter || child === vbox || child === hostContent) continue;
+      const element = child as HTMLElement;
+      const style = win.getComputedStyle(element);
+      if (!style || style.display === "none" || style.position === "absolute" || style.position === "fixed") continue;
+      width += element.getBoundingClientRect().width;
     }
     return width;
   }
@@ -191,9 +190,12 @@ export function injectChatPanel(win: Window): void {
       ? PANEL_MINIMIZED_WIDTH
       : clampPanelWidth(preferredWidth, availableWidth, reservedWidth);
     vbox.style.width = `${renderedWidth}px`;
+    vbox.style.minWidth = `${renderedWidth}px`;
     vbox.style.flexBasis = `${renderedWidth}px`;
+    vbox.setAttribute("width", String(renderedWidth));
+    vbox.setAttribute("minwidth", String(renderedWidth));
+    hostContentWidthController?.setWidth(availableWidth - reservedWidth - renderedWidth);
     if (!minimized) {
-      vbox.setAttribute("width", String(preferredWidth));
       splitter.setAttribute("aria-valuemin", String(Math.min(PANEL_MIN_WIDTH, Math.max(0, availableWidth - reservedWidth))));
       splitter.setAttribute("aria-valuemax", String(Math.max(0, Math.round(availableWidth - reservedWidth))));
       splitter.setAttribute("aria-valuenow", String(renderedWidth));
@@ -279,7 +281,19 @@ export function injectChatPanel(win: Window): void {
   hostLayout.appendChild(splitter);
   hostLayout.appendChild(vbox);
 
-  const restoreHostConstraints = relaxHostWidthConstraints(hostLayout, vbox, splitter);
+  // Size Zotero's app content as one unit. Never clear constraints on its
+  // internal tabs deck, context pane, collections pane, or item pane.
+  hostContentWidthController = controlHostContentWidth(hostContent);
+  const zoteroContextPane = doc.getElementById("zotero-context-pane") as HTMLElement | null;
+  const recoveredContextWidth = recoverCorruptZoteroContextWidth(
+    zoteroContextPane?.getAttribute("width"),
+    layoutWidth(),
+  );
+  if (zoteroContextPane && recoveredContextWidth !== null) {
+    zoteroContextPane.setAttribute("width", String(recoveredContextWidth));
+    zoteroContextPane.style.width = `${recoveredContextWidth}px`;
+    Zotero.debug(`[ChatPDF] Recovered corrupt Zotero context pane width as ${recoveredContextWidth}px`);
+  }
   const onWindowResize = () => renderPanelWidth();
   const ResizeObserverCtor = (win as any).ResizeObserver as typeof ResizeObserver | undefined;
   const layoutResizeObserver = ResizeObserverCtor
@@ -299,7 +313,8 @@ export function injectChatPanel(win: Window): void {
     win.removeEventListener("blur", finishResize, true);
     layoutResizeObserver?.disconnect();
     splitter.removeEventListener("mousedown", startResize);
-    restoreHostConstraints();
+    hostContentWidthController?.restore();
+    hostContentWidthController = null;
     doc.documentElement?.classList.remove("chatpdf-panel-resizing");
   };
 

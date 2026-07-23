@@ -4,6 +4,12 @@
 
 ## Unreleased
 
+## 0.8.7
+
+### Fixed
+
+- Isolate ChatPDF resizing from Zotero's internal panes, explicitly size the complete Zotero content root for XUL layout, and recover clearly corrupt persisted native context-pane widths.
+
 ## 0.8.6
 
 ### Fixed
