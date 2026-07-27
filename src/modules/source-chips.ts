@@ -79,8 +79,8 @@ function saveCurrentSession(root: HTMLElement): void {
   });
 }
 
-/** Refresh the source chips UI in the panel. */
-export function refreshSourceChips(root: HTMLElement): void {
+/** Render the source chips UI in the panel. */
+function renderSourceChips(root: HTMLElement): void {
   const state = getPanelState(root);
   const { session } = state;
   const container = root.querySelector("#chatpdf-source-chips");
@@ -181,5 +181,15 @@ export function refreshSourceChips(root: HTMLElement): void {
     const summary = h(doc, "div", { className: "chatpdf-source-summary" },
       `${formatChars(totalChars)} chars`);
     container.appendChild(summary);
+  }
+}
+
+/** Refresh source chips without allowing Firefox to move the active chat cursor. */
+export function refreshSourceChips(root: HTMLElement): void {
+  const chatInput = getPanelState(root).chatInput;
+  if (chatInput) {
+    chatInput.preserveSelectionDuring(() => renderSourceChips(root));
+  } else {
+    renderSourceChips(root);
   }
 }

@@ -506,8 +506,10 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   inputWrapper.addEventListener("drop", async (e: Event) => {
     const de = e as DragEvent;
     de.preventDefault();
+    de.stopPropagation();
     inputWrapper.classList.remove("chatpdf-drop-active");
     const dt = de.dataTransfer;
+    let handledDrop = false;
 
     if (dt) {
       const types = Array.from(dt.types);
@@ -521,82 +523,89 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
       await addItemToSession(item, root);
       const pdf = getPdfAttachment(item);
       const src = state.session.getSource(pdf?.key || "", Number((pdf as any)?.libraryID) || undefined);
-      if (src) insertInputChip(src, doc, root);
+      if (src) {
+        insertInputChip(src, doc, root);
+        handledDrop = true;
+      }
       refreshSourceChips(root);
     }
 
-    // 1. zotero/item
-    const zoteroItemData = dt?.getData("zotero/item");
-    if (zoteroItemData) {
-      for (const id of zoteroItemData.split(",").map((s: string) => parseInt(s, 10))) {
-        const droppedItem = Zotero.Items.get(id);
-        if (droppedItem) await handleDroppedItem(droppedItem);
-      }
-      return;
-    }
-
-    // 2. zotero/tab
-    const tabID = dt?.getData("zotero/tab");
-    if (tabID) {
-      try {
-        const mainWin = Zotero.getMainWindow() as any;
-        const reader = (Zotero as any).Reader?.getByTabID?.(tabID);
-        if (reader?.itemID) {
-          const item = Zotero.Items.get(reader.itemID);
-          if (item) { await handleDroppedItem(item); return; }
+    try {
+      // 1. zotero/item
+      const zoteroItemData = dt?.getData("zotero/item");
+      if (zoteroItemData) {
+        for (const id of zoteroItemData.split(",").map((s: string) => parseInt(s, 10))) {
+          const droppedItem = Zotero.Items.get(id);
+          if (droppedItem) await handleDroppedItem(droppedItem);
         }
-        const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === tabID);
-        const itemID = tab?.data?.itemID;
-        if (itemID) {
-          const item = Zotero.Items.get(itemID);
-          if (item) { await handleDroppedItem(item); return; }
-        }
-      } catch (err) {
-        Zotero.debug(`[ChatPDF] drop on input: zotero/tab error: ${err}`);
+        return;
       }
-    }
 
-    // 3. URI-based fallbacks
-    const uriCandidates: string[] = [];
-    const mozUrl = dt?.getData("text/x-moz-url");
-    if (mozUrl) uriCandidates.push(mozUrl.split("\n")[0].trim());
-    const plainText = dt?.getData("text/plain");
-    if (plainText) uriCandidates.push(plainText.trim());
-    const uriList = dt?.getData("text/uri-list");
-    if (uriList) {
-      for (const line of uriList.split(/\r?\n/)) {
-        const u = line.trim();
-        if (u && !u.startsWith("#")) uriCandidates.push(u);
-      }
-    }
-    for (const uri of uriCandidates) {
-      const item = await getItemFromZoteroUri(uri);
-      if (item) { await handleDroppedItem(item); return; }
-    }
-
-    // 4. Last resort: currently-open tab
-    if (dt && Array.from(dt.types).length > 0) {
-      try {
-        const mainWin = Zotero.getMainWindow() as any;
-        const selectedTabID = mainWin.Zotero_Tabs?.selectedID;
-        if (selectedTabID && selectedTabID !== "zotero-pane") {
-          const reader = (Zotero as any).Reader?.getByTabID?.(selectedTabID);
+      // 2. zotero/tab
+      const tabID = dt?.getData("zotero/tab");
+      if (tabID) {
+        try {
+          const mainWin = Zotero.getMainWindow() as any;
+          const reader = (Zotero as any).Reader?.getByTabID?.(tabID);
           if (reader?.itemID) {
             const item = Zotero.Items.get(reader.itemID);
             if (item) { await handleDroppedItem(item); return; }
           }
-          const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === selectedTabID);
+          const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === tabID);
           const itemID = tab?.data?.itemID;
           if (itemID) {
             const item = Zotero.Items.get(itemID);
             if (item) { await handleDroppedItem(item); return; }
           }
+        } catch (err) {
+          Zotero.debug(`[ChatPDF] drop on input: zotero/tab error: ${err}`);
         }
-      } catch (err) {
-        Zotero.debug(`[ChatPDF] drop on input: last-resort error: ${err}`);
       }
+
+      // 3. URI-based fallbacks
+      const uriCandidates: string[] = [];
+      const mozUrl = dt?.getData("text/x-moz-url");
+      if (mozUrl) uriCandidates.push(mozUrl.split("\n")[0].trim());
+      const plainText = dt?.getData("text/plain");
+      if (plainText) uriCandidates.push(plainText.trim());
+      const uriList = dt?.getData("text/uri-list");
+      if (uriList) {
+        for (const line of uriList.split(/\r?\n/)) {
+          const u = line.trim();
+          if (u && !u.startsWith("#")) uriCandidates.push(u);
+        }
+      }
+      for (const uri of uriCandidates) {
+        const item = await getItemFromZoteroUri(uri);
+        if (item) { await handleDroppedItem(item); return; }
+      }
+
+      // 4. Last resort: currently-open tab
+      if (dt && Array.from(dt.types).length > 0) {
+        try {
+          const mainWin = Zotero.getMainWindow() as any;
+          const selectedTabID = mainWin.Zotero_Tabs?.selectedID;
+          if (selectedTabID && selectedTabID !== "zotero-pane") {
+            const reader = (Zotero as any).Reader?.getByTabID?.(selectedTabID);
+            if (reader?.itemID) {
+              const item = Zotero.Items.get(reader.itemID);
+              if (item) { await handleDroppedItem(item); return; }
+            }
+            const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === selectedTabID);
+            const itemID = tab?.data?.itemID;
+            if (itemID) {
+              const item = Zotero.Items.get(itemID);
+              if (item) { await handleDroppedItem(item); return; }
+            }
+          }
+        } catch (err) {
+          Zotero.debug(`[ChatPDF] drop on input: last-resort error: ${err}`);
+        }
+      }
+    } finally {
+      if (handledDrop) state.chatInput?.restoreFocusAfterExternalInsert();
     }
-  });
+  }, true);
 
   // ---- Event handlers ----
 
@@ -688,12 +697,17 @@ export function registerContextMenu(): void {
           }
           refreshSourceChips(root);
           const state = getPanelState(root);
+          let insertedSource = false;
           for (const item of context.items ?? []) {
             const pdf = getPdfAttachment(item);
             if (!pdf) continue;
             const src = state.session.getSource(pdf.key, Number((pdf as any).libraryID) || undefined);
-            if (src) insertInputChip(src, root.ownerDocument!, root);
+            if (src) {
+              insertInputChip(src, root.ownerDocument!, root);
+              insertedSource = true;
+            }
           }
+          if (insertedSource) state.chatInput?.restoreFocusAfterExternalInsert();
         },
       },
       {

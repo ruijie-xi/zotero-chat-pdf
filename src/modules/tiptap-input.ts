@@ -18,7 +18,7 @@ import Text from "@tiptap/extension-text";
 import Mention from "@tiptap/extension-mention";
 import Placeholder from "@tiptap/extension-placeholder";
 import History from "@tiptap/extension-history";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -40,6 +40,10 @@ export interface ChatInputEditor {
   setText(text: string): void;
   /** Insert a mention chip for a source. */
   insertMention(source: SourceChip): void;
+  /** Re-establish native editor focus after a browser-owned external interaction. */
+  restoreFocusAfterExternalInsert(): void;
+  /** Preserve the active DOM selection while sibling panel DOM is updated. */
+  preserveSelectionDuring(update: () => void): void;
   /** Check if a mention chip for a key already exists. */
   hasMention(key: string): boolean;
   /** Disable/enable editing. */
@@ -73,7 +77,9 @@ function patchCreateElement(doc: Document): () => void {
 }
 
 /**
- * Suppress ALL key events from propagating to Zotero's XUL layer.
+ * Keep editor key events from reaching Zotero's XUL layer without blocking
+ * other handlers on the ProseMirror editing surface. Native cursor navigation
+ * in Firefox relies on those same-target handlers.
  */
 function createKeyIsolationPlugin(): Plugin {
   return new Plugin({
@@ -84,17 +90,14 @@ function createKeyIsolationPlugin(): Plugin {
           const ke = event as KeyboardEvent;
           Zotero.debug(`[ChatPDF] TipTap keydown: key="${ke.key}" code="${ke.code}" ctrl=${ke.ctrlKey} shift=${ke.shiftKey} alt=${ke.altKey} meta=${ke.metaKey} defaultPrevented=${ke.defaultPrevented}`);
           event.stopPropagation();
-          event.stopImmediatePropagation();
           return false; // let ProseMirror continue processing
         },
         keyup(_view: any, event: Event) {
           event.stopPropagation();
-          event.stopImmediatePropagation();
           return false;
         },
         keypress(_view: any, event: Event) {
           event.stopPropagation();
-          event.stopImmediatePropagation();
           return false;
         },
         beforeinput(_view: any, event: Event) {
@@ -113,7 +116,62 @@ function createKeyIsolationPlugin(): Plugin {
   });
 }
 
-/** Handle deletion keys that are unreliable in Zotero's XHTML context. */
+type SelectionAlter = "move" | "extend";
+type SelectionDirection = "left" | "right" | "backward" | "forward";
+type SelectionGranularity = "character" | "line";
+
+/**
+ * Move the rendered DOM selection, then mirror it back into ProseMirror state.
+ *
+ * Firefox's normal arrow-key default action does not run for contenteditable
+ * nodes in Zotero's chrome XHTML document. Selection.modify() still uses the
+ * real rendered layout, so vertical movement preserves the visual column and
+ * horizontal movement remains bidi-aware.
+ */
+function moveRenderedSelection(
+  editor: Editor,
+  alter: SelectionAlter,
+  direction: SelectionDirection,
+  granularity: SelectionGranularity,
+): boolean {
+  const { view } = editor;
+  const ownerDocument = view.dom.ownerDocument;
+  if (!ownerDocument) return false;
+  const selection = ownerDocument.getSelection();
+  if (
+    !selection?.anchorNode
+    || !selection.focusNode
+    || !view.dom.contains(selection.anchorNode)
+    || !view.dom.contains(selection.focusNode)
+    || typeof selection.modify !== "function"
+  ) {
+    return false;
+  }
+
+  selection.modify(alter, direction, granularity);
+
+  // Keep the model selection authoritative after using Firefox's layout-aware
+  // DOM movement. Positions at atom/mention boundaries can be ambiguous, so
+  // use opposite biases and let TextSelection.between choose valid text cursors.
+  if (selection.anchorNode && selection.focusNode) {
+    try {
+      const anchor = view.posAtDOM(selection.anchorNode, selection.anchorOffset, -1);
+      const head = view.posAtDOM(selection.focusNode, selection.focusOffset, 1);
+      const next = TextSelection.between(
+        view.state.doc.resolve(anchor),
+        view.state.doc.resolve(head),
+        head < anchor ? -1 : 1,
+      );
+      view.dispatch(view.state.tr.setSelection(next).scrollIntoView());
+    } catch (error: any) {
+      Zotero.debug(`[ChatPDF] TipTap arrow selection sync failed: ${error.message}`);
+    }
+  }
+
+  return true;
+}
+
+/** Handle keys whose native editing behavior is unreliable in Zotero XHTML. */
 const KeyHandler = Extension.create({
   name: "keyHandler",
 
@@ -207,9 +265,14 @@ const KeyHandler = Extension.create({
         return true;
       },
 
-      // Arrow keys intentionally remain native. The previous handlers moved by
-      // document positions and sent ArrowUp/ArrowDown straight to the start/end
-      // of the whole editor, which broke normal multiline and IME navigation.
+      ArrowLeft: ({ editor }) => moveRenderedSelection(editor, "move", "left", "character"),
+      ArrowRight: ({ editor }) => moveRenderedSelection(editor, "move", "right", "character"),
+      ArrowUp: ({ editor }) => moveRenderedSelection(editor, "move", "backward", "line"),
+      ArrowDown: ({ editor }) => moveRenderedSelection(editor, "move", "forward", "line"),
+      "Shift-ArrowLeft": ({ editor }) => moveRenderedSelection(editor, "extend", "left", "character"),
+      "Shift-ArrowRight": ({ editor }) => moveRenderedSelection(editor, "extend", "right", "character"),
+      "Shift-ArrowUp": ({ editor }) => moveRenderedSelection(editor, "extend", "backward", "line"),
+      "Shift-ArrowDown": ({ editor }) => moveRenderedSelection(editor, "extend", "forward", "line"),
     };
   },
 });
@@ -331,6 +394,8 @@ export function createChatInput(
     throw err;
   }
 
+  let externalFocusRequest = 0;
+
   return {
     element: container,
 
@@ -375,12 +440,71 @@ export function createChatInput(
       if (this.hasMention(source.key)) return;
       editor
         .chain()
-        .focus()
         .insertContent([
           { type: "mention", attrs: { id: source.key, label: source.title } },
           { type: "text", text: " " },
         ])
         .run();
+    },
+
+    restoreFocusAfterExternalInsert(): void {
+      const request = ++externalFocusRequest;
+      const win = editor.view.dom.ownerDocument?.defaultView;
+      const restore = () => {
+        if (request !== externalFocusRequest || editor.isDestroyed || !editor.isEditable) return;
+
+        // Firefox can leave a ProseMirror surface as document.activeElement after
+        // native drag/drop while its editing focus remains inactive. A real
+        // blur/focus cycle re-establishes the native editing context.
+        editor.view.dom.blur();
+        editor.view.focus();
+      };
+
+      if (!win) {
+        restore();
+        return;
+      }
+
+      // requestAnimationFrame can remain suspended in Zotero's main chrome
+      // window, so defer through its event loop instead.
+      win.setTimeout(restore, 0);
+    },
+
+    preserveSelectionDuring(update: () => void): void {
+      const view = editor.view;
+      const ownerDocument = view.dom.ownerDocument;
+      const selection = ownerDocument?.getSelection();
+      const anchorNode = selection?.anchorNode ?? null;
+      const focusNode = selection?.focusNode ?? null;
+      const shouldRestore = Boolean(
+        selection
+        && anchorNode
+        && focusNode
+        && ownerDocument?.activeElement === view.dom
+        && view.dom.contains(anchorNode)
+        && view.dom.contains(focusNode),
+      );
+      const anchorOffset = selection?.anchorOffset ?? 0;
+      const focusOffset = selection?.focusOffset ?? 0;
+
+      try {
+        update();
+      } finally {
+        const canRestore = shouldRestore
+          && !editor.isDestroyed
+          && ownerDocument?.activeElement === view.dom
+          && anchorNode
+          && focusNode
+          && view.dom.contains(anchorNode)
+          && view.dom.contains(focusNode);
+        if (canRestore) {
+          try {
+            selection!.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
+          } catch (error: any) {
+            Zotero.debug(`[ChatPDF] TipTap selection restore after panel update failed: ${error.message}`);
+          }
+        }
+      }
     },
 
     hasMention(key: string): boolean {
@@ -408,6 +532,7 @@ export function createChatInput(
     },
 
     destroy(): void {
+      externalFocusRequest++;
       editor.destroy();
       restorePatch();
     },
