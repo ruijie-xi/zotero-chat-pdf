@@ -1,7 +1,5 @@
 # ChatPDF LLM and Tool Workflow
 
-[简体中文](llm-workflow.zh-CN.md)
-
 This document describes the agent-only workflow in the `0.8.0` working tree after the 2026-07-14 architecture remediation.
 
 ## Runtime Boundary
@@ -30,8 +28,10 @@ ChatPDF runs in Zotero's privileged Firefox chrome context, not Node.js.
 | `chat-history.ts` | Atomic session/index repository, index recovery, and deletion tombstones |
 | `source-identity.ts` | Stable library-qualified source IDs and cache keys |
 | `source-chips.ts` | Source UI, user-owned conversion lifecycle, stop, removal, and lazy cache loading |
+| `conversion-manager.ts` | Shared owner-aware jobs, conversion history, cancellation, restart recovery, and cache commits |
+| `chatpdf-bridge.ts` | One exact-protocol loopback endpoint for selection and conversion control |
 | `mineru-client.ts` | PDF chunk planning, upload, polling, ZIP download/extraction, progress, and stage errors |
-| `md-cache.ts` | Atomic document/chunk/manifest storage and legacy cache reads |
+| `md-cache.ts` | Legacy reads plus private staging, atomic document replacement, and startup swap repair |
 | `markdown-renderer.ts` | Markdown/KaTeX rendering, XHTML conversion, and DOM allowlist sanitization |
 | `debug-log.ts` | Metadata/off/full debug logging and retention cleanup |
 
@@ -154,7 +154,9 @@ The request signal reaches:
 - MinerU upload URL requests, PDF upload, polling delays, result downloads, and extraction;
 - session mutations and UI callbacks that follow those operations.
 
-A conversion launched directly from a source chip has a separate controller owned by that chip and window. Removing the source aborts that controller.
+A conversion launched from a source chip has an owner scoped to that source and window. Removing the source releases
+that owner and aborts the shared job only when no other panel or bridge owner remains. Explicit bridge cancellation is
+job-wide.
 
 ## MinerU Conversion and Cache
 
@@ -168,6 +170,9 @@ The configurable defaults are language `ch` and timeout 15 minutes. PDFs up to 1
     chunks/<index>.md
     attachments/full/...
     attachments/chunk-<index>/...
+  conversions/
+    jobs.json
+    staging/<job-id>/...
   history/
   debug-logs/
 ```

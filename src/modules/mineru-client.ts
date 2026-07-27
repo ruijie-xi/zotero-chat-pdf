@@ -51,9 +51,27 @@ export interface ConvertedPdf {
   assetCount: number;
 }
 
+export interface MineruConversionOptions {
+  modelVersion?: "pipeline" | "vlm";
+  language?: string;
+  isOcr?: boolean;
+  enableFormula?: boolean;
+  enableTable?: boolean;
+  pollTimeoutSeconds?: number;
+}
+
+export interface MineruRemoteTask {
+  taskKey: string;
+  batchId: string;
+  state: "submitted" | "uploaded" | "done";
+}
+
 export interface ConvertPdfOptions {
   outputDir?: string;
   cachedChunks?: Map<number, string>;
+  mineru?: MineruConversionOptions;
+  remoteTasks?: Map<string, MineruRemoteTask>;
+  onRemoteTask?: (task: MineruRemoteTask) => void | Promise<void>;
   onPlan?: (pageCount: number, chunkSize: number, chunks: PdfChunkPlanItem[]) => void | Promise<void>;
   onChunkConverted?: (chunk: PdfChunkResult) => void | Promise<void>;
 }
@@ -212,6 +230,11 @@ async function mineruFetch(
   try {
     return await fetch(input, init);
   } catch (err: any) {
+    if (init?.signal?.aborted || err?.name === "AbortError") {
+      const abortError = new Error("Conversion aborted by user", { cause: err });
+      abortError.name = "AbortError";
+      throw abortError;
+    }
     const target = describeRequestTarget(input);
     const message = err?.message || String(err);
     const cdnHint = target.startsWith("https://cdn-mineru.openxlab.org.cn/")
@@ -336,6 +359,10 @@ export async function convertPdf(
         undefined,
         options?.outputDir,
         "attachments/full",
+        "full",
+        options?.mineru,
+        options?.remoteTasks?.get("full"),
+        options?.onRemoteTask,
       );
       return {
         markdown: result.markdown,
@@ -361,6 +388,10 @@ export async function convertPdf(
       undefined,
       options?.outputDir,
       "attachments/full",
+      "full",
+      options?.mineru,
+      options?.remoteTasks?.get("full"),
+      options?.onRemoteTask,
     );
     const chunk = { ...plan[0], markdown: result.markdown, assetCount: result.assetCount };
     await options?.onChunkConverted?.(chunk);
@@ -395,6 +426,10 @@ export async function convertPdf(
       pageRange,
       options?.outputDir,
       `attachments/chunk-${String(item.index).padStart(4, "0")}`,
+      `chunk-${item.index}`,
+      options?.mineru,
+      options?.remoteTasks?.get(`chunk-${item.index}`),
+      options?.onRemoteTask,
     );
     const chunk = { ...item, markdown: result.markdown, assetCount: result.assetCount };
     convertedChunks.push(chunk);
@@ -464,89 +499,100 @@ async function convertPdfBytes(
   pageRange?: string,
   outputDir?: string,
   assetPrefix?: string,
+  taskKey = "full",
+  conversionOptions?: MineruConversionOptions,
+  resumeTask?: MineruRemoteTask,
+  onRemoteTask?: (task: MineruRemoteTask) => void | Promise<void>,
 ): Promise<MineruJobResult> {
-  // Step 2: Get upload URL via batch apply
-  onProgress?.("uploading", "Requesting upload URL...");
+  let batchId = resumeTask && resumeTask.state !== "submitted" ? resumeTask.batchId : "";
+  if (batchId) {
+    onProgress?.("processing", "Resuming an uploaded MinerU task...");
+  }
+
+  // Step 2: Get upload URL via batch apply when no resumable upload exists.
   const fileRequest: { name: string; is_ocr: boolean; page_ranges?: string } = {
     name: fileName,
-    is_ocr: false,
+    is_ocr: conversionOptions?.isOcr ?? false,
   };
   if (pageRange) {
     fileRequest.page_ranges = pageRange;
   }
 
   const requestBody = {
-    enable_formula: true,
-    enable_table: true,
-    language: String(getPref("mineruLanguage") || "ch").trim() || "ch",
-    model_version: "pipeline",
+    enable_formula: conversionOptions?.enableFormula ?? true,
+    enable_table: conversionOptions?.enableTable ?? true,
+    language: conversionOptions?.language?.trim() || String(getPref("mineruLanguage") || "ch").trim() || "ch",
+    model_version: conversionOptions?.modelVersion || "pipeline",
     files: [fileRequest],
   };
-  log("Batch apply request:", requestBody);
-
-  throwIfAborted(signal);
-  const applyRes = await mineruFetch(
-    "MinerU upload URL request",
-    `${MINERU_API_BASE}/api/v4/file-urls/batch`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+  if (!batchId) {
+    onProgress?.("uploading", "Requesting upload URL...");
+    log("Batch apply request:", requestBody);
+    throwIfAborted(signal);
+    const applyRes = await mineruFetch(
+      "MinerU upload URL request",
+      `${MINERU_API_BASE}/api/v4/file-urls/batch`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(requestBody),
+        signal,
       },
-      body: JSON.stringify(requestBody),
-      signal,
-    },
-  );
+    );
+    const applyText = await applyRes.text();
+    log("Batch apply response status:", applyRes.status, "body:", applyText);
+    if (!applyRes.ok) {
+      throw new Error(`MinerU batch apply failed (${applyRes.status}): ${applyText}`);
+    }
+    const applyData = JSON.parse(applyText) as {
+      code: number;
+      msg: string;
+      data: BatchApplyResponse;
+    };
+    if (applyData.code !== 0) {
+      throw new Error(`MinerU batch apply error (code ${applyData.code}): ${applyData.msg}`);
+    }
+    batchId = applyData.data.batch_id;
+    const uploadUrl = applyData.data.file_urls[0];
+    log("Got batch_id:", batchId, "upload url:", uploadUrl?.substring(0, 80) + "...");
+    await onRemoteTask?.({ taskKey, batchId, state: "submitted" });
 
-  const applyText = await applyRes.text();
-  log("Batch apply response status:", applyRes.status, "body:", applyText);
-
-  if (!applyRes.ok) {
-    throw new Error(`MinerU batch apply failed (${applyRes.status}): ${applyText}`);
-  }
-
-  const applyData = JSON.parse(applyText) as {
-    code: number;
-    msg: string;
-    data: BatchApplyResponse;
-  };
-
-  if (applyData.code !== 0) {
-    throw new Error(`MinerU batch apply error (code ${applyData.code}): ${applyData.msg}`);
-  }
-
-  const { batch_id, file_urls } = applyData.data;
-  const uploadUrl = file_urls[0];
-  log("Got batch_id:", batch_id, "upload url:", uploadUrl?.substring(0, 80) + "...");
-
-  // Step 3: Upload PDF bytes via PUT (as per MinerU docs)
-  throwIfAborted(signal);
-  onProgress?.("uploading", "Uploading PDF...");
-  const uploadRes = await mineruFetch(
-    "MinerU PDF upload",
-    uploadUrl,
-    {
-      method: "PUT",
-      body: pdfBytes,
-      signal,
-    },
-  );
-
-  log("Upload response status:", uploadRes.status);
-  if (!uploadRes.ok) {
-    const uploadErrText = await uploadRes.text();
-    log("Upload error body:", uploadErrText);
-    throw new Error(`PDF upload failed (${uploadRes.status}): ${uploadErrText}`);
+    // Step 3: Upload PDF bytes via PUT (as per MinerU docs)
+    throwIfAborted(signal);
+    onProgress?.("uploading", "Uploading PDF...");
+    const uploadRes = await mineruFetch(
+      "MinerU PDF upload",
+      uploadUrl,
+      {
+        method: "PUT",
+        body: pdfBytes,
+        signal,
+      },
+    );
+    log("Upload response status:", uploadRes.status);
+    if (!uploadRes.ok) {
+      const uploadErrText = await uploadRes.text();
+      log("Upload error body:", uploadErrText);
+      throw new Error(`PDF upload failed (${uploadRes.status}): ${uploadErrText}`);
+    }
+    await onRemoteTask?.({ taskKey, batchId, state: "uploaded" });
   }
 
   // Step 4: Poll for results
   onProgress?.("processing", "Converting PDF to Markdown...");
   const startTime = Date.now();
   const configuredTimeoutMinutes = Number(getPref("mineruTimeoutMinutes") || 15);
-  const pollTimeoutMs = Number.isFinite(configuredTimeoutMinutes)
-    ? Math.max(60_000, configuredTimeoutMinutes * 60_000)
-    : DEFAULT_POLL_TIMEOUT_MS;
+  const requestedTimeoutMs = conversionOptions?.pollTimeoutSeconds
+    ? conversionOptions.pollTimeoutSeconds * 1000
+    : Number.NaN;
+  const pollTimeoutMs = Number.isFinite(requestedTimeoutMs)
+    ? Math.max(60_000, requestedTimeoutMs)
+    : Number.isFinite(configuredTimeoutMinutes)
+      ? Math.max(60_000, configuredTimeoutMinutes * 60_000)
+      : DEFAULT_POLL_TIMEOUT_MS;
 
   while (true) {
     throwIfAborted(signal);
@@ -560,7 +606,7 @@ async function convertPdfBytes(
 
     const pollRes = await mineruFetch(
       "MinerU result polling",
-      `${MINERU_API_BASE}/api/v4/extract-results/batch/${batch_id}`,
+      `${MINERU_API_BASE}/api/v4/extract-results/batch/${batchId}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -613,6 +659,7 @@ async function convertPdfBytes(
       }
       log("Extracted markdown length:", extracted.markdown.length, "asset count:", extracted.assetCount);
       onProgress?.("done", "Conversion complete");
+      await onRemoteTask?.({ taskKey, batchId, state: "done" });
       return extracted;
     } else if (result.state === "failed") {
       log("ERROR: Conversion failed:", result.err_msg);

@@ -21,6 +21,7 @@ ChatPDF 主要为个人使用而开发，并按当前状态分享。由于 Zoter
 - 每个 Zotero 窗口拥有独立的会话、来源列表和后台任务。
 - 可选的公共网页搜索与正文抓取。
 - 在本地缓存中保存转换结果和聊天历史。
+- 与本地 MCP 客户端共享同一份 Markdown，不创建第二套索引或缓存。
 
 ## 使用要求
 
@@ -74,6 +75,16 @@ Windows/Linux 打开 **编辑 → 设置 → ChatPDF**；macOS 打开 **Zotero �
 
 转换错误会标明失败阶段：上传准备、PDF 上传、结果轮询、结果下载或 ZIP 解压。重试时通常会从上次完成的位置继续。
 
+## 本地 MCP 集成
+
+ChatPDF 运行时会在 Zotero 本地服务器注册唯一的精确协议端点 `POST /chatpdf/v1`。本地 MCP 服务可以发现缓存目录和 Zotero 文库映射、读取 Zotero 当前选择、启动/列出/轮询/取消转换，并在 agent 重启后找回已知 job ID；Markdown、分块、manifest 和提取资源仍直接读取面板使用的同一缓存。
+
+面板和 MCP 发起的转换按 `libraryID:attachmentKey` 全局去重。每个面板窗口和 bridge 持有独立 owner，单个面板不会取消其他使用者仍需要的转换；MCP 显式取消仍会终止整个任务。MCP 可以为每个任务选择 pipeline/VLM、语言、OCR、公式/表格提取和有界 MinerU 轮询超时。一个原子 conversion registry 只保存安全恢复点、chunk 进度、时间和错误，不保存 token 或签名上传 URL。Zotero 重启后，安全 checkpoint 会自动续跑；无法安全恢复的任务会明确进入可重试的 `interrupted`。
+
+命中已有 ready 缓存时，ChatPDF 也会为旧 manifest 补充标准 document、Zotero 文库、附件和父论文身份。此过程不会调用 MinerU，也不会修改缓存 Markdown；因此 Zotero 暂时不可用时，后续纯缓存读取仍可保留这些关联。
+
+新结果先写入每个 job 的 staging，只有 Markdown、manifest、chunks 和 assets 全部就绪后才替换标准文档目录。因此失败或强制重转时，旧 ready 文档仍然可读。本地取消会停止 ChatPDF 侧工作，并明确说明已被 MinerU 接受的远端任务是否仍可能继续。MinerU token 始终保留在 Zotero 偏好中，不会出现在 bridge 响应里。该 bridge 依赖 Zotero 的 loopback 服务，不是公网远程 API。
+
 ## 网络工具
 
 网络工具默认关闭。启用后，助手可以搜索公共网页，并从 HTTP(S) 页面抓取可读文本。
@@ -105,4 +116,4 @@ Windows/Linux 打开 **编辑 → 设置 → ChatPDF**；macOS 打开 **Zotero �
 ## 支持
 
 - [报告问题](https://github.com/ruijie-xi/zotero-chat-pdf/issues)
-- [更新日志](CHANGELOG.zh-CN.md) · [English](CHANGELOG.md)
+- [更新日志（英文）](CHANGELOG.md)

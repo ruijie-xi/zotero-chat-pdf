@@ -94,6 +94,36 @@ export function getItemByKey(key: string, libraryID?: number): Zotero.Item | nul
   return null;
 }
 
+/** Return the deduplicated pane/reader selection across all open Zotero windows. */
+export function getSelectedZoteroItems(): Zotero.Item[] {
+  const items: Zotero.Item[] = [];
+  for (const win of Zotero.getMainWindows() as any[]) {
+    try {
+      const selected = win.ZoteroPane?.getSelectedItems?.();
+      if (Array.isArray(selected)) items.push(...selected);
+    } catch {}
+    try {
+      const selected = (Zotero as any).getActiveZoteroPane?.()?.getSelectedItems?.();
+      if (Array.isArray(selected)) items.push(...selected);
+    } catch {}
+    try {
+      const tabID = win.Zotero_Tabs?.selectedID;
+      if (!tabID || tabID === "zotero-pane") continue;
+      const readerItemID = (Zotero as any).Reader?.getByTabID?.(tabID)?.itemID;
+      const tabItemID = win.Zotero_Tabs?._tabs?.find((tab: any) => tab.id === tabID)?.data?.itemID;
+      const item = Zotero.Items.get(readerItemID || tabItemID);
+      if (item) items.push(item);
+    } catch {}
+  }
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const id = `${item.libraryID}:${item.key}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 export async function getItemFromZoteroUri(uri: string): Promise<Zotero.Item | null> {
   Zotero.debug(`[ChatPDF] getItemFromZoteroUri: trying "${uri}"`);
 

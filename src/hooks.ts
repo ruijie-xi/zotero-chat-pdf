@@ -1,5 +1,10 @@
 import { config } from "../package.json";
 import { injectChatPanel, removeChatPanel, registerContextMenu, abortCurrentStream } from "./modules/chat-panel";
+import { registerChatPdfBridge, unregisterChatPdfBridge } from "./modules/chatpdf-bridge";
+import {
+  initializeConversions,
+  suspendConversions,
+} from "./modules/conversion-manager";
 
 async function onStartup() {
   await Promise.all([
@@ -23,6 +28,13 @@ async function onStartup() {
     registerContextMenu();
   } catch (e) {
     Zotero.log(`[${config.addonName}] Failed to register context menu: ${e}`, "error");
+  }
+
+  try {
+    await initializeConversions();
+    registerChatPdfBridge();
+  } catch (e) {
+    Zotero.log(`[${config.addonName}] Failed to register local bridge: ${e}`, "error");
   }
 
   await Promise.all(
@@ -55,6 +67,8 @@ async function onMainWindowUnload(win: Window) {
 async function onShutdown() {
   addon.data.alive = false;
   abortCurrentStream();
+  await suspendConversions();
+  unregisterChatPdfBridge();
   for (const win of Zotero.getMainWindows()) {
     removeChatPanel(win);
   }

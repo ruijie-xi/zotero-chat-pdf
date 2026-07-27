@@ -15,6 +15,7 @@ import {
   getAllLibraryItems,
   getItemByKey,
   getPdfAttachment,
+  getSelectedZoteroItems,
   summarizeZoteroItem,
   summarizeZoteroAnnotation,
   ZoteroAnnotationSummary,
@@ -1001,56 +1002,8 @@ async function executeListCollectionItems(args: Record<string, unknown>, session
   return lines.join("\n");
 }
 
-function selectedItemsFromWindow(win: any): Zotero.Item[] {
-  const items: Zotero.Item[] = [];
-  try {
-    const paneItems = win.ZoteroPane?.getSelectedItems?.();
-    if (Array.isArray(paneItems)) items.push(...paneItems);
-  } catch {}
-
-  try {
-    const activePaneItems = (Zotero as any).getActiveZoteroPane?.()?.getSelectedItems?.();
-    if (Array.isArray(activePaneItems)) items.push(...activePaneItems);
-  } catch {}
-
-  try {
-    const selectedTabID = win.Zotero_Tabs?.selectedID;
-    if (selectedTabID && selectedTabID !== "zotero-pane") {
-      const reader = (Zotero as any).Reader?.getByTabID?.(selectedTabID);
-      if (reader?.itemID) {
-        const item = Zotero.Items.get(reader.itemID);
-        if (item) items.push(item);
-      }
-      const tab = win.Zotero_Tabs?._tabs?.find((t: any) => t.id === selectedTabID);
-      if (tab?.data?.itemID) {
-        const item = Zotero.Items.get(tab.data.itemID);
-        if (item) items.push(item);
-      }
-    }
-  } catch {}
-
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    const key = `${(item as any).libraryID || ""}:${item.key}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 async function executeGetCurrentZoteroSelection(session: ChatSession): Promise<string> {
-  const selectedItems: Zotero.Item[] = [];
-  for (const win of Zotero.getMainWindows()) {
-    selectedItems.push(...selectedItemsFromWindow(win as any));
-  }
-
-  const seen = new Set<string>();
-  const items = selectedItems.filter((item) => {
-    const key = `${(item as any).libraryID || ""}:${item.key}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const items = getSelectedZoteroItems();
 
   if (items.length === 0) {
     return "No current Zotero selection or open reader item was found.";

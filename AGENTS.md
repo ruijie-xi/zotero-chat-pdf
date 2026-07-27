@@ -1,7 +1,5 @@
 # AGENTS.md - Project Guide for AI Assistants
 
-[简体中文](AGENTS.zh-CN.md)
-
 ## Project Summary
 
 ChatPDF is a Zotero 7-9 plugin for chatting with research papers through OpenAI-compatible LLM APIs. MinerU converts PDFs to Markdown, the plugin caches results locally, and an agent accesses documents and the Zotero library through tools.
@@ -52,7 +50,9 @@ Core modules:
 - `src/modules/chat-session.ts`: session sources, per-turn source scope, messages, prompt construction, and serialization.
 - `src/modules/chat-history.ts`: atomic session/index persistence, recovery, and deletion tombstones.
 - `src/modules/source-identity.ts`: `libraryID:key` source identity and cache keys.
-- `src/modules/source-chips.ts`: source UI and user-owned MinerU conversion lifecycle.
+- `src/modules/source-chips.ts`: source UI adapter for the shared conversion manager.
+- `src/modules/conversion-manager.ts`: owner-aware deduplication, history/recovery, v3 manifests, and cache commits.
+- `src/modules/chatpdf-bridge.ts`: one exact-protocol loopback endpoint for live selection and conversion control.
 - `src/modules/mineru-client.ts`: upload, polling, ZIP download/extraction, chunking, and stage diagnostics.
 - `src/modules/md-cache.ts`: atomic Markdown/chunk/manifest cache.
 - `src/modules/markdown-renderer.ts`: Markdown/KaTeX to sanitized XHTML-safe HTML.
@@ -127,7 +127,7 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 
 ## Documentation and Git Hygiene
 
-- Every maintained Markdown document must have an English and a Simplified Chinese counterpart with cross-links.
+- Keep all project documentation in English except `README.md` and `README.zh-CN.md`.
 - Keep unrelated user changes out of any commit.
 - Do not commit `.scaffold/`, local environment/cache/debug files, credentials, or scratch artifacts.
 - Do not stage, commit, tag, push, or release unless the user asks.

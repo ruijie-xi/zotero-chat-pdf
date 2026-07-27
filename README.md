@@ -21,6 +21,7 @@ The source code is available for adaptation. You can use AI coding agents to hel
 - Keep separate chat sessions, source lists, and background work in each Zotero window.
 - Optionally search and fetch public web pages.
 - Save converted documents and chat history in a local cache.
+- Share the same converted Markdown with local MCP clients without creating a second index or cache.
 
 ## Requirements
 
@@ -74,6 +75,16 @@ Large PDFs are converted in page ranges. Completed ranges are cached, so an inte
 
 Conversion errors identify the failing stage: upload preparation, PDF upload, result polling, result download, or ZIP extraction. Retrying usually resumes from the last completed range.
 
+## Local MCP Integration
+
+When ChatPDF is running, it registers one exact-protocol loopback endpoint at `POST /chatpdf/v1` on Zotero's local server. A local MCP server can discover the cache and Zotero library mapping, read the current Zotero selection, start/list/poll/cancel conversions, and recover known job IDs after an agent restart. The MCP server reads `document.md`, chunks, manifests, and extracted assets directly from the same cache used by the panel.
+
+Conversion requests from the panel and MCP are deduplicated by `libraryID:attachmentKey`. Each panel window and the bridge owns an independent lease, so one panel cannot cancel work still used elsewhere; explicit MCP cancellation remains job-wide. MCP callers may choose pipeline/VLM, language, OCR, formula/table extraction, and a bounded MinerU polling timeout for each job. One atomic conversion registry records safe checkpoints, chunk progress, timestamps, and errors without storing tokens or signed upload URLs. Active work resumes after Zotero restarts when a checkpoint is safe; otherwise the job becomes explicitly `interrupted` and retryable.
+
+A ready cache hit also enriches a legacy manifest with canonical document, Zotero library, attachment, and parent-paper identity. This does not contact MinerU or alter the cached Markdown, and it lets later cache-only reads preserve those associations while Zotero is temporarily unavailable.
+
+New output is written to per-job staging and replaces the canonical document directory only after the complete Markdown, manifest, chunks, and assets are ready. A failed or forced reconversion therefore leaves an older ready document readable. Local cancellation stops ChatPDF work and records whether the already accepted remote MinerU task may continue. MinerU tokens remain in Zotero preferences and are never included in bridge responses. The bridge uses Zotero's loopback server and is not a public remote API.
+
 ## Web Tools
 
 Web tools are disabled by default. When enabled, the assistant can search the public web and fetch readable text from HTTP(S) pages.
@@ -105,4 +116,4 @@ The default cache directory is `~/.chatpdf-cache/`; you can change it in ChatPDF
 ## Support
 
 - [Report a problem](https://github.com/ruijie-xi/zotero-chat-pdf/issues)
-- [Release notes](CHANGELOG.md) · [中文](CHANGELOG.zh-CN.md)
+- [Release notes](CHANGELOG.md)

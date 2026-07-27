@@ -2,119 +2,16 @@ import { h } from "../utils/dom";
 import { formatChars } from "../utils/format";
 import { SourceItem } from "./chat-session";
 import {
-  convertPdf,
-  MINERU_LONG_PDF_CHUNK_SIZE,
-  PdfChunkPlanItem,
-  PdfChunkResult,
-} from "./mineru-client";
+  conversionRequestFromSource,
+  releaseConversion,
+  startConversion,
+  subscribeConversion,
+  waitForConversion,
+} from "./conversion-manager";
 import * as MDCache from "./md-cache";
 import * as ChatHistory from "./chat-history";
 import { createAbortController, getPanelState, PanelState } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
-
-async function loadCachedChunks(key: string, legacyKey?: string): Promise<Map<number, string>> {
-  const chunks = new Map<number, string>();
-  const manifest = await MDCache.readManifest(key, legacyKey);
-  if (!manifest) return chunks;
-  if (manifest.version < 2) {
-    Zotero.debug(`[ChatPDF] Ignoring stale chunk cache for ${key}: manifest version=${manifest.version}`);
-    return chunks;
-  }
-  if (manifest.chunks.length > 1 && manifest.chunkSize !== MINERU_LONG_PDF_CHUNK_SIZE) {
-    Zotero.debug(`[ChatPDF] Ignoring stale chunk cache for ${key}: chunkSize=${manifest.chunkSize}`);
-    return chunks;
-  }
-
-  for (const chunk of manifest.chunks) {
-    if (chunk.status !== "ready") continue;
-    try {
-      chunks.set(chunk.index, await MDCache.readChunk(key, chunk.index, legacyKey));
-    } catch (err: any) {
-      Zotero.debug(`[ChatPDF] Failed to read cached chunk ${chunk.index} for ${key}: ${err.message}`);
-    }
-  }
-  return chunks;
-}
-
-function makeManifest(
-  key: string,
-  title: string,
-  pageCount: number,
-  chunkSize: number,
-  plan: PdfChunkPlanItem[],
-  cachedChunks: Map<number, string>,
-): MDCache.DocumentManifest {
-  return {
-    version: 2,
-    key,
-    title,
-    pageCount,
-    chunkSize,
-    updatedAt: Date.now(),
-    chunks: plan.map((chunk) => {
-      const cached = cachedChunks.get(chunk.index);
-      return {
-        ...chunk,
-        status: cached ? "ready" : "pending",
-        charCount: cached?.length,
-      };
-    }),
-  };
-}
-
-function markChunkReady(
-  manifest: MDCache.DocumentManifest,
-  chunk: PdfChunkResult,
-): MDCache.DocumentManifest {
-  return {
-    ...manifest,
-    updatedAt: Date.now(),
-    chunks: manifest.chunks.map((item) => item.index === chunk.index
-      ? {
-        ...item,
-        status: "ready",
-        charCount: chunk.markdown.length,
-        assetCount: chunk.assetCount,
-        errorMessage: undefined,
-      }
-      : item),
-  };
-}
-
-function withLineRanges(
-  manifest: MDCache.DocumentManifest,
-  markdown: string,
-): MDCache.DocumentManifest {
-  const markerPattern = /^<!-- chatpdf-chunk:(\d+) pages:\d+-\d+ -->$/;
-  const lines = markdown.split("\n");
-  const ranges: { index: number; lineStart: number; lineEnd: number }[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const match = markerPattern.exec(lines[i]);
-    if (!match) continue;
-    const previous = ranges[ranges.length - 1];
-    if (previous) previous.lineEnd = i;
-    ranges.push({
-      index: Number(match[1]),
-      lineStart: i + 1,
-      lineEnd: lines.length,
-    });
-  }
-
-  return {
-    ...manifest,
-    updatedAt: Date.now(),
-    chunks: manifest.chunks.map((chunk) => {
-      const range = ranges.find((r) => r.index === chunk.index);
-      if (!range) return chunk;
-      return {
-        ...chunk,
-        lineStart: range.lineStart,
-        lineEnd: range.lineEnd,
-      };
-    }),
-  };
-}
 
 /** Convert a pending source to markdown via MinerU. */
 export async function convertSource(
@@ -133,52 +30,30 @@ export async function convertSource(
   externalSignal?.addEventListener("abort", forwardAbort, { once: true });
   if (externalSignal?.aborted) forwardAbort();
   onProgress?.("Starting conversion...");
+  let unsubscribe: () => void = () => undefined;
+  let jobId = "";
+  const owner = `ui:${panelState?.windowId || "detached"}:${source.id}`;
   try {
-    let attItem: Zotero.Item | null = null;
-    for (const lib of Zotero.Libraries.getAll()) {
-      if (source.libraryID !== undefined && lib.libraryID !== source.libraryID) continue;
-      try {
-        const found = Zotero.Items.getByLibraryAndKey(lib.libraryID, source.key);
-        if (found) { attItem = found; break; }
-      } catch {
-        Zotero.debug(`[ChatPDF] convertSource: lookup failed for lib ${lib.libraryID}`);
-        continue;
-      }
+    const started = await startConversion(conversionRequestFromSource(source), owner);
+    jobId = started.jobId;
+    const releaseOwner = () => releaseConversion(jobId, owner);
+    convSignal.addEventListener("abort", releaseOwner, { once: true });
+    if (convSignal.aborted) releaseOwner();
+    unsubscribe = subscribeConversion(jobId, (status) => onProgress?.(status.progress));
+    const finished = await waitForConversion(jobId, convSignal);
+    convSignal.removeEventListener("abort", releaseOwner);
+    if (finished.state === "ready") {
+      const markdown = await MDCache.read(source.cacheKey, source.key);
+      targetSession.setSourceReady(source.id, markdown);
+      onProgress?.("Ready");
+    } else if (finished.state === "cancelled") {
+      targetSession.setSourceStatus(source.id, "pending");
+      onProgress?.("Conversion stopped");
+    } else {
+      throw new Error(finished.error || finished.progress || "Conversion failed");
     }
-    if (!attItem) throw new Error(`Cannot find attachment with key ${source.key}`);
-    const pdfPath = await attItem.getFilePathAsync();
-    if (!pdfPath) throw new Error("PDF file not found on disk");
-
-    const cachedChunks = await loadCachedChunks(source.cacheKey, source.key);
-    let manifest: MDCache.DocumentManifest | null = null;
-    const result = await convertPdf(
-      pdfPath,
-      (_status, msg) => onProgress?.(msg),
-      convSignal,
-      {
-        outputDir: MDCache.getDocDir(source.cacheKey),
-        cachedChunks,
-        onPlan: async (pageCount, chunkSize, plan) => {
-          manifest = makeManifest(source.key, source.title, pageCount, chunkSize, plan, cachedChunks);
-          await MDCache.writeManifest(source.cacheKey, manifest);
-        },
-        onChunkConverted: async (chunk) => {
-          await MDCache.writeChunk(source.cacheKey, chunk.index, chunk.markdown);
-          if (manifest) {
-            manifest = markChunkReady(manifest, chunk);
-            await MDCache.writeManifest(source.cacheKey, manifest);
-          }
-        },
-      },
-    );
-    await MDCache.write(source.cacheKey, result.markdown);
-    if (manifest) {
-      await MDCache.writeManifest(source.cacheKey, withLineRanges(manifest, result.markdown));
-    }
-    targetSession.setSourceReady(source.id, result.markdown);
-    onProgress?.("Ready");
   } catch (err: any) {
-    if (err.name === "AbortError") {
+    if (err.name === "AbortError" || convSignal.aborted) {
       Zotero.debug(`[ChatPDF] convertSource aborted for ${source.key}`);
       targetSession.setSourceStatus(source.id, "pending");
       onProgress?.("Conversion stopped");
@@ -189,6 +64,8 @@ export async function convertSource(
       throw err;
     }
   } finally {
+    unsubscribe();
+    if (jobId) releaseConversion(jobId, owner);
     externalSignal?.removeEventListener("abort", forwardAbort);
     controllers.delete(source.id);
   }

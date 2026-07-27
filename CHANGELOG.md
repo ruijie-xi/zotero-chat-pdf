@@ -1,8 +1,28 @@
 # Changelog
 
-[简体中文](CHANGELOG.zh-CN.md)
-
 ## Unreleased
+
+### New Features
+
+- Add one shared conversion manager with owner-aware global deduplication, asynchronous status, and v3 manifests containing stable document and Zotero library identity.
+- Add one exact-protocol `POST /chatpdf/v1` loopback endpoint for MCP cache discovery, library mapping, current Zotero
+  selection, and conversion start/list/status/cancellation without exposing MinerU credentials.
+- Add an atomic conversion registry with restart recovery, safe MinerU batch resume points, terminal retention, and
+  explicit `cancelled` and `interrupted` states.
+
+### Changed
+
+- Enrich legacy ready-cache manifests with canonical document, library, attachment, and parent-paper identity on a
+  cache hit without re-running MinerU or modifying the cached Markdown.
+- Sanitize conversion progress and errors before public bridge responses and registry persistence.
+- Route both the ChatPDF UI and local MCP requests through the same conversion manager and atomic Markdown cache.
+- Stage Markdown, chunks, manifests, and assets per job and replace a canonical document only after full success, so
+  forced or failed reconversions preserve the previous ready document.
+- Split MinerU work into submit, upload, poll, download, extract, and commit stages and persist resumable batch/chunk
+  progress without tokens or signed upload URLs.
+- Preserve reused chunk assets in private staging, repair interrupted swaps at startup, and retry transient Windows
+  directory moves while keeping the previous ready document readable on failure.
+- Keep project documentation in English except for the English and Simplified Chinese README files.
 
 ## 0.8.7
 
@@ -68,7 +88,7 @@
 
 - Add TypeScript, ESLint, Vitest, CI, and the unified `npm run verify` command.
 - Add regression tests for source identity/TurnScope, safe web access, Markdown sanitization, session restoration, and context budgeting.
-- Rewrite the README as a concise user guide and maintain the contributor guide, LLM workflow, and changelog in matching English and Simplified Chinese versions.
+- Rewrite the README as a concise user guide and maintain the contributor guide, LLM workflow, and changelog in English.
 - Add a real Zotero screenshot and clarify the project's personal-use scope and AI-assisted customization path.
 - Remove obsolete Claude-specific files, roadmap/review artifacts, unused legacy code and exports, localization scaffolding, and template icons.
 
