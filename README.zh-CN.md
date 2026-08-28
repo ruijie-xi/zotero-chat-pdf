@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-ChatPDF 是一款支持 Zotero 7–9 的插件，让你可以通过兼容 OpenAI 接口的大语言模型阅读和讨论研究论文。它在 Zotero 中提供常驻聊天面板，通过 MinerU 转换 PDF，并让助手使用 Zotero 文库中的论文完成研究任务。
+ChatPDF 是一款支持 Zotero 7–10 的插件，让你可以通过兼容 OpenAI 接口的大语言模型阅读和讨论研究论文。它在 Zotero 中提供常驻聊天面板，通过 MinerU 转换 PDF，并让助手使用 Zotero 文库中的论文完成研究任务。
 
 ![Zotero 中的 ChatPDF 侧边面板](docs/images/chatpdf-zotero-panel.png)
 
@@ -25,7 +25,7 @@ ChatPDF 主要为个人使用而开发，并按当前状态分享。由于 Zoter
 
 ## 使用要求
 
-- Zotero 7、8 或 9。
+- Zotero 7、8、9 或 10.0。
 - 用于 PDF 转换的 MinerU API Token。
 - 兼容 OpenAI Chat Completions 接口的模型服务 API Key。
 

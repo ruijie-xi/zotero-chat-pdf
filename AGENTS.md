@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-ChatPDF is a Zotero 7-9 plugin for chatting with research papers through OpenAI-compatible LLM APIs. MinerU converts PDFs to Markdown, the plugin caches results locally, and an agent accesses documents and the Zotero library through tools.
+ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI-compatible LLM APIs. MinerU converts PDFs to Markdown, the plugin caches results locally, and an agent accesses documents and the Zotero library through tools.
 
 - GitHub: `ruijie-xi/zotero-chat-pdf`
 - Add-on ID: `chatpdf@zotero-plugin`
