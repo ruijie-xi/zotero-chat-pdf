@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-ChatPDF is a Zotero 7–9 add-on for reading and discussing research papers with an OpenAI-compatible language model. It adds a persistent chat panel to Zotero, converts PDFs through MinerU, and lets the assistant work with papers in your Zotero library.
+ChatPDF is a Zotero 7–10 add-on for reading and discussing research papers with an OpenAI-compatible language model. It adds a persistent chat panel to Zotero, converts PDFs through MinerU, and lets the assistant work with papers in your Zotero library.
 
 ![ChatPDF side panel in Zotero](docs/images/chatpdf-zotero-panel.png)
 
@@ -25,7 +25,7 @@ The source code is available for adaptation. You can use AI coding agents to hel
 
 ## Requirements
 
-- Zotero 7, 8, or 9.
+- Zotero 7, 8, 9, or 10.0.
 - A MinerU API token for PDF conversion.
 - An API key for an OpenAI-compatible chat-completions service.
 
