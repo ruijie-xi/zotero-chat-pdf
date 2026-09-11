@@ -24,6 +24,8 @@ export interface SavedSession {
   referencedParentKeys?: string[];
   sources?: SavedSource[];
   messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { id?: string; key: string; libraryID?: number; title: string; parentKey?: string }[]; modelLabel?: string; toolHistory?: any[]; iterations?: any[]; usage?: any; status?: "complete" | "cancelled" | "error"; errorMessage?: string }[];
+  /** Provider usage from session-owned LLM calls outside assistant turns, such as title generation. */
+  auxiliaryUsage?: any;
   createdAt: number;
   updatedAt: number;
 }

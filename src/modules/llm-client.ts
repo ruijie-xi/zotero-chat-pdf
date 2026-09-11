@@ -62,9 +62,43 @@ export interface TokenUsage {
   };
 }
 
+/** Sum provider-reported usage without estimating fields the provider omitted. */
+export function sumTokenUsage(usages: Iterable<TokenUsage | undefined>): TokenUsage | undefined {
+  const total: TokenUsage = {};
+  let hasUsage = false;
+  for (const usage of usages) {
+    if (!usage) continue;
+    hasUsage = true;
+    total.prompt_tokens = (total.prompt_tokens || 0) + (usage.prompt_tokens || 0);
+    total.completion_tokens = (total.completion_tokens || 0) + (usage.completion_tokens || 0);
+    total.total_tokens = (total.total_tokens || 0) + (
+      usage.total_tokens ?? ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0))
+    );
+    total.prompt_cache_hit_tokens = (total.prompt_cache_hit_tokens || 0) + (usage.prompt_cache_hit_tokens || 0);
+    total.prompt_cache_miss_tokens = (total.prompt_cache_miss_tokens || 0) + (usage.prompt_cache_miss_tokens || 0);
+    const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
+    if (reasoningTokens) {
+      total.completion_tokens_details = {
+        ...(total.completion_tokens_details || {}),
+        reasoning_tokens: (total.completion_tokens_details?.reasoning_tokens || 0) + reasoningTokens,
+      };
+    }
+  }
+  return hasUsage ? total : undefined;
+}
+
 export interface IterationRecord {
   reasoning?: string;
-  toolCalls: { toolName: string; args: Record<string, unknown>; result: string; durationMs: number }[];
+  toolCalls: {
+    toolName: string;
+    args: Record<string, unknown>;
+    result: string;
+    durationMs: number;
+    contextDelivery?: "complete" | "omitted";
+    contextMessage?: string;
+  }[];
+  /** Provider-reported usage for this exact model request. */
+  usage?: TokenUsage;
 }
 
 export interface ChatResult {

@@ -1,7 +1,7 @@
 import { h, scrollToBottomIfNeeded } from "../utils/dom";
 import { formatTokens, formatMsgTime } from "../utils/format";
 import { renderMarkdown } from "./markdown-renderer";
-import { TokenUsage, IterationRecord } from "./llm-client";
+import { TokenUsage, IterationRecord, sumTokenUsage } from "./llm-client";
 import { ToolCallRecord } from "./chat-session";
 import { getPanelState, StreamState } from "./panel-state";
 import { handleSend } from "./send-handler";
@@ -59,6 +59,9 @@ export function createToolBlock(doc: Document, toolHistory: ToolCallRecord[], to
     if (argsStr !== "{}") {
       entry.appendChild(h(doc, "div", { className: "chatpdf-tool-args" }, argsStr));
     }
+    if (tr.contextDelivery === "omitted" && tr.contextMessage) {
+      entry.appendChild(h(doc, "div", { className: "chatpdf-tool-context-warning" }, tr.contextMessage));
+    }
     entry.appendChild(h(doc, "div", { className: "chatpdf-tool-result" }, tr.result));
     entry.appendChild(h(doc, "div", { className: "chatpdf-tool-duration" }, `${tr.durationMs}ms`));
     content.appendChild(entry);
@@ -108,18 +111,20 @@ export function createIterationBlock(doc: Document, record: IterationRecord, ite
 export function updateUsageBar(root: HTMLElement, usage?: TokenUsage): void {
   const bar = root.querySelector("#chatpdf-usage-bar") as HTMLElement | null;
   if (!bar) return;
-  const text = formatUsageText(usage);
+  const text = formatUsageText(usage, "Session");
   if (!text) {
     bar.style.display = "none";
     return;
   }
   bar.style.display = "";
   bar.textContent = text;
+  bar.title = "Provider-reported cumulative usage for the current session; cache rate is hit / (hit + miss).";
 }
 
-export function formatUsageText(usage?: TokenUsage): string {
+export function formatUsageText(usage?: TokenUsage, label?: string): string {
   if (!usage) return "";
   const parts: string[] = [];
+  if (label) parts.push(label);
   if (usage.prompt_tokens) parts.push(`In: ${formatTokens(usage.prompt_tokens)}`);
   if (usage.completion_tokens) parts.push(`Out: ${formatTokens(usage.completion_tokens)}`);
   if (usage.completion_tokens_details?.reasoning_tokens) {
@@ -129,13 +134,15 @@ export function formatUsageText(usage?: TokenUsage): string {
   if (usage.prompt_cache_hit_tokens || usage.prompt_cache_miss_tokens) {
     const hit = usage.prompt_cache_hit_tokens || 0;
     const miss = usage.prompt_cache_miss_tokens || 0;
-    parts.push(`Cache: ${formatTokens(hit)}/${formatTokens(miss)}`);
+    const cacheTotal = hit + miss;
+    const rate = cacheTotal > 0 ? `${(100 * hit / cacheTotal).toFixed(1)}%` : "n/a";
+    parts.push(`Cache hit: ${rate} (${formatTokens(hit)} hit / ${formatTokens(miss)} miss)`);
   }
   return parts.join(" \u00B7 ");
 }
 
 export function appendUsageMeta(container: HTMLElement, usage?: TokenUsage): void {
-  const text = formatUsageText(usage);
+  const text = formatUsageText(usage, "Turn");
   const existing = container.querySelector(".chatpdf-msg-usage");
   if (existing) existing.remove();
   if (!text) return;
@@ -320,6 +327,7 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
         }
       }
     }
+    updateUsageBar(root, session.getTokenUsage());
 
     state.chatInput?.setText(newText);
     handleSend(root);
@@ -347,15 +355,13 @@ export function renderChatHistory(root: HTMLElement): void {
     const welcome = messagesEl.querySelector(".chatpdf-welcome");
     if (welcome) welcome.remove();
     let msgIndex = 0;
-    let lastUsage: TokenUsage | undefined;
     for (const msg of history) {
       if (msg.role === "system") continue;
       appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning, msg.timestamp, msg.sources, msg.modelLabel, msg.toolHistory, msg.iterations, msg.usage);
-      if (msg.usage) lastUsage = msg.usage;
       msgIndex++;
     }
-    if (lastUsage) updateUsageBar(root, lastUsage);
   }
+  updateUsageBar(root, getPanelState(root).session.getTokenUsage());
 }
 
 /**
@@ -389,6 +395,12 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
   let lastReasoningLen = 0;
   let lastTextLen = 0;
   let wasThinkingDone = false;
+  let lastUsage = stream.usage;
+
+  function updateLiveUsage() {
+    updateUsageBar(root, sumTokenUsage([stream.session.getTokenUsage(), stream.usage]));
+    lastUsage = stream.usage;
+  }
 
   function ensureReasoningBlock() {
     if (reasoningBlock) return;
@@ -457,6 +469,7 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
   updateReasoning();
   if (stream.thinkingDone) wasThinkingDone = true;
   updateContent();
+  updateLiveUsage();
 
   if (!stream.fullText) {
     dots = h(doc, "div", { className: "chatpdf-thinking" });
@@ -478,6 +491,7 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
     }
     updateReasoning();
     updateContent();
+    if (stream.usage !== lastUsage) updateLiveUsage();
   }, 100) as unknown as number;
   panelState.activePollIntervals.add(pollInterval);
 }

@@ -10,7 +10,7 @@ import {
 } from "./panel-state";
 import { showFilteredHistory, showHistoryView, hideHistoryView } from "./history-view";
 import { refreshSourceChips, convertSource } from "./source-chips";
-import { renderChatHistory } from "./message-renderer";
+import { renderChatHistory, updateUsageBar } from "./message-renderer";
 import { handleSend, handleConvertAndSend, autoSaveSession } from "./send-handler";
 import {
   addZoteroItemToSession,
@@ -626,6 +626,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
       msgs.innerHTML = "";
       msgs.appendChild(welcome);
     }
+    updateUsageBar(root);
   });
 
   convertAllLink.addEventListener("click", () => {
@@ -653,6 +654,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
       msgs.innerHTML = "";
       msgs.appendChild(welcome);
     }
+    updateUsageBar(root);
     refreshSourceChips(root);
   };
   newChatBtn.addEventListener("click", handleNewChat);

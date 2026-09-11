@@ -6,7 +6,7 @@ import { ChatSession } from "./chat-session";
 import {
   getPanelState, resetStreamingUI, setSendButtonToStop,
 } from "./panel-state";
-import { renderChatHistory, refreshSourceChips, renderLiveStreamState } from "./message-renderer";
+import { renderChatHistory, refreshSourceChips, renderLiveStreamState, updateUsageBar } from "./message-renderer";
 import { autoSaveSession } from "./send-handler";
 
 /** Show history filtered to a specific parent item. Called from context menu. */
@@ -222,7 +222,10 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
         const activeStream = state.backgroundStreams.get(meta.id);
         activeStream?.abortController.abort();
         state.backgroundStreams.delete(meta.id);
-        if (state.session.id === meta.id) state.session = new ChatSession();
+        if (state.session.id === meta.id) {
+          state.session = new ChatSession();
+          updateUsageBar(root);
+        }
         await ChatHistory.deleteSession(meta.id);
         loadHistoryList(root);
       });

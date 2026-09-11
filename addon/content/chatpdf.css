@@ -1329,6 +1329,16 @@
   word-break: break-word;
 }
 
+.chatpdf-tool-context-warning {
+  color: var(--color-warning, #9a6700);
+  background: var(--color-warning10, rgba(154, 103, 0, 0.08));
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 @container (max-width: 330px) {
   .chatpdf-toolbar {
     gap: 1px;
@@ -1492,4 +1502,5 @@
   display: none;
   user-select: none;
   -moz-user-select: none;
+  white-space: normal;
 }

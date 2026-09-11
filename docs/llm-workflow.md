@@ -78,16 +78,18 @@ Switching sessions does not cancel a background response. Closing a window or di
 The provider message order is:
 
 ```text
-system instructions
+stable, source-independent system instructions
 prior user/assistant history
-current user message
+current TurnScope metadata + user message
 ```
 
 Converted PDFs are not embedded into the system prompt. The model reads them through tools.
 
-The system prompt lists only the active TurnScope and teaches the model the available document/Zotero/web workflow. Current tool results are returned in full and persisted in the assistant iteration record. When an old assistant iteration is replayed in a later prompt, its full tool body is replaced by a provenance record containing the tool name, result size, and stable request/call identity. This avoids hidden result truncation while preventing indefinite prompt amplification.
+The system prompt teaches the document/Zotero/web workflow but does not contain volatile source metadata. Each user message carries its own immutable TurnScope block, so changing source mentions does not invalidate the stable system prefix and historical user turns can be reconstructed exactly. When an old assistant iteration is replayed in a later prompt, its full tool body is replaced by compact provenance containing tool arguments, result size, and context-delivery status.
 
-`contextMaxChars` defaults to 240,000. Prompt construction fails locally with an explicit size error if the total would exceed the budget.
+`contextMaxChars` defaults to 240,000. Initial history construction uses at most 85% of that budget, reserving space for the current turn. Before another model request, current tool results are measured against both a per-result limit and the remaining batch/context budget. A result that would exceed those budgets is retained in full in session history and the UI, while the model receives an explicit context-protection message with the original size, effective limit, and a narrower retry strategy. No partial result is silently presented as complete.
+
+Provider-reported usage is retained for every agent iteration and accumulated for each assistant turn. The footer sums all stored usage in the current session, including terminal cancelled/error turns when the provider returned usage and session-owned auxiliary calls such as title generation. It reports cache hit tokens, miss tokens, and the weighted hit percentage. Individual assistant messages continue to show their own turn totals.
 
 ## Agent Loop and Tool Scheduling
 
@@ -114,7 +116,7 @@ Provider replay preserves DeepSeek `reasoning_content` and Gemini thought-signat
 - `read_document_chunk`
 - `search_document`
 
-These tools accept stable source IDs and refuse sources outside TurnScope. Full-document reads and searches expose exact character counts and rough token estimates.
+These tools accept stable source IDs and refuse sources outside TurnScope. Search output merges overlapping context windows so repeated neighboring matches do not duplicate the same source lines. Caller-specified match limits remain explicit; large document reads remain possible through narrower line ranges or page-based chunks.
 
 ### Zotero Tools
 

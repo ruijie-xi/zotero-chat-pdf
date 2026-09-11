@@ -2,6 +2,7 @@ import { ChatMessage, ToolCall, Tool, chatWithTools, StreamCallback, TokenUsage,
 import { executeTool, getToolMetadata, ToolExecutionContext } from "./tools";
 import { ChatSession } from "./chat-session";
 import { getPref } from "../utils/prefs";
+import { prepareToolResultsForContext } from "./tool-result-budget";
 
 export { IterationRecord } from "./llm-client";
 
@@ -27,6 +28,8 @@ export interface AgentCallbacks {
    * done=true signals the current block should be finalized.
    */
   onThinking?: AgentThinkingCallback;
+  /** Cumulative provider-reported usage after each completed model request. */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 export interface AgentResult {
@@ -41,6 +44,15 @@ export interface AgentExecutionContext {
   requestId: string;
   windowId: string;
   turnScope: Set<string>;
+}
+
+function contextCharCount(messages: Record<string, unknown>[]): number {
+  return messages.reduce((sum, message) => {
+    const content = typeof message.content === "string" ? message.content.length : 0;
+    const reasoning = typeof message.reasoning_content === "string" ? message.reasoning_content.length : 0;
+    const toolCalls = message.tool_calls ? JSON.stringify(message.tool_calls).length : 0;
+    return sum + content + reasoning + toolCalls;
+  }, 0);
 }
 
 function abortError(message = "The request was cancelled."): Error {
@@ -83,6 +95,12 @@ export async function runAgentLoop(
         reasoning_tokens: (totalUsage.completion_tokens_details?.reasoning_tokens || 0) + reasoningTokens,
       };
     }
+    callbacks.onUsage?.({
+      ...totalUsage,
+      ...(totalUsage.completion_tokens_details
+        ? { completion_tokens_details: { ...totalUsage.completion_tokens_details } }
+        : {}),
+    });
   }
 
   function hasAnyUsage(u: TokenUsage): boolean {
@@ -219,6 +237,12 @@ export async function runAgentLoop(
             Zotero.debug(`[ChatPDF] runAgentLoop: tool ${tc.function.name} done in ${durationMs}ms, result=${toolResult.length} chars`);
             callbacks.onToolCallEnd?.(tc.function.name, toolResult, durationMs);
 
+            const record: IterationRecord["toolCalls"][number] = {
+              toolName: tc.function.name,
+              args,
+              result: toolResult,
+              durationMs,
+            };
             return {
               message: {
                 role: "tool" as const,
@@ -226,7 +250,7 @@ export async function runAgentLoop(
                 tool_call_id: tc.id,
                 name: tc.function.name,
               },
-              record: { toolName: tc.function.name, args, result: toolResult, durationMs },
+              record,
             };
         };
 
@@ -246,18 +270,36 @@ export async function runAgentLoop(
 
         if (signal?.aborted) throw abortError();
 
-        for (const item of executed) currentMessages.push(item.message);
+        const configuredContextMax = Number(getPref("contextMaxChars") || 240_000);
+        const preparedResults = prepareToolResultsForContext(
+          executed.map((item) => ({ toolName: item.record.toolName, result: item.record.result })),
+          contextCharCount(currentMessages),
+          configuredContextMax,
+        );
+
+        for (let i = 0; i < executed.length; i++) {
+          const item = executed[i];
+          const prepared = preparedResults[i];
+          item.message.content = prepared.content;
+          item.record.contextDelivery = prepared.contextDelivery;
+          if (prepared.contextMessage) {
+            item.record.contextMessage = prepared.contextMessage;
+            Zotero.debug(`[ChatPDF] context protection: ${item.record.toolName} result=${item.record.result.length} chars omitted from model context`);
+          }
+          currentMessages.push(item.message);
+        }
 
         const iterRecord: IterationRecord = {
           reasoning: result.reasoning,
           toolCalls: executed.map((item) => item.record),
+          usage: result.usage,
         };
         iterations.push(iterRecord);
         callbacks.onIterationComplete?.(iteration + 1, maxIterations, iterRecord);
         continue;
       } else {
         // No tool calls — this is the final answer (content was already streamed live)
-        const iterRecord: IterationRecord = { reasoning: result.reasoning, toolCalls: [] };
+        const iterRecord: IterationRecord = { reasoning: result.reasoning, toolCalls: [], usage: result.usage };
         iterations.push(iterRecord);
 
         // Signal stream completion (content chunks already delivered above)
@@ -292,7 +334,7 @@ export async function runAgentLoop(
       accumulateUsage(result.usage);
       callbacks.onStream?.("", true);
 
-      const iterRecord: IterationRecord = { reasoning: result.reasoning, toolCalls: [] };
+      const iterRecord: IterationRecord = { reasoning: result.reasoning, toolCalls: [], usage: result.usage };
       iterations.push(iterRecord);
 
       const totalDuration = Date.now() - loopStartTime;
@@ -331,10 +373,8 @@ export async function runAgentLoop(
   accumulateUsage(finalResult.usage);
   callbacks.onStream?.("", true);
 
-  if (finalResult.reasoning) {
-    const iterRecord: IterationRecord = { reasoning: finalResult.reasoning, toolCalls: [] };
-    iterations.push(iterRecord);
-  }
+  const iterRecord: IterationRecord = { reasoning: finalResult.reasoning, toolCalls: [], usage: finalResult.usage };
+  iterations.push(iterRecord);
 
   const totalDuration = Date.now() - loopStartTime;
   Zotero.debug(`[ChatPDF] runAgentLoop: max-iter final done in ${totalDuration}ms total`);

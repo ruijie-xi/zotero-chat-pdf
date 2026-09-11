@@ -122,7 +122,7 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
         description:
           "Read the content of a specific document by its key. " +
           "Use start_line and end_line to read specific sections (1-based line numbers). " +
-          "Omit line ranges to read the whole document.",
+          "Omit line ranges to read the whole document. Very large results may be retained in session history but withheld from model context; prefer focused ranges.",
         parameters: {
           type: "object",
           properties: {
@@ -204,7 +204,7 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
             },
             max_results: {
               type: "integer",
-              description: "Optional cap on the number of matches to return. Omit to return all matches.",
+              description: "Optional cap on the number of matches to return. Prefer 10-20 for broad terms; omit only when the complete match set is genuinely needed.",
             },
             context_lines: {
               type: "integer",
@@ -697,10 +697,46 @@ async function executeSearchDocument(args: Record<string, unknown>, context: Too
   if (typeof loaded === "string") return loaded;
   const { markdown, manifest, title } = loaded;
 
+  return buildDocumentSearchResult(markdown, title, query, maxResults, contextLines, manifest);
+}
+
+interface SearchWindow {
+  from: number;
+  to: number;
+  matchLines: number[];
+  locations: string[];
+}
+
+function compactLineNumbers(numbers: number[]): string {
+  const ranges: string[] = [];
+  let start = numbers[0];
+  let previous = numbers[0];
+  for (let i = 1; i <= numbers.length; i++) {
+    const current = numbers[i];
+    if (current === previous + 1) {
+      previous = current;
+      continue;
+    }
+    ranges.push(start === previous ? String(start) : `${start}-${previous}`);
+    start = current;
+    previous = current;
+  }
+  return ranges.join(", ");
+}
+
+/** Build complete search output while emitting every source line at most once per overlapping context window. */
+export function buildDocumentSearchResult(
+  markdown: string,
+  title: string,
+  query: string,
+  maxResults?: number,
+  contextLines = 2,
+  manifest: MDCache.DocumentManifest | null = null,
+): string {
   const lowerQuery = query.toLowerCase();
   const terms = lowerQuery.split(/\s+/).filter(Boolean);
   const lines = markdown.split("\n");
-  const matches: string[] = [];
+  const matches: { lineNumber: number; location: string }[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const lineLower = lines[i].toLowerCase();
@@ -714,21 +750,42 @@ async function executeSearchDocument(args: Record<string, unknown>, context: Too
       && lineNumber >= item.lineStart
       && lineNumber <= item.lineEnd
     ));
-    const from = Math.max(1, lineNumber - contextLines);
-    const to = Math.min(lines.length, lineNumber + contextLines);
-    const snippet = lines.slice(from - 1, to).join("\n");
-    const location = chunk
-      ? `line ${lineNumber}, chunk ${chunk.index}, pages ${chunk.startPage}-${chunk.endPage}`
-      : `line ${lineNumber}`;
-    matches.push(`## Match ${matches.length + 1} (${location})\n${snippet}`);
+    matches.push({
+      lineNumber,
+      location: chunk ? `chunk ${chunk.index}, pages ${chunk.startPage}-${chunk.endPage}` : "",
+    });
     if (maxResults !== undefined && matches.length >= maxResults) break;
   }
 
-  if (matches.length === 0) {
-    return `No matches for "${query}" in "${title}".`;
+  if (matches.length === 0) return `No matches for "${query}" in "${title}".`;
+
+  const windows: SearchWindow[] = [];
+  for (const match of matches) {
+    const from = Math.max(1, match.lineNumber - contextLines);
+    const to = Math.min(lines.length, match.lineNumber + contextLines);
+    const previous = windows[windows.length - 1];
+    if (previous && from <= previous.to + 1) {
+      previous.to = Math.max(previous.to, to);
+      previous.matchLines.push(match.lineNumber);
+      if (match.location && !previous.locations.includes(match.location)) previous.locations.push(match.location);
+    } else {
+      windows.push({
+        from,
+        to,
+        matchLines: [match.lineNumber],
+        locations: match.location ? [match.location] : [],
+      });
+    }
   }
 
-  return `Search results for "${query}" in "${title}" (${matches.length} returned):\n\n${matches.join("\n\n")}`;
+  const formattedWindows = windows.map((window, index) => {
+    const matched = compactLineNumbers(window.matchLines);
+    const chunkInfo = window.locations.length > 0 ? `; ${window.locations.join("; ")}` : "";
+    const snippet = lines.slice(window.from - 1, window.to).join("\n");
+    return `## Context ${index + 1} (matches at lines ${matched}; showing lines ${window.from}-${window.to}${chunkInfo})\n${snippet}`;
+  });
+
+  return `Search results for "${query}" in "${title}" (${matches.length} matches in ${windows.length} non-overlapping context windows):\n\n${formattedWindows.join("\n\n")}`;
 }
 
 function normalizeYear(value: unknown): number | undefined {

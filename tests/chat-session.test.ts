@@ -66,4 +66,60 @@ describe("ChatSession source and persistence semantics", () => {
     expect(combined).toContain("50000 characters returned");
     expect(combined).not.toContain(huge);
   });
+
+  it("keeps the system prefix stable and stores turn scope with the user message", () => {
+    const session = new ChatSession();
+    const source = session.addSource("A", "Paper A", undefined, 1);
+    session.setSourceReady(source.id, "markdown");
+    const scope = new Set([source.id]);
+
+    const first = session.buildAgentMessages("first question", scope);
+    expect(first[0].content).not.toContain("Paper A");
+    expect(first.at(-1)?.content).toContain('"Paper A" [1:A]');
+
+    session.addUserMessage("first question", session.snapshotSources(scope));
+    session.addAssistantMessage("first answer");
+    const second = session.buildAgentMessages("follow up", scope);
+
+    expect(second[0].content).toBe(first[0].content);
+    expect(second[1].content).toBe(first.at(-1)?.content);
+  });
+
+  it("sums all provider-reported turn usage for the session", () => {
+    const session = new ChatSession();
+    session.addAssistantMessage("one", undefined, undefined, undefined, undefined, {
+      prompt_tokens: 100,
+      completion_tokens: 20,
+      total_tokens: 120,
+      prompt_cache_hit_tokens: 70,
+      prompt_cache_miss_tokens: 30,
+      completion_tokens_details: { reasoning_tokens: 5 },
+    });
+    session.addAssistantMessage("two", undefined, undefined, undefined, undefined, {
+      prompt_tokens: 200,
+      completion_tokens: 50,
+      prompt_cache_hit_tokens: 160,
+      prompt_cache_miss_tokens: 40,
+      completion_tokens_details: { reasoning_tokens: 15 },
+    });
+    session.addAuxiliaryUsage({
+      prompt_tokens: 10,
+      completion_tokens: 2,
+      total_tokens: 12,
+      prompt_cache_hit_tokens: 8,
+      prompt_cache_miss_tokens: 2,
+    });
+
+    expect(session.getTokenUsage()).toEqual({
+      prompt_tokens: 310,
+      completion_tokens: 72,
+      total_tokens: 382,
+      prompt_cache_hit_tokens: 238,
+      prompt_cache_miss_tokens: 72,
+      completion_tokens_details: { reasoning_tokens: 20 },
+    });
+    const saved = session.toSavedSession();
+    expect(saved.auxiliaryUsage).toMatchObject({ total_tokens: 12 });
+    expect(ChatSession.fromSavedSession(saved).getTokenUsage()).toEqual(session.getTokenUsage());
+  });
 });

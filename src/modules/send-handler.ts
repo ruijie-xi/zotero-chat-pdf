@@ -1,7 +1,7 @@
 import { h, scrollToBottomIfNeeded } from "../utils/dom";
 import { formatToolStatus } from "../utils/format";
 import { getPref } from "../utils/prefs";
-import { chatWithTools, ChatMessage, TokenUsage, IterationRecord } from "./llm-client";
+import { chatWithTools, ChatMessage, TokenUsage, IterationRecord, sumTokenUsage } from "./llm-client";
 import { runAgentLoop, AgentCallbacks } from "./agent-loop";
 import { getToolDefinitions } from "./tools";
 import { renderMarkdown } from "./markdown-renderer";
@@ -85,12 +85,18 @@ async function generateTitle(targetSession: import("./chat-session").ChatSession
 
     const titleResult = await chatWithTools(titleMessages, undefined, undefined, undefined, undefined, true);
     const title = titleResult.content.trim().slice(0, 50);
-    if (!title) return;
+    targetSession.addAuxiliaryUsage(titleResult.usage);
+    if (!title && !titleResult.usage) return;
 
-    targetSession.title = title;
-    targetSession.titleSource = "llm";
+    if (title) {
+      targetSession.title = title;
+      targetSession.titleSource = "llm";
+    }
     await ChatHistory.saveSession(targetSession.toSavedSession());
-    Zotero.debug(`[ChatPDF] Generated title: "${title}"`);
+    if (getPanelState(root).session === targetSession) {
+      updateUsageBar(root, targetSession.getTokenUsage());
+    }
+    if (title) Zotero.debug(`[ChatPDF] Generated title: "${title}"`);
 
     if (getPanelState(root).showingHistory) {
       const { loadHistoryList } = await import("./history-view");
@@ -351,6 +357,13 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       }
 
       const agentCallbacks: AgentCallbacks = {
+        onUsage: (usage: TokenUsage) => {
+          agentUsage = usage;
+          streamState.usage = usage;
+          if (isActiveSession()) {
+            updateUsageBar(root, sumTokenUsage([streamSession.getTokenUsage(), usage]));
+          }
+        },
         onIterationComplete: (iter: number, max: number, record: IterationRecord) => {
           Zotero.debug(`[ChatPDF] handleSend: iteration ${iter}/${max} complete, tools=${record.toolCalls.length}`);
           streamState.iterations.push(record);
@@ -481,15 +494,16 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         row.appendChild(copyBtn);
         if (agentResult.usage) {
           appendUsageMeta(bubble, agentResult.usage);
-          updateUsageBar(root, agentResult.usage);
         }
       }
 
       logLLMResponse(fullText, fullReasoning || undefined).catch(() => {});
 
+    streamState.usage = undefined;
     streamSession.addAssistantMessage(fullText, fullReasoning || undefined, modelLabel, agentToolHistory, agentIterations, agentUsage);
     if (isActiveSession()) {
       refreshSourceChips(root);
+      updateUsageBar(root, streamSession.getTokenUsage());
     }
     try {
       await ChatHistory.saveSession(streamSession.toSavedSession());
@@ -513,6 +527,9 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     }
   } catch (err: any) {
     Zotero.debug(`[ChatPDF] handleSend error: ${err?.name}: ${err?.message}\n${err?.stack}`);
+    if (!agentIterations && streamState.iterations.length > 0) {
+      agentIterations = [...streamState.iterations];
+    }
     if (err.name === "AbortError") {
       if (state.session === streamSession) {
         const messagesEl = root.querySelector("#chatpdf-messages");
@@ -524,6 +541,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
           lastBubble.appendChild(stoppedMarker);
         }
       }
+      streamState.usage = undefined;
       streamSession.addAssistantMessage(
         fullText || "Generation stopped before any answer was produced.",
         fullReasoning || undefined,
@@ -533,6 +551,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         agentUsage,
         "cancelled",
       );
+      if (state.session === streamSession) updateUsageBar(root, streamSession.getTokenUsage());
       try {
         await ChatHistory.saveSession(streamSession.toSavedSession());
       } catch (saveErr: any) {
@@ -543,7 +562,9 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       if (state.session === streamSession) {
         appendMessage(root, "assistant", errorText);
       }
+      streamState.usage = undefined;
       streamSession.addAssistantMessage(errorText, fullReasoning || undefined, undefined, undefined, agentIterations, agentUsage, "error", err.message);
+      if (state.session === streamSession) updateUsageBar(root, streamSession.getTokenUsage());
       try {
         await ChatHistory.saveSession(streamSession.toSavedSession());
       } catch (saveErr: any) {

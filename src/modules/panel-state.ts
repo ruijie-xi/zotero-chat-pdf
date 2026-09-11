@@ -1,6 +1,6 @@
 import { ChatSession } from "./chat-session";
 import { ChatInputEditor } from "./tiptap-input";
-import { IterationRecord } from "./llm-client";
+import { IterationRecord, TokenUsage } from "./llm-client";
 
 export interface StreamState {
   session: ChatSession;
@@ -11,6 +11,8 @@ export interface StreamState {
   thinkingElapsed: number;
   thinkingStartTime: number;
   iterations: IterationRecord[];
+  /** Cumulative usage already reported for this in-flight turn. */
+  usage?: TokenUsage;
 }
 
 export interface ModelProfile {

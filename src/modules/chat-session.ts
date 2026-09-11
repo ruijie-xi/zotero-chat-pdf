@@ -1,4 +1,4 @@
-import { ChatMessage, MessageSource, IterationRecord, TokenUsage } from "./llm-client";
+import { ChatMessage, MessageSource, IterationRecord, TokenUsage, sumTokenUsage } from "./llm-client";
 import { getPref } from "../utils/prefs";
 import { SavedSession } from "./chat-history";
 import { makeSourceId, parseSourceId, sourceCacheKey } from "./source-identity";
@@ -8,6 +8,8 @@ export interface ToolCallRecord {
   args: Record<string, unknown>;
   result: string;
   durationMs: number;
+  contextDelivery?: "complete" | "omitted";
+  contextMessage?: string;
 }
 
 export { IterationRecord } from "./llm-client";
@@ -59,6 +61,7 @@ export class ChatSession {
   updatedAt: number;
   private history: ChatMessage[] = [];
   private sources: Map<string, SourceItem> = new Map();
+  private auxiliaryUsage?: TokenUsage;
 
   constructor() {
     this.id = crypto.randomUUID?.() ?? Zotero.Utilities.randomString(32);
@@ -147,6 +150,21 @@ export class ChatSession {
 
   getHistory(): ChatMessage[] {
     return [...this.history];
+  }
+
+  /** Sum provider-reported usage across every completed, cancelled, or failed turn in this session. */
+  getTokenUsage(): TokenUsage | undefined {
+    return sumTokenUsage([
+      ...this.history.map((message) => message.usage),
+      this.auxiliaryUsage,
+    ]);
+  }
+
+  /** Record usage from a session-owned LLM call that is not an assistant message. */
+  addAuxiliaryUsage(usage?: TokenUsage): void {
+    if (!usage) return;
+    this.auxiliaryUsage = sumTokenUsage([this.auxiliaryUsage, usage]);
+    this.updatedAt = Date.now();
   }
 
   hasMessages(): boolean {
@@ -242,7 +260,7 @@ export class ChatSession {
 
   toSavedSession(): SavedSession {
     const sources = this.getSources();
-    return {
+    const savedSession: SavedSession = {
       schemaVersion: 2,
       id: this.id,
       title: this.title,
@@ -277,6 +295,8 @@ export class ChatSession {
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
+    if (this.auxiliaryUsage) savedSession.auxiliaryUsage = this.auxiliaryUsage;
+    return savedSession;
   }
 
   static fromSavedSession(data: SavedSession): ChatSession {
@@ -285,6 +305,7 @@ export class ChatSession {
     session.title = data.title;
     session.titleSource = data.titleSource || "auto";
     session.createdAt = data.createdAt;
+    session.auxiliaryUsage = data.auxiliaryUsage;
 
     // Restore messages (including per-message sources and timestamps)
     for (const msg of data.messages) {
@@ -512,26 +533,42 @@ export class ChatSession {
     // carry compact provenance so earlier multi-megabyte reads do not silently
     // overwhelm provider context windows.
     const configuredMax = Number(getPref("contextMaxChars") || 240_000);
-    const maxChars = Number.isFinite(configuredMax) ? Math.max(20_000, configuredMax) : 240_000;
-    const systemPrompt = this.buildAgentSystemPrompt(turnScope);
+    const contextMax = Number.isFinite(configuredMax) ? Math.max(20_000, configuredMax) : 240_000;
+    // Leave room for this turn's reasoning, tool-call envelopes, and protected tool results.
+    const maxChars = Math.max(20_000, Math.floor(contextMax * 0.85));
+    const systemPrompt = this.buildAgentSystemPrompt();
+    const currentScope = this.snapshotSources(
+      turnScope || new Set(this.getSources().map((source) => source.id)),
+    );
+    const currentUserContent = this.buildAgentUserContent(userMessage, currentScope);
 
-    Zotero.debug(`[ChatPDF] buildAgentMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
+    Zotero.debug(`[ChatPDF] buildAgentMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${currentUserContent.length} chars, initialBudget=${maxChars}/${contextMax}, historyLen=${this.history.length}`);
 
-    const recentHistory = this.truncateHistory(systemPrompt.length, userMessage.length, maxChars,
+    const recentHistory = this.truncateHistory(systemPrompt.length, currentUserContent.length, maxChars,
       (msg) => {
         if (msg.role === "system") return null; // skip system messages
         if (msg.role !== "user" && msg.role !== "assistant") return null;
 
+        if (msg.role === "user") {
+          return {
+            role: "user",
+            content: this.buildAgentUserContent(msg.content, msg.sources || []),
+          };
+        }
+
         // Preserve what was called without replaying every historical tool byte.
         let content = msg.content;
-        if (msg.role === "assistant" && msg.iterations?.length) {
+        if (msg.iterations?.length) {
           const allToolCalls = msg.iterations.flatMap(it => it.toolCalls);
           if (allToolCalls.length > 0) {
             const summaryLines = allToolCalls.map(tc => {
               const argsStr = Object.keys(tc.args).length > 0
                 ? `(${Object.entries(tc.args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`
                 : "";
-              return `- ${tc.toolName}${argsStr}: ${tc.result.length} characters returned`;
+              const delivery = tc.contextDelivery === "omitted"
+                ? "; complete result retained in history but omitted from model context"
+                : "";
+              return `- ${tc.toolName}${argsStr}: ${tc.result.length} characters returned${delivery}`;
             });
             content = `[Previous tool results:\n${summaryLines.join("\n")}\n]\n\n${content}`;
           }
@@ -542,7 +579,7 @@ export class ChatSession {
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
       ...recentHistory,
-      { role: "user", content: userMessage },
+      { role: "user", content: currentUserContent },
     ];
 
     const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
@@ -550,11 +587,7 @@ export class ChatSession {
     return messages;
   }
 
-  private buildAgentSystemPrompt(turnScope?: Set<string>): string {
-    const allSources = Array.from(this.sources.values());
-    const sources = turnScope
-      ? allSources.filter((source) => turnScope.has(source.id))
-      : allSources;
+  private buildAgentSystemPrompt(): string {
     const customPrompt = (getPref("systemPrompt") as string) || "";
 
     const baseInstructions = customPrompt ||
@@ -566,7 +599,7 @@ export class ChatSession {
 
     const toolInstructions =
       "\n\nYou have access to tools to search Zotero and read documents:\n" +
-      "1. Call `list_sources` first to see available documents and their structure (headings, line counts)\n" +
+      "1. Call `list_sources` when starting work on a new source or when its structure is unknown; do not repeat it when recent context already provides the needed structure\n" +
       "2. Call `read_document` with a key and optional line range to read specific content\n" +
       "3. For long documents, use `list_document_chunks`, `search_document`, and `read_document_chunk` to navigate page-based chunks\n" +
       "4. Use `search_zotero_library`, `get_zotero_item`, `list_zotero_collections`, `list_collection_items`, and `get_current_zotero_selection` to find relevant Zotero items when the user asks to find papers or when no useful session sources are available\n" +
@@ -575,16 +608,27 @@ export class ChatSession {
       "Strategy:\n" +
       "- For specific questions: use list_sources to find relevant sections via headings, then read_document for those line ranges\n" +
       "- For books or very long PDFs: search first, then read only the matching chunks or line ranges\n" +
+      "- Start document searches with focused terms, about 10-20 max_results, and 1-3 context_lines; broaden only when the first pass is insufficient\n" +
+      "- Avoid broad punctuation-only or very short formula searches when a distinctive phrase, symbol name, theorem number, or section is available\n" +
+      "- Do not re-read an identical line range unless the prior answer/provenance is insufficient for the current question\n" +
+      "- Tool results are subject to an explicit context budget. If context protection withholds an oversized result, follow its narrower retry guidance instead of repeating the same call\n" +
       "- For broad questions on short papers: read_document without line range can preview or read the document\n" +
       "- For library discovery: search Zotero metadata first, then add/convert relevant PDFs if needed; use judgment before converting broad sets, whole collections, folders, or many PDFs\n" +
       "- Cite the document title and section when answering\n";
 
-    const sourceList = sources.length > 0
-      ? `\n\nThis turn can access ${sources.length} document(s): ${sources.map(s => `"${s.title}" [${s.id}] (${s.status})`).join(", ")}`
-      : "\n\nNo documents added yet. If the user asks about papers or documents, search the Zotero library for candidates before saying there are no documents in the chat.";
-
-    const prompt = baseInstructions + toolInstructions + sourceList;
-    Zotero.debug(`[ChatPDF] buildAgentSystemPrompt: ${prompt.length} chars, ${sources.length} sources`);
+    const prompt = baseInstructions + toolInstructions;
+    Zotero.debug(`[ChatPDF] buildAgentSystemPrompt: ${prompt.length} chars (stable source-independent prefix)`);
     return prompt;
+  }
+
+  private buildAgentUserContent(userMessage: string, sources: MessageSource[]): string {
+    const scope = sources.length > 0
+      ? [
+          `[ChatPDF turn source scope: ${sources.length} document(s)]`,
+          ...sources.map((source) => `- "${source.title}" [${source.id}]`),
+          "[/ChatPDF turn source scope]",
+        ].join("\n")
+      : "[ChatPDF turn source scope: no session documents]";
+    return `${scope}\n\n${userMessage}`;
   }
 }
