@@ -41,6 +41,7 @@ export const DEFAULT_NO_DOCS_PROMPT_CN =
   "你是一个专业的学术研究助手。用户尚未添加任何PDF文档。请提示他们添加文档以开始对话。始终使用与用户相同的语言回复。";
 
 export interface SourceItem {
+  kind?: "image";
   id: string; // Stable library-qualified source identity
   key: string; // Zotero attachment key
   libraryID?: number;
@@ -274,6 +275,7 @@ export class ChatSession {
         key: source.key,
         libraryID: source.libraryID,
         cacheKey: source.cacheKey,
+        kind: source.kind,
         title: source.title,
         parentKey: source.parentKey,
         status: source.status === "converting" ? "pending" : source.status,
@@ -344,6 +346,7 @@ export class ChatSession {
     if (data.sources?.length) {
       for (const saved of data.sources) {
         const source = session.addSource(saved.key, saved.title, saved.parentKey, saved.libraryID);
+        source.kind = saved.kind === "image" ? "image" : undefined;
         source.status = saved.status === "converting" ? "pending" : saved.status;
         source.errorMessage = saved.errorMessage;
       }
@@ -605,6 +608,7 @@ export class ChatSession {
       "4. Use `search_zotero_library`, `get_zotero_item`, `list_zotero_collections`, `list_collection_items`, and `get_current_zotero_selection` to find relevant Zotero items when the user asks to find papers or when no useful session sources are available\n" +
       "5. You may use `add_zotero_item_to_session`, `convert_session_source`, or `add_and_convert_zotero_item` when Zotero items/PDFs are relevant and needed to answer; be careful with extreme bulk conversions and warn the user about cost/time when relevant\n" +
       "6. Use web tools (`web_search`, `web_fetch`) if enabled and relevant\n\n" +
+      "7. Use `list_images` to discover cached PDF figures and `read_image` to actually inspect an image. Standalone image sources need no conversion. Image paths and captions are not visual evidence. Images require a vision-capable model; never claim to see an image that was not delivered. Images from previous turns are not replayed: read them again when visual evidence is needed.\n\n" +
       "Strategy:\n" +
       "- For specific questions: use list_sources to find relevant sections via headings, then read_document for those line ranges\n" +
       "- For books or very long PDFs: search first, then read only the matching chunks or line ranges\n" +

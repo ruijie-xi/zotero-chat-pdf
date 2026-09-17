@@ -1,5 +1,9 @@
 import { getPref } from "../utils/prefs";
 
+export type VisionContent = ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: "auto" } })[];
+/** Transport-only messages. Persisted chat messages remain plain text. */
+export type ProviderMessage = Omit<ChatMessage, "content"> & { content: string | VisionContent };
+
 export interface MessageSource {
   /** Stable library-qualified identity exposed to agent tools and persisted in history. */
   id: string;
@@ -189,7 +193,7 @@ export function applyThinkingSettings(
 
 export function buildChatCompletionBody(
   settings: Pick<LLMSettings, "model" | "thinkingMode" | "thinkEffort">,
-  messages: ChatMessage[],
+  messages: ProviderMessage[],
   options: ChatCompletionBodyOptions,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -316,7 +320,7 @@ function extractGeminiThought(content: string): [string, string] {
 // ---------------------------------------------------------------------------
 
 export async function chatWithTools(
-  messages: ChatMessage[],
+  messages: ProviderMessage[],
   tools?: Tool[],
   onStream?: StreamCallback,
   onThinking?: ThinkingCallback,
@@ -359,7 +363,10 @@ export async function chatWithTools(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`LLM API error (${res.status}): ${text}`);
+    const imageHint = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === "image_url"))
+      ? " This request includes images. Check that the selected model and endpoint support vision and OpenAI-compatible image_url inputs."
+      : "";
+    throw new Error(`LLM API error (${res.status}): ${text}${imageHint}`);
   }
 
   // ---- Non-streaming path ----

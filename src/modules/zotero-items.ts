@@ -1,5 +1,18 @@
 import { ChatSession } from "./chat-session";
 import * as MDCache from "./md-cache";
+import { importImage, readImageFile } from "./image-input";
+
+export function isImageAttachment(item: Zotero.Item): boolean {
+  return !!item.isAttachment?.() && /^image\/(png|jpeg|webp)$/i.test(item.attachmentContentType || "");
+}
+
+export function getChatAttachment(item: Zotero.Item): Zotero.Item | null {
+  if (isImageAttachment(item)) return item;
+  const pdf = getPdfAttachment(item);
+  if (pdf) return pdf;
+  if (item.isRegularItem?.()) return item.getAttachments().map(id => Zotero.Items.get(id)).find(att => att && isImageAttachment(att)) || null;
+  return null;
+}
 
 export interface ZoteroItemSummary {
   key: string;
@@ -276,9 +289,18 @@ export function summarizeZoteroItem(item: Zotero.Item): ZoteroItemSummary {
 }
 
 export async function addZoteroItemToSession(item: Zotero.Item, session: ChatSession): Promise<{ sourceKey?: string; message: string }> {
-  const pdf = getPdfAttachment(item);
+  const pdf = getChatAttachment(item);
   if (!pdf) {
-    return { message: `Error: "${getItemTitle(item)}" has no PDF attachment available.` };
+    return { message: `Error: "${getItemTitle(item)}" has no PDF or supported image attachment available.` };
+  }
+
+  if (isImageAttachment(pdf)) {
+    const path = await pdf.getFilePathAsync();
+    if (!path) return { message: "Error: the image attachment is not available locally. Download it in Zotero first." };
+    const source = await importImage(session, await readImageFile(path), String(pdf.getField("title") || getItemTitle(item)), {
+      key: pdf.key, libraryID: pdf.libraryID, parentKey: pdf.parentItem?.key,
+    });
+    return { sourceKey: source.id, message: `Added image "${source.title}" [${source.id}]. Use read_image; no conversion is needed.` };
   }
 
   const key = pdf.key;

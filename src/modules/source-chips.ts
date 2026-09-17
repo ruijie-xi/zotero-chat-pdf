@@ -21,6 +21,7 @@ export async function convertSource(
   panelState?: PanelState,
   targetSession = panelState?.session,
 ): Promise<void> {
+  if (source.kind === "image") return;
   if (!targetSession) throw new Error("Conversion requires an owning chat session.");
   const controllers = panelState?.conversionAbortControllers ?? new Map();
   targetSession.setSourceStatus(source.id, "converting");
@@ -92,9 +93,13 @@ function renderSourceChips(root: HTMLElement): void {
   if (sources.length === 0) return;
 
   for (const source of sources) {
-    const chipTitle = source.errorMessage || "Open PDF";
+    const chipTitle = source.errorMessage || (source.kind === "image" ? "Image source — requires a vision-capable model" : "Open PDF");
     const chip = h(doc, "div", { className: `chatpdf-source-chip chatpdf-source-chip-${source.status}`, title: chipTitle });
     chip.addEventListener("click", () => {
+      if (source.kind === "image") {
+        state.chatInput?.insertMention({ key: source.id, title: source.title });
+        return;
+      }
       openPdfForSourceKey(source.key, source.libraryID).catch((err: any) => {
         Zotero.debug(`[ChatPDF] open source chip failed for ${source.key}: ${err.message}`);
       });
@@ -109,7 +114,9 @@ function renderSourceChips(root: HTMLElement): void {
     chip.appendChild(titleEl);
 
     // Size badge for ready sources
-    if (source.status === "ready" && source.markdown) {
+    if (source.kind === "image") {
+      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-badge chatpdf-chip-badge-ready" }, "Image"));
+    } else if (source.status === "ready" && source.markdown) {
       const charLen = source.markdown.length;
       const sizeText = formatChars(charLen);
       const isTruncated = source.contextRatio !== undefined && source.contextRatio < 1.0;
@@ -131,7 +138,7 @@ function renderSourceChips(root: HTMLElement): void {
     // Actions
     const actions = h(doc, "span", { className: "chatpdf-chip-actions" });
 
-    if (source.status === "pending") {
+    if (source.status === "pending" && source.kind !== "image") {
       const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: "Convert" }, "Convert");
       convertBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();

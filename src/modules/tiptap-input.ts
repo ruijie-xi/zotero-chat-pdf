@@ -354,7 +354,7 @@ export function createChatInput(
         Text,
         History,
         Placeholder.configure({
-          placeholder: "Ask about your documents... (drop PDFs here)",
+          placeholder: "Ask about your sources... (drop Zotero items or images here)",
         }),
         CustomMention,
         KeyHandler,

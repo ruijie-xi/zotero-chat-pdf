@@ -1,6 +1,7 @@
 import { config } from "../../package.json";
 import { ChatSession, SourceItem } from "./chat-session";
 import { createChatInput } from "./tiptap-input";
+import { checkImageSize, IMAGE_INPUT_HELP, importImage } from "./image-input";
 import { getPref, setPref } from "../utils/prefs";
 import { h, XUL_NS } from "../utils/dom";
 import {
@@ -16,7 +17,7 @@ import {
   addZoteroItemToSession,
   getItemFromZoteroUri,
   getItemTitle,
-  getPdfAttachment,
+  getChatAttachment,
 } from "./zotero-items";
 import {
   clampPanelWidth,
@@ -458,11 +459,22 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   const newChatBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{2795} New Chat");
   const clearLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Clear chat");
   const convertAllLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Convert all");
+  const imageButton = h(doc, "button", { className: "chatpdf-toolbar-btn", title: IMAGE_INPUT_HELP }, "Add image");
+  const imagePicker = h(doc, "input", { type: "file", accept: "image/png,image/jpeg,image/webp", multiple: "multiple", style: "display:none" }) as HTMLInputElement;
+  const imageStatus = h(doc, "div", { className: "chatpdf-input-hint", role: "status" });
+  imageButton.addEventListener("click", () => imagePicker.click());
+  imagePicker.addEventListener("change", () => {
+    const files = Array.from(imagePicker.files || []);
+    imagePicker.value = "";
+    void addImageFiles(files);
+  });
   const profileSelect = h(doc, "select", { className: "chatpdf-profile-select", id: "chatpdf-profile-select", style: "display:none" }) as HTMLSelectElement;
   toolbar.appendChild(historyBtn);
   toolbar.appendChild(newChatBtn);
   toolbar.appendChild(clearLink);
   toolbar.appendChild(convertAllLink);
+  toolbar.appendChild(imageButton);
+  toolbar.appendChild(imagePicker);
   toolbar.appendChild(profileSelect);
   inputArea.appendChild(toolbar);
 
@@ -489,6 +501,38 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
 
   const inputHint = h(doc, "div", { className: "chatpdf-input-hint" }, "Enter to send \u00B7 Ctrl+Enter: convert & send \u00B7 Shift+Enter: new line");
   inputArea.appendChild(inputHint);
+  inputArea.appendChild(imageStatus);
+
+  async function addImageFiles(files: File[]): Promise<void> {
+    const session = state.session;
+    const errors: string[] = [];
+    imageStatus.textContent = "Adding images…";
+    for (const file of files) {
+      try {
+        checkImageSize(file.size);
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (state.session !== session) return;
+        const source = await importImage(session, bytes, file.name || "Pasted image", undefined, () => state.session === session && root.isConnected);
+        if (state.session !== session) return;
+        insertInputChip(source, doc, root);
+      } catch (error: any) {
+        errors.push(`${file.name || "Image"}: ${error.message}`);
+      }
+    }
+    if (state.session !== session) return;
+    refreshSourceChips(root);
+    await autoSaveSession(root);
+    imageStatus.textContent = errors.length ? errors.join("\n") : IMAGE_INPUT_HELP;
+    state.chatInput?.restoreFocusAfterExternalInsert();
+  }
+
+  inputWrapper.addEventListener("paste", (event: Event) => {
+    const files = Array.from((event as ClipboardEvent).clipboardData?.files || []);
+    if (!files.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void addImageFiles(files);
+  }, true);
 
   root.appendChild(inputArea);
 
@@ -521,7 +565,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
 
     async function handleDroppedItem(item: Zotero.Item) {
       await addItemToSession(item, root);
-      const pdf = getPdfAttachment(item);
+      const pdf = getChatAttachment(item);
       const src = state.session.getSource(pdf?.key || "", Number((pdf as any)?.libraryID) || undefined);
       if (src) {
         insertInputChip(src, doc, root);
@@ -531,6 +575,10 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
     }
 
     try {
+      if (dt?.files?.length && !dt.types.includes("zotero/item")) {
+        await addImageFiles(Array.from(dt.files));
+        return;
+      }
       // 1. zotero/item
       const zoteroItemData = dt?.getData("zotero/item");
       if (zoteroItemData) {
@@ -602,6 +650,8 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
           Zotero.debug(`[ChatPDF] drop on input: last-resort error: ${err}`);
         }
       }
+    } catch (error: any) {
+      imageStatus.textContent = error.message;
     } finally {
       if (handledDrop) state.chatInput?.restoreFocusAfterExternalInsert();
     }
@@ -647,6 +697,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
     abortCurrentStream(root);
     await autoSaveSession(root);
     state.session = new ChatSession();
+    imageStatus.textContent = "";
     resetStreamingUI(root);
     hideHistoryView(root);
     const msgs = root.querySelector("#chatpdf-messages");
@@ -701,7 +752,7 @@ export function registerContextMenu(): void {
           const state = getPanelState(root);
           let insertedSource = false;
           for (const item of context.items ?? []) {
-            const pdf = getPdfAttachment(item);
+            const pdf = getChatAttachment(item);
             if (!pdf) continue;
             const src = state.session.getSource(pdf.key, Number((pdf as any).libraryID) || undefined);
             if (src) {

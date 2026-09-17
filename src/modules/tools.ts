@@ -1,4 +1,5 @@
 import { ChatSession } from "./chat-session";
+import { ImageInput, IMAGE_INPUT_HELP, listSourceImages, readSourceImage } from "./image-input";
 import * as MDCache from "./md-cache";
 import { getPref } from "../utils/prefs";
 import { Tool } from "./llm-client";
@@ -50,6 +51,7 @@ export interface ToolOptions {
 }
 
 export interface ToolExecutionContext {
+  deliverImage?: (image: ImageInput) => void;
   session: ChatSession;
   signal?: AbortSignal;
   requestId: string;
@@ -66,6 +68,8 @@ export interface ToolMetadata {
 }
 
 const TOOL_METADATA: Record<string, ToolMetadata> = {
+  list_images: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  read_image: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_sources: { readOnly: true, mutatesSession: false, network: false, costly: false },
   read_document: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_document_chunks: { readOnly: true, mutatesSession: false, network: false, costly: false },
@@ -101,6 +105,25 @@ function extractHeadings(markdown: string): { heading: string; line: number }[] 
 
 export function getToolDefinitions(options?: ToolOptions): Tool[] {
   const tools: Tool[] = [
+    {
+      type: "function",
+      function: {
+        name: "list_images",
+        description: "List local images available in a source, including figures extracted from a converted PDF. Paths are relative to this source only.",
+        parameters: { type: "object", properties: { key: { type: "string", description: "Source ID from list_sources" } }, required: ["key"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "read_image",
+        description: `Read an image and deliver its visual content to the model. ${IMAGE_INPUT_HELP} No URL or arbitrary filesystem path is accepted.`,
+        parameters: { type: "object", properties: {
+          key: { type: "string", description: "Source ID from list_sources" },
+          path: { type: "string", description: "Relative image path from list_images or document Markdown. Omit for a standalone image source." },
+        }, required: ["key"] },
+      },
+    },
     {
       type: "function",
       function: {
@@ -325,7 +348,7 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
       function: {
         name: "add_zotero_item_to_session",
         description:
-          "Add a Zotero item's PDF attachment to the current ChatPDF session. " +
+          "Add a Zotero item's PDF or image attachment to the current ChatPDF session. Images need no conversion. " +
           "This is a lightweight reversible action; use it when a Zotero item is relevant to the user's task.",
         parameters: {
           type: "object",
@@ -425,6 +448,24 @@ export async function executeTool(
     let result: string;
 
     switch (name) {
+      case "list_images":
+      case "read_image": {
+        const key = String(args.key || "");
+        const invalid = validateSourceKey(key, context, name);
+        if (invalid) { result = invalid; break; }
+        const source = session.getSource(key)!;
+        if (name === "list_images") {
+          const paths = await listSourceImages(source, context.signal);
+          result = `Images for "${source.title}" [${source.id}]:\n${paths.length ? paths.join("\n") : "No cached images. Convert the PDF first if needed."}\n${IMAGE_INPUT_HELP}`;
+        } else {
+          if (!context.deliverImage) throw new Error("Image delivery is unavailable outside an active agent turn.");
+          const image = await readSourceImage(source, typeof args.path === "string" ? args.path : undefined, context.signal);
+          if (!session.getSource(source.id) || !context.turnScope.has(source.id)) throw new Error("Image source was removed during reading.");
+          context.deliverImage(image);
+          result = `Image attached for visual inspection: "${source.title}" [${source.id}], path=${image.path}, MIME=${image.mime}, ${image.byteLength} bytes. Image token usage is reported by the provider, not estimated from base64 length.`;
+        }
+        break;
+      }
       case "list_sources":
         result = await executeListSources(context);
         break;
@@ -507,6 +548,7 @@ async function loadDocumentContent(
   if (!source) {
     return `Error: document "${key}" not found.`;
   }
+  if (source.kind === "image") return "This source is an image. Use read_image to inspect it; no PDF conversion is needed.";
 
   if (source.status !== "ready") {
     return `Error: document "${source.title}" is not ready (status: ${source.status}). It needs to be converted first.`;
@@ -541,6 +583,10 @@ async function executeListSources(context: ToolExecutionContext): Promise<string
   const lines: string[] = [`Available documents (${sources.length} total):\n`];
 
   for (const source of sources) {
+    if (source.kind === "image") {
+      lines.push(`## Image: "${source.title}"\n- key: ${source.id}\n- status: ${source.status}\n- Use read_image with this key (no path or conversion needed).`);
+      continue;
+    }
     if (source.status === "ready" && !source.markdown && await MDCache.has(source.cacheKey, source.key)) {
       source.markdown = await MDCache.read(source.cacheKey, source.key);
     }

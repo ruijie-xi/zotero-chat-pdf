@@ -3,6 +3,7 @@ import { error as logError } from "../utils/log";
 import { atomicWriteJson, withStorageLock } from "../utils/atomic-storage";
 
 export interface SavedSource {
+  kind?: "image";
   id: string;
   key: string;
   libraryID?: number;

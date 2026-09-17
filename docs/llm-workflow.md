@@ -115,8 +115,22 @@ Provider replay preserves DeepSeek `reasoning_content` and Gemini thought-signat
 - `list_document_chunks`
 - `read_document_chunk`
 - `search_document`
+- `list_images`
+- `read_image`
 
 These tools accept stable source IDs and refuse sources outside TurnScope. Search output merges overlapping context windows so repeated neighboring matches do not duplicate the same source lines. Caller-specified match limits remain explicit; large document reads remain possible through narrower line ranges or page-based chunks.
+
+### Image Inputs
+
+The panel accepts PNG, JPEG and WebP through **Add image**, file drag-and-drop, clipboard image paste, and Zotero image attachments. Standalone images are atomically copied into the source cache and are ready without MinerU. Their image kind and stable source identity survive session restoration; removing a source removes it from the model's available scope.
+
+`list_images` lists cached PDF figures by relative path. `read_image` accepts only a source in TurnScope and a path inside that source's cache (or no path for a standalone image). Absolute paths, URLs, traversal and symlinked cache entries are rejected. File signatures and byte sizes are checked before delivery. SVG and GIF are not supported. Missing cache files produce explicit errors; PDF figures require an existing conversion cache.
+
+Limits are **10 MiB per image** and **20 MiB of image bytes per turn**, including repeated reads. Oversized inputs are rejected, never silently resized or truncated. Image payloads are separate from the text character budget; visual token usage comes from the provider.
+
+After all tool responses in a batch, the agent appends a user message containing labeled OpenAI-compatible `image_url` data URLs. The active model and endpoint must support vision. API failures on image requests include a compatibility hint; the plugin cannot infer every custom provider's capabilities from its model name. Selected images are sent to the configured LLM provider when the agent reads them.
+
+Persistent tool history contains image provenance and byte counts, not base64 payloads. Later turns retain that provenance and can read the cached image again when needed. This avoids automatically replaying every earlier image or treating captions as visual evidence.
 
 ### Zotero Tools
 

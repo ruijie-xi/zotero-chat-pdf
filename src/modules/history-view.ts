@@ -196,6 +196,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
         // Reload markdown for sources from cache
         const currentSession = state.session;
         for (const source of currentSession.getSources()) {
+          if (source.kind === "image") continue;
           if (!source.markdown) {
       if (await MDCache.has(source.cacheKey, source.key)) {
         const md = await MDCache.read(source.cacheKey, source.key);
