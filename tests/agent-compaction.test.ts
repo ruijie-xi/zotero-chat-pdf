@@ -31,7 +31,115 @@ function setup(limit = 240_000) {
   return { session, messages };
 }
 
-beforeEach(() => { vi.clearAllMocks(); model.mockReset(); execute.mockReset(); });
+beforeEach(() => { vi.clearAllMocks(); model.mockReset(); execute.mockReset(); vi.mocked(Zotero.Prefs.get).mockReset(); });
+
+describe("output limit recovery", () => {
+  it("retries reasoning-only output with a larger allowance and byte-identical request prefix", async () => {
+    const { session, messages } = setup();
+    model.mockResolvedValueOnce({ content: "", reasoning: "unfinished reasoning", finishReason: "length", usage: { completion_tokens: 8192, completion_tokens_details: { reasoning_tokens: 8192 } } })
+      .mockResolvedValueOnce({ content: "Complete answer", finishReason: "stop", usage: { completion_tokens: 100 } });
+    const continuation = vi.fn();
+    const result = await runAgentLoop(messages, tools, session, { onOutputContinuation: continuation });
+    expect(result.content).toBe("Complete answer");
+    expect(result.usage?.completion_tokens).toBe(8292);
+    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([8192, 16384]);
+    expect(model.mock.calls[1][0]).toEqual(model.mock.calls[0][0]);
+    expect(model.mock.calls[1][1]).toBe(model.mock.calls[0][1]);
+    expect(model.mock.calls[1][6]?.settings).toEqual(model.mock.calls[0][6]?.settings);
+    expect(continuation).toHaveBeenCalledWith(16384);
+    const context = session.getAgentContext()!;
+    expect(context.data.events.some(event => event.reasoning_content === "unfinished reasoning")).toBe(true);
+    expect(context.messages.some(event => event.reasoning_content === "unfinished reasoning")).toBe(false);
+    expect(context.data.requests?.map(request => [request.finishReason, request.outputLimit])).toEqual([["length", 8192], ["stop", 16384]]);
+  });
+
+  it("preserves partial text and extends the cache prefix when continuing a visible answer", async () => {
+    const { session, messages } = setup();
+    model.mockResolvedValueOnce({ content: "Part one", finishReason: "length" })
+      .mockResolvedValueOnce({ content: "Part two", finishReason: "stop" });
+    const result = await runAgentLoop(messages, tools, session);
+    expect(result.iterations[0].content).toBe("Part one");
+    expect(result.content).toBe("Part two");
+    const [first, second] = model.mock.calls.map(args => args[0]);
+    expect(second.slice(0, first.length)).toEqual(first);
+    expect(second.at(-2)).toEqual({ role: "assistant", content: "Part one" });
+    expect(second.at(-1)?.content).toContain("without repeating");
+    session.addAssistantMessage(result.content, undefined, undefined, result.iterations);
+    const restored = ChatSession.fromSavedSession(session.toSavedSession());
+    // A changed tool set rebuilds the working view from visible history.
+    const rebuilt = restored.buildAgentMessages("Follow up", undefined, []);
+    expect(rebuilt.some(message => String(message.content).includes("Part one\n\nPart two"))).toBe(true);
+  });
+
+  it.each(["{}", '{"unfinished":'])("never executes a truncated tool call with arguments %s", async argumentsText => {
+    const { session, messages } = setup();
+    const truncated = call("truncated", "mutate");
+    truncated.tool_calls[0].function.arguments = argumentsText;
+    model.mockResolvedValueOnce({ ...truncated, finishReason: "length" })
+      .mockResolvedValueOnce(call("complete", "mutate"))
+      .mockResolvedValueOnce({ content: "done" });
+    execute.mockResolvedValue("saved once");
+    await runAgentLoop(messages, tools, session);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(model.mock.calls[1][0]).toEqual(model.mock.calls[0][0]);
+    const context = session.getAgentContext()!;
+    expect(context.data.events.some(event => event.tool_calls?.[0].id === "truncated")).toBe(true);
+    expect(context.messages.some(event => event.tool_calls?.[0].id === "truncated")).toBe(false);
+    expect(context.data.results).toHaveLength(1);
+    expect(context.data.pending).toBeUndefined();
+  });
+
+  it("does not replay a completed action after reasoning exhausts the next response", async () => {
+    const { session, messages } = setup();
+    model.mockResolvedValueOnce(call("saved", "mutate"))
+      .mockResolvedValueOnce({ content: "", finishReason: "length" })
+      .mockResolvedValueOnce({ content: "done" });
+    execute.mockResolvedValue("receipt");
+    await runAgentLoop(messages, tools, session);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(model.mock.calls[2][0]).toEqual(model.mock.calls[1][0]);
+  });
+
+  it("stops at the model output ceiling without unbounded empty retries", async () => {
+    const { session, messages } = setup();
+    model.mockResolvedValue({ content: "", reasoning: "still thinking", finishReason: "length" });
+    await expect(runAgentLoop(messages, tools, session)).rejects.toThrow("available model output capacity");
+    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([8192, 16384, 32768]);
+    expect(session.getAgentContext()!.data.requests).toHaveLength(3);
+  });
+
+  it("bounds each expanded reservation by the combined model context window", async () => {
+    const { session, messages } = setup();
+    const caps = { ...budget().capabilities, contextWindow: 20000 };
+    vi.mocked(resolveModelCapabilities).mockResolvedValue(caps);
+    model.mockResolvedValueOnce({ content: "", finishReason: "length" }).mockResolvedValueOnce({ content: "done" });
+    await runAgentLoop(messages, tools, session);
+    const counter = new ContextBudget(caps, budget().counter);
+    for (const args of model.mock.calls) expect(counter.count(args[0], tools) + args[6]!.maxTokens! + counter.margin).toBeLessThanOrEqual(20000);
+  });
+
+  it("honors cancellation between an exhausted response and its retry", async () => {
+    const { session, messages } = setup();
+    const controller = new AbortController();
+    model.mockResolvedValue({ content: "", finishReason: "length" });
+    await expect(runAgentLoop(messages, tools, session, { onOutputContinuation: () => controller.abort() }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(model).toHaveBeenCalledTimes(1);
+    expect(session.getAgentContext()!.data.requests).toHaveLength(1);
+  });
+
+  it("honors disabled automatic continuation and stops repeated partial answers", async () => {
+    const { session, messages } = setup();
+    vi.mocked(Zotero.Prefs.get).mockImplementation(key => String(key).endsWith("agentAutoContinue") ? false : undefined);
+    model.mockResolvedValue({ content: "partial", finishReason: "length" });
+    await expect(runAgentLoop(messages, tools, session)).rejects.toThrow("Enable automatic continuation");
+    expect(model).toHaveBeenCalledTimes(1);
+    vi.mocked(Zotero.Prefs.get).mockReset();
+    model.mockClear();
+    const next = setup();
+    await expect(runAgentLoop(next.messages, tools, next.session)).rejects.toThrow("repeated the same text");
+    expect(model).toHaveBeenCalledTimes(3);
+  });
+});
 
 describe("automatic context compaction", () => {
   it("keeps nested provider signatures in the archive without replaying them after a prefix rewrite", async () => {

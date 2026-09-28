@@ -1,7 +1,7 @@
 import { h, scrollToBottomIfNeeded } from "../utils/dom";
 import { formatToolStatus } from "../utils/format";
 import { getPref } from "../utils/prefs";
-import { chatWithTools, ChatMessage, TokenUsage, IterationRecord, sumTokenUsage, getLLMSettings } from "./llm-client";
+import { chatWithTools, ChatMessage, TokenUsage, IterationRecord, sumTokenUsage, getLLMSettings, visibleAssistantText } from "./llm-client";
 import { resolveModelCapabilities } from "./model-capabilities";
 import { loadTokenizer, TokenCounter } from "./token-accounting";
 import { ContextBudget } from "./context-budget";
@@ -361,6 +361,12 @@ export async function handleSend(root: HTMLElement): Promise<void> {
           statusDiv.textContent = "Compacting context… Work will continue automatically.";
           if (!statusDiv.parentNode) bubble.appendChild(statusDiv);
         },
+        onOutputContinuation: () => {
+          if (!isActiveSession()) return;
+          statusDiv.style.display = "";
+          statusDiv.textContent = "Output limit reached. Continuing automatically…";
+          if (!statusDiv.parentNode) bubble.appendChild(statusDiv);
+        },
         onUsage: (usage: TokenUsage) => {
           agentUsage = usage;
           streamState.usage = usage;
@@ -372,7 +378,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
           Zotero.debug(`[ChatPDF] handleSend: iteration ${iter}/${max} complete, tools=${record.toolCalls.length}`);
           streamState.iterations.push(record);
           streamState.fullReasoning = "";
-          if (record.toolCalls.length > 0) {
+          if (record.toolCalls.length > 0 || record.content !== undefined) {
             flushAssistantText();
             if (isActiveSession()) segments.finish(record.content || fullText);
             fullText = "";
@@ -493,7 +499,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         copyBtn.textContent = "Copy";
         copyBtn.addEventListener("click", (e: Event) => {
           e.stopPropagation();
-          (win as any).navigator.clipboard.writeText(fullText).then(() => {
+          (win as any).navigator.clipboard.writeText(visibleAssistantText(fullText, agentIterations)).then(() => {
             copyBtn.textContent = "Copied!";
             win.setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
           }).catch(() => {

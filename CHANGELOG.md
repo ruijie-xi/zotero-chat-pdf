@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.3
+
+- Recover automatically from output-token exhaustion: retry reasoning-only responses with a larger model-bounded allowance and continue visible partial answers without moving earlier text.
+- Preserve incomplete attempts and usage in history without executing truncated tool calls or replaying completed operations; retain cancellation and no-progress safeguards.
+
 ## 0.9.2
 
 - Fix automatic model-capacity discovery in Zotero's privileged scope by using the main window's AbortController when the global constructor is unavailable.

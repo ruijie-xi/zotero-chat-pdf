@@ -92,7 +92,7 @@ export function sumTokenUsage(usages: Iterable<TokenUsage | undefined>): TokenUs
 }
 
 export interface IterationRecord {
-  /** Visible narration before this iteration's tools; the final answer is stored separately. */
+  /** Visible narration or a partial answer before automatic continuation; the final segment is stored separately. */
   content?: string;
   reasoning?: string;
   toolCalls: {
@@ -128,6 +128,11 @@ export interface ChatResult {
   /** Message-level extra_content (e.g. Gemini's {google: {thought: true}}). */
   extra_content?: Record<string, unknown>;
   usage?: TokenUsage;
+}
+
+/** Visible segments in display order, without tool outputs or private reasoning. */
+export function visibleAssistantText(content: string, iterations: IterationRecord[] = []): string {
+  return [...iterations.map(iteration => iteration.content), content].filter(Boolean).join("\n\n");
 }
 
 export type StreamCallback = (chunk: string, done: boolean) => void;

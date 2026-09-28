@@ -21,9 +21,46 @@ beforeEach(() => {
   state.session.titleSource = "user";
   state.chatInput = { getText: () => "Continue", getMentionKeys: () => [], clear: vi.fn(), setEditable: vi.fn(), focus: vi.fn(), destroy: vi.fn(), element: root.querySelector("#input") } as any;
 });
-afterEach(() => { destroyPanelState(window); vi.useRealTimers(); vi.clearAllMocks(); });
+afterEach(() => { destroyPanelState(window); vi.useRealTimers(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("assistant narration chronology", () => {
+  it("freezes partial answers before automatic continuation and restores them exactly once", async () => {
+    const partial: IterationRecord = { content: "Partial answer", toolCalls: [] };
+    vi.mocked(runAgentLoop).mockImplementation(async (_messages, _tools, _session, callbacks) => {
+      callbacks!.onStream!(partial.content!, false);
+      await vi.advanceTimersByTimeAsync(100);
+      const first = root.querySelector(".chatpdf-live-content");
+      callbacks!.onIterationComplete!(1, 0, partial);
+      callbacks!.onOutputContinuation!(16384);
+      expect(root.textContent).toContain("Continuing automatically");
+      callbacks!.onStream!("Remaining answer", false);
+      callbacks!.onStream!("", true);
+      expect(root.querySelector(".chatpdf-iteration-content")).toBe(first);
+      return { content: "Remaining answer", iterations: [partial], totalIterations: 2 };
+    });
+    await handleSend(root);
+    expect(root.querySelector(".chatpdf-tool-status")).toBeNull();
+    expect(root.textContent!.match(/Partial answer/g)).toHaveLength(1);
+    expect(root.textContent!.match(/Remaining answer/g)).toHaveLength(1);
+    const saved = ChatSession.fromSavedSession(createPanelState(window).session.toSavedSession()).getHistory()[1];
+    const history = appendMessage(root, "assistant", saved.content, undefined, saved.reasoning, undefined, undefined, undefined, saved.iterations);
+    expect(history.textContent!.match(/Partial answer/g)).toHaveLength(1);
+    expect(history.textContent!.match(/Remaining answer/g)).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    const copy = vi.fn(async (_text: string) => {});
+    const previousClipboard = Object.getOwnPropertyDescriptor(window.navigator, "clipboard");
+    Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: { writeText: copy } });
+    try {
+      for (const button of root.querySelectorAll<HTMLButtonElement>(".chatpdf-copy-btn")) button.click();
+      expect(copy).toHaveBeenCalledTimes(2);
+      expect(copy.mock.calls).toEqual([["Partial answer\n\nRemaining answer"], ["Partial answer\n\nRemaining answer"]]);
+      await vi.runAllTimersAsync();
+    } finally {
+      if (previousClipboard) Object.defineProperty(window.navigator, "clipboard", previousClipboard);
+      else Reflect.deleteProperty(window.navigator, "clipboard");
+    }
+  });
+
   it("flushes fast streams before tools and keeps prior nodes in place through the final answer", async () => {
     const records = [iteration("First narration"), iteration("Second narration")];
     vi.mocked(runAgentLoop).mockImplementation(async (_messages, _tools, _session, callbacks) => {

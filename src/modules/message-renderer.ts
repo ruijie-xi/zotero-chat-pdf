@@ -1,7 +1,7 @@
 import { h, scrollToBottomIfNeeded } from "../utils/dom";
 import { formatTokens, formatMsgTime } from "../utils/format";
 import { renderMarkdown } from "./markdown-renderer";
-import { TokenUsage, IterationRecord, sumTokenUsage } from "./llm-client";
+import { TokenUsage, IterationRecord, sumTokenUsage, visibleAssistantText } from "./llm-client";
 import { ToolCallRecord } from "./chat-session";
 import { getPanelState, StreamState } from "./panel-state";
 import { handleSend } from "./send-handler";
@@ -204,7 +204,7 @@ export function appendMessage(root: HTMLElement, role: "user" | "assistant", con
     }
     appendUsageMeta(bubble, usage);
     // Copy button for assistant messages
-    row.appendChild(createCopyButton(doc, content));
+    row.appendChild(createCopyButton(doc, visibleAssistantText(content, iterations)));
     row.appendChild(bubble);
   } else {
     bubble.textContent = content;

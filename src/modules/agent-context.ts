@@ -74,8 +74,13 @@ export class AgentContext {
 
   append(message: ContextMessage): void {
     // Never rewrite existing provider blocks. This also preserves raw argument strings.
-    this.data.active.push(this.data.events.length);
+    this.data.active.push(this.archive(message));
+  }
+
+  /** Preserve incomplete responses without replaying invalid tool-call envelopes. */
+  archive(message: ContextMessage): number {
     this.data.events.push(clone(message));
+    return this.data.events.length - 1;
   }
 
   storeResult(content: string, toolName: string, sourceIds: string[]): StoredResult {

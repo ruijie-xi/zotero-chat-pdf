@@ -174,6 +174,23 @@ When enabled, `web_search` uses Brave if configured and otherwise the DuckDuckGo
 
 Oversized or unsafe responses fail explicitly. They are never silently shortened.
 
+## Output-limit recovery
+
+`finish_reason: length` is an incomplete response, distinct from task completion, a network failure, or input-context overflow. In automatic mode, the harness handles it before dispatching any tools:
+
+- Reasoning-only or empty output is archived without entering the working context. Retry the identical message/tool prefix with a larger output reservation, doubling up to the model's output capacity and available context. Stop explicitly if no larger reservation is possible; never repeat unchanged empty attempts indefinitely.
+- Visible partial text is retained as an iteration segment. Append a generic continuation notice at the end of the working context and continue without rewriting earlier blocks. Repeated identical partial answers stop with preserved history.
+- Truncated tool calls are never executed, even if their arguments happen to parse. Preserve the raw response in the archive; exclude unanswered calls from the working context. Completed actions from earlier requests retain their receipts and are not replayed by retrying the model request.
+- Every attempt records its finish reason, output allowance, and provider usage. Cancellation and disabled automatic continuation remain effective. Context compaction is used for input pressure, not as the default response to an output limit.
+
+The initial requested output allowance is a starting reservation, not a whole-task budget. Capacity growth does not modify system instructions, tool definitions, or earlier messages, so the prefix remains cache-compatible (actual cache hits are provider-dependent).
+
+Design references reviewed for this behavior:
+
+- [Anthropic stop-reason guidance](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons) recommends increasing output allowance for truncated tool calls and distinguishes output truncation from context overflow and paused turns.
+- [Anthropic TypeScript ToolRunner](https://github.com/anthropics/anthropic-sdk-typescript/blob/main/src/lib/tools/BetaToolRunner.ts) classifies stop reasons before tool dispatch; its default `max_tokens` policy is to stop. ChatPDF's automatic recovery is an explicit harness policy beyond that default.
+- [OpenCode processor](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/processor.ts) separates compaction, stop/continue state, usage persistence, and repeated-tool detection. These references motivate distinct recovery paths, not identical behavior across providers.
+
 ## Cancellation
 
 The request signal reaches:

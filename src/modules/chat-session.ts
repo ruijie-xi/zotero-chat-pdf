@@ -1,5 +1,5 @@
 import { DEFAULT_SYSTEM_PROMPT_EN, migrateDefaultPrompt } from "./prompts";
-import { ChatMessage, ProviderMessage, Tool, MessageSource, IterationRecord, TokenUsage, sumTokenUsage, getLLMSettings } from "./llm-client";
+import { ChatMessage, ProviderMessage, Tool, MessageSource, IterationRecord, TokenUsage, sumTokenUsage, getLLMSettings, visibleAssistantText } from "./llm-client";
 import { AgentContext, contextFingerprint } from "./agent-context";
 import { getPref } from "../utils/prefs";
 import { SavedSession } from "./chat-history";
@@ -417,7 +417,7 @@ export class ChatSession {
         }
 
         // Preserve what was called without replaying every historical tool byte.
-        let content = msg.content;
+        let content = visibleAssistantText(msg.content, msg.iterations);
         if (msg.iterations?.length) {
           const allToolCalls = msg.iterations.flatMap(it => it.toolCalls);
           if (allToolCalls.length > 0) {

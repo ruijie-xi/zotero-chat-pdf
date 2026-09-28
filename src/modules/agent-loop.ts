@@ -20,6 +20,7 @@ export interface AgentCallbacks {
   onUsage?: (usage: TokenUsage) => void;
   onContextStats?: (stats: { inputTokens: number; inputLimit: number; source: string }) => void;
   onCompaction?: (active: boolean) => void;
+  onOutputContinuation?: (outputLimit: number) => void;
   onContextSaved?: () => Promise<void>;
 }
 export interface AgentResult {
@@ -63,6 +64,9 @@ export async function runAgentLoop(
   const imageSources = new Set<string>();
   let repeats = 0;
   let previousCalls = "";
+  let desiredOutput = capabilities.requestedOutput;
+  let previousPartial = "";
+  let repeatedPartial = 0;
   const toolContext: ToolExecutionContext = {
     session, signal, requestId: execution?.requestId || `request-${Date.now()}`,
     windowId: execution?.windowId || "unknown-window",
@@ -93,7 +97,8 @@ export async function runAgentLoop(
     if (!autoContinue && maxIterations > 0 && iteration >= maxIterations) throw new Error(`Paused at the configured ${maxIterations}-step limit. Progress and results were saved. Enable automatic continuation or send a follow-up to continue.`);
     if (budget.shouldCompact(context.messages, tools, { role: "user", content: COMPACT_PROMPT })) await compact();
     budget.assertFits(context.messages, tools);
-    callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), inputLimit: budget.inputLimit(), source: capabilities.source });
+    let outputLimit = budget.outputAllowance(context.messages, tools, desiredOutput);
+    callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), inputLimit: budget.inputLimit(outputLimit), source: capabilities.source });
     let firstThinking = true;
     let thinkingDone = false;
     const thinking = callbacks.onThinking ? (chunk: string, done: boolean) => {
@@ -104,24 +109,52 @@ export async function runAgentLoop(
     } : undefined;
     let result: ChatResult;
     try {
-      budget.assertFits(context.messages, tools);
+      budget.assertFits(context.messages, tools, outputLimit);
       result = await chatWithTools(context.messages, tools,
         callbacks.onStream ? (chunk, done) => { if (!done) callbacks.onStream!(chunk, false); } : undefined,
-        thinking, signal, undefined, { settings, maxTokens: capabilities.requestedOutput });
+        thinking, signal, undefined, { settings, maxTokens: outputLimit });
     } catch (error) {
       if (!(error instanceof ProviderContextError)) throw error;
       await compact(true);
-      budget.assertFits(context.messages, tools);
+      outputLimit = budget.outputAllowance(context.messages, tools, desiredOutput);
+      budget.assertFits(context.messages, tools, outputLimit);
       result = await chatWithTools(context.messages, tools,
         callbacks.onStream ? (chunk, done) => { if (!done) callbacks.onStream!(chunk, false); } : undefined,
-        thinking, signal, undefined, { settings, maxTokens: capabilities.requestedOutput });
+        thinking, signal, undefined, { settings, maxTokens: outputLimit });
     }
     if (!firstThinking && !thinkingDone) callbacks.onThinking?.("", true, false);
     addUsage(result.usage);
-    (context.data.requests ||= []).push({ kind: "agent", generation: context.data.checkpoints.length, usage: result.usage, inputTokens: budget.count(context.messages, tools), countMethod: "local-bpe-estimate" });
+    (context.data.requests ||= []).push({ kind: "agent", generation: context.data.checkpoints.length, usage: result.usage, inputTokens: budget.count(context.messages, tools), countMethod: "local-bpe-estimate", finishReason: result.finishReason, outputLimit });
     budget.counter.observe(context.messages, tools, result.usage);
     check();
     Zotero.debug(`[ChatPDF] agent request: step=${iteration + 1}, generation=${context.data.checkpoints.length}, input=${result.usage?.prompt_tokens ?? "unknown"}, hit=${result.usage?.prompt_cache_hit_tokens ?? "unknown"}, miss=${result.usage?.prompt_cache_miss_tokens ?? "unknown"}`);
+    if (result.finishReason === "length") {
+      // A truncated tool call, even syntactically valid JSON, is never dispatched.
+      // Empty/reasoning-only attempts leave the exact provider prefix untouched.
+      context.archive(assistantMessage(result));
+      const partial = result.content.trim();
+      if (partial) {
+        context.append({ role: "assistant", content: result.content });
+        context.append({ role: "user", content: "[Harness notice: the preceding response reached its output token limit. Continue the active task from that point without repeating completed text or actions. Any tool calls in the truncated response were not executed; issue complete calls if still needed.]" });
+        repeatedPartial = partial === previousPartial ? repeatedPartial + 1 : 0;
+        previousPartial = partial;
+      }
+      const record: IterationRecord = { content: result.content || undefined, reasoning: result.reasoning, toolCalls: [], usage: result.usage };
+      iterations.push(record);
+      callbacks.onIterationComplete?.(iteration + 1, autoContinue ? 0 : maxIterations, record);
+      await save();
+      if (!autoContinue) throw new Error("The provider reached its output limit. Progress was saved. Enable automatic continuation or send a follow-up to continue.");
+      if (repeatedPartial >= 2) throw new Error("Output continuation repeated the same text without progress. Partial output and history were saved.");
+      desiredOutput = Math.min(capabilities.maxOutput, outputLimit * 2);
+      let nextOutput = budget.outputAllowance(context.messages, tools, desiredOutput);
+      if (!partial && nextOutput <= outputLimit && outputLimit < capabilities.maxOutput && context.messages.length > 2) {
+        await compact();
+        nextOutput = budget.outputAllowance(context.messages, tools, desiredOutput);
+      }
+      if (!partial && nextOutput <= outputLimit) throw new Error("The provider exhausted the available model output capacity without producing text. Attempts and history were saved; reduce thinking effort or use a model with more output capacity.");
+      callbacks.onOutputContinuation?.(nextOutput);
+      continue;
+    }
     if (!result.tool_calls?.length) {
       context.append(assistantMessage(result));
       callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), inputLimit: budget.inputLimit(), source: capabilities.source });
@@ -129,7 +162,6 @@ export async function runAgentLoop(
       iterations.push(record);
       callbacks.onIterationComplete?.(iteration + 1, autoContinue ? 0 : maxIterations, record);
       await save();
-      if (result.finishReason === "length") throw new Error("The provider stopped at its output limit. Partial output and context were saved; send a follow-up to continue.");
       callbacks.onStream?.("", true);
       return { content: result.content, reasoning: result.reasoning, iterations, totalIterations: iteration + 1, usage };
     }
