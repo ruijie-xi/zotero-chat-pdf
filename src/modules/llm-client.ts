@@ -92,20 +92,24 @@ export function sumTokenUsage(usages: Iterable<TokenUsage | undefined>): TokenUs
 }
 
 export interface IterationRecord {
+  /** Visible narration before this iteration's tools; the final answer is stored separately. */
+  content?: string;
   reasoning?: string;
   toolCalls: {
     toolName: string;
     args: Record<string, unknown>;
     result: string;
     durationMs: number;
-    contextDelivery?: "complete" | "omitted";
+    contextDelivery?: "complete" | "omitted" | "paged";
     contextMessage?: string;
+    resultId?: string;
   }[];
   /** Provider-reported usage for this exact model request. */
   usage?: TokenUsage;
 }
 
 export interface ChatResult {
+  finishReason?: string;
   content: string;
   reasoning?: string;
   tool_calls?: ToolCall[];
@@ -141,6 +145,7 @@ export interface LLMSettings {
 }
 
 export interface ChatCompletionBodyOptions {
+  maxTokens?: number;
   stream: boolean;
   tools?: Tool[];
   includeUsage?: boolean;
@@ -198,11 +203,15 @@ export function buildChatCompletionBody(
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: settings.model,
-    messages,
+    messages: messages.map(message => {
+      const { resultId: _resultId, ...providerMessage } = message as ProviderMessage & { resultId?: string };
+      return providerMessage;
+    }),
     stream: options.stream,
   };
 
   if (options.tools?.length) body.tools = options.tools;
+  if (options.maxTokens) body.max_tokens = options.maxTokens;
   if (options.stream && options.includeUsage !== false) {
     body.stream_options = { include_usage: true };
   }
@@ -319,6 +328,10 @@ function extractGeminiThought(content: string): [string, string] {
 // chatWithTools() — LLM call with tool/function calling support
 // ---------------------------------------------------------------------------
 
+export class ProviderContextError extends Error {
+  constructor(message: string) { super(message); this.name = "ProviderContextError"; }
+}
+
 export async function chatWithTools(
   messages: ProviderMessage[],
   tools?: Tool[],
@@ -327,8 +340,9 @@ export async function chatWithTools(
   signal?: AbortSignal,
   /** Use non-streaming mode. Returns rawMessage for provider-specific field preservation. */
   nonStreaming?: boolean,
+  requestOptions?: { maxTokens?: number; settings?: LLMSettings },
 ): Promise<ChatResult> {
-  const settings = getLLMSettings();
+  const settings = requestOptions?.settings || getLLMSettings();
 
   if (!settings.apiKey) {
     throw new Error("LLM API key not configured. Set it in ChatPDF preferences.");
@@ -343,6 +357,7 @@ export async function chatWithTools(
     tools,
     includeUsage: true,
     includeThinkingParams: !gemini,
+    maxTokens: requestOptions?.maxTokens,
   });
   if (gemini) {
     body.extra_body = { google: { thinking_config: { include_thoughts: true } } };
@@ -363,6 +378,9 @@ export async function chatWithTools(
 
   if (!res.ok) {
     const text = await res.text();
+    if ((res.status === 400 || res.status === 413) && /context_length_exceeded|maximum context length|context window|too many tokens|prompt is too long|exceed.{0,40}context/i.test(text)) {
+      throw new ProviderContextError(`Provider context limit: ${text}`);
+    }
     const imageHint = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === "image_url"))
       ? " This request includes images. Check that the selected model and endpoint support vision and OpenAI-compatible image_url inputs."
       : "";
@@ -381,6 +399,7 @@ export async function chatWithTools(
     const result: ChatResult = {
       content,
       rawMessage: msg,
+      finishReason: data.choices?.[0]?.finish_reason,
     };
 
     // Detect thinking: dedicated fields first (DeepSeek, etc.)
@@ -434,6 +453,7 @@ export async function chatWithTools(
   // Accumulate tool call fragments by index
   const toolCallMap = new Map<number, { id: string; name: string; argFragments: string[]; extra_content?: Record<string, unknown> }>();
   let streamUsage2: TokenUsage | undefined;
+  let finishReason: string | undefined;
 
   // Gemini: parse <thought> tags from content
   const thoughtFilter = gemini
@@ -451,6 +471,7 @@ export async function chatWithTools(
 
   function processChunk(parsed: any) {
     if (parsed.usage) streamUsage2 = parsed.usage;
+    if (parsed.choices?.[0]?.finish_reason) finishReason = parsed.choices[0].finish_reason;
 
     const delta = parsed.choices?.[0]?.delta;
     if (!delta) return;
@@ -519,7 +540,7 @@ export async function chatWithTools(
   }
 
   function buildResult(): ChatResult {
-    const result: ChatResult = { content: fullText };
+    const result: ChatResult = { content: fullText, finishReason };
     if (fullReasoning) result.reasoning = fullReasoning;
     // rawContent only when it differs (Gemini thought tags present)
     if (gemini && fullRawContent && fullRawContent !== fullText) {

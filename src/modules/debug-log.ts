@@ -1,7 +1,7 @@
 import { getCacheDir, ensureDir } from "../utils/cache-dir";
 import { getPref } from "../utils/prefs";
 import { atomicWriteJson } from "../utils/atomic-storage";
-import { ChatMessage } from "./llm-client";
+import { ProviderMessage } from "./llm-client";
 
 type DebugLogMode = "off" | "metadata" | "full";
 
@@ -32,7 +32,7 @@ async function prepareLogDir(): Promise<void> {
   }
 }
 
-export async function logLLMRequest(messages: ChatMessage[], model: string): Promise<void> {
+export async function logLLMRequest(messages: ProviderMessage[], model: string): Promise<void> {
   const logMode = mode();
   if (logMode === "off") return;
   try {
@@ -40,7 +40,7 @@ export async function logLLMRequest(messages: ChatMessage[], model: string): Pro
     const entries = messages.map((message) => ({
       role: message.role,
       contentLength: message.content.length,
-      ...(logMode === "full" ? { content: message.content } : {}),
+      ...(logMode === "full" ? { content: typeof message.content === "string" ? message.content : "[Image input omitted from logs]" } : {}),
     }));
     await atomicWriteJson(PathUtils.join(getLogDir(), `req-${timestamp()}.json`), {
       timestamp: new Date().toISOString(),

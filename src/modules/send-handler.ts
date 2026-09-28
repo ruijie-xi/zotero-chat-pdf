@@ -4,7 +4,7 @@ import { getPref } from "../utils/prefs";
 import { chatWithTools, ChatMessage, TokenUsage, IterationRecord, sumTokenUsage } from "./llm-client";
 import { runAgentLoop, AgentCallbacks } from "./agent-loop";
 import { getToolDefinitions } from "./tools";
-import { renderMarkdown } from "./markdown-renderer";
+import { AssistantSegments } from "./assistant-segments";
 import { logLLMRequest, logLLMResponse } from "./debug-log";
 import * as ChatHistory from "./chat-history";
 import { ToolCallRecord } from "./chat-session";
@@ -204,6 +204,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
   let agentToolHistory: ToolCallRecord[] | undefined;
   let agentIterations: IterationRecord[] | undefined;
   let agentUsage: TokenUsage | undefined;
+  let cleanupStreamingUI = () => {};
 
   try {
     Zotero.debug("[ChatPDF] handleSend: building messages...");
@@ -241,33 +242,19 @@ export async function handleSend(root: HTMLElement): Promise<void> {
 
     const isActiveSession = () => state.session === streamSession && row.isConnected;
 
+    const segments = new AssistantSegments(bubble);
     function setBubbleHtml(text: string) {
-      try {
-        const rendered = renderMarkdown(text);
-        if (thinkingDots.parentNode) thinkingDots.remove();
-        bubble.querySelectorAll(".chatpdf-live-content").forEach((node: Element) => node.remove());
-        const blocks = bubble.querySelectorAll(".chatpdf-iteration-block, .chatpdf-reasoning-block, .chatpdf-tool-block, .chatpdf-tool-status");
-        const contentWrap = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
-        contentWrap.className = "chatpdf-live-content";
-        contentWrap.innerHTML = rendered;
-        if (blocks.length > 0) {
-          bubble.appendChild(contentWrap);
-        } else {
-          bubble.innerHTML = "";
-          bubble.appendChild(contentWrap);
-        }
-      } catch {
-        bubble.textContent = text;
-      }
+      thinkingDots.remove();
+      segments.update(text);
     }
 
     // Agent mode is the only supported chat path.
-      const messages = streamSession.buildAgentMessages(userText, turnScope);
+      const tools = getToolDefinitions();
+      const messages = streamSession.buildAgentMessages(userText, turnScope, tools);
       streamSession.addUserMessage(userText, msgSources);
 
       await ChatHistory.saveSession(streamSession.toSavedSession());
 
-      const tools = getToolDefinitions();
       Zotero.debug(`[ChatPDF] handleSend: agent mode, ${tools.length} tools available`);
 
       logLLMRequest(messages, model).catch(() => {});
@@ -288,19 +275,9 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       let curThinkRenderTimer: number | null = null;
       let curIterReasoning = "";
       let agentRenderTimer: number | null = null;
-      let needsAssistantSegmentBreak = false;
-
-      function ensureParagraphBreak(text: string): string {
-        if (!text.trim()) return text;
-        return /\n\s*\n$/.test(text) ? text : text.replace(/\s*$/, "\n\n");
-      }
-
-      function appendAssistantStreamChunk(chunk: string): void {
-        if (needsAssistantSegmentBreak && chunk.trim()) {
-          fullText = ensureParagraphBreak(fullText);
-          needsAssistantSegmentBreak = false;
-        }
-        fullText += chunk;
+      function flushAssistantText(): void {
+        if (agentRenderTimer) { win.clearTimeout(agentRenderTimer); agentRenderTimer = null; }
+        if (isActiveSession()) setBubbleHtml(fullText);
       }
 
       function finalizeThinkingBlock() {
@@ -356,7 +333,24 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         }, 1000) as unknown as number;
       }
 
+      cleanupStreamingUI = () => {
+        flushAssistantText();
+        finalizeThinkingBlock();
+        statusDiv.remove();
+        thinkingDots.remove();
+      };
+
       const agentCallbacks: AgentCallbacks = {
+        onContextSaved: async () => {
+          await ChatHistory.saveSession(streamSession.toSavedSession());
+        },
+        onCompaction: (active: boolean) => {
+          if (!isActiveSession()) return;
+          if (!active) { statusDiv.remove(); return; }
+          statusDiv.style.display = "";
+          statusDiv.textContent = "Compacting context… Work will continue automatically.";
+          if (!statusDiv.parentNode) bubble.appendChild(statusDiv);
+        },
         onUsage: (usage: TokenUsage) => {
           agentUsage = usage;
           streamState.usage = usage;
@@ -367,14 +361,16 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         onIterationComplete: (iter: number, max: number, record: IterationRecord) => {
           Zotero.debug(`[ChatPDF] handleSend: iteration ${iter}/${max} complete, tools=${record.toolCalls.length}`);
           streamState.iterations.push(record);
+          streamState.fullReasoning = "";
+          if (record.toolCalls.length > 0) {
+            flushAssistantText();
+            if (isActiveSession()) segments.finish(record.content || fullText);
+            fullText = "";
+            streamState.fullText = "";
+          }
           if (!isActiveSession()) return;
 
           if (record.toolCalls.length > 0) {
-            if (fullText.trim()) {
-              fullText = ensureParagraphBreak(fullText);
-              streamState.fullText = fullText;
-              needsAssistantSegmentBreak = true;
-            }
             if (statusDiv.parentNode) statusDiv.remove();
             const totalMs = record.toolCalls.reduce((sum, t) => sum + t.durationMs, 0);
             const toolBlock = createToolBlock(doc, record.toolCalls, totalMs);
@@ -382,16 +378,19 @@ export async function handleSend(root: HTMLElement): Promise<void> {
           }
 
           statusDiv.style.display = "";
-          statusDiv.textContent = `Step ${iter}/${max}`;
+          statusDiv.textContent = max > 0 ? `Step ${iter}/${max}` : `Step ${iter}`;
           bubble.appendChild(statusDiv);
           if (messagesEl) scrollToBottomIfNeeded(messagesEl);
         },
         onToolCallStart: (name: string, args: Record<string, unknown>) => {
           const label = formatToolStatus(name, args, streamSession);
           Zotero.debug(`[ChatPDF] handleSend: tool start: ${label}`);
+          flushAssistantText();
+          finalizeThinkingBlock();
           if (!isActiveSession()) return;
           statusDiv.style.display = "";
           statusDiv.textContent = label;
+          if (!statusDiv.parentNode) bubble.appendChild(statusDiv);
           if (messagesEl) scrollToBottomIfNeeded(messagesEl);
         },
         onToolCallEnd: (name: string, _result: string, durationMs: number) => {
@@ -400,13 +399,15 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         onThinking: (chunk: string, done: boolean, isNewBlock: boolean) => {
           try {
             if (isNewBlock) {
-              if (!isActiveSession()) return;
-              createThinkingBlock();
+              streamState.thinkingDone = false;
+              curIterReasoning = "";
+              streamState.thinkingStartTime = Date.now();
+              if (isActiveSession()) createThinkingBlock();
             }
             if (!done) {
               curIterReasoning += chunk;
               fullReasoning += chunk;
-              streamState.fullReasoning = fullReasoning;
+              streamState.fullReasoning = curIterReasoning;
               if (!isActiveSession()) return;
               if (!curThinkRenderTimer) {
                 curThinkRenderTimer = win.setTimeout(() => {
@@ -427,7 +428,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         onStream: (chunk: string, done: boolean) => {
           try {
             if (!done) {
-              appendAssistantStreamChunk(chunk);
+              fullText += chunk;
               streamState.fullText = fullText;
               if (!isActiveSession()) return;
               if (thinkingDots.parentNode) thinkingDots.remove();
@@ -526,6 +527,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       refreshSourceChips(root);
     }
   } catch (err: any) {
+    cleanupStreamingUI();
     Zotero.debug(`[ChatPDF] handleSend error: ${err?.name}: ${err?.message}\n${err?.stack}`);
     if (!agentIterations && streamState.iterations.length > 0) {
       agentIterations = [...streamState.iterations];
@@ -563,7 +565,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         appendMessage(root, "assistant", errorText);
       }
       streamState.usage = undefined;
-      streamSession.addAssistantMessage(errorText, fullReasoning || undefined, undefined, undefined, agentIterations, agentUsage, "error", err.message);
+      streamSession.addAssistantMessage([fullText, errorText].filter(Boolean).join("\n\n"), fullReasoning || undefined, undefined, undefined, agentIterations, agentUsage, "error", err.message);
       if (state.session === streamSession) updateUsageBar(root, streamSession.getTokenUsage());
       try {
         await ChatHistory.saveSession(streamSession.toSavedSession());
@@ -572,6 +574,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       }
     }
   } finally {
+    cleanupStreamingUI();
     state.backgroundStreams.delete(streamSessionId);
     state.isStreaming = false;
     state.currentAbortController = null;

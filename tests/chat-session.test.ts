@@ -26,7 +26,7 @@ describe("ChatSession source and persistence semantics", () => {
     const source = session.addSource("A", "Paper", "PARENT", 4);
     session.setSourceReady(source.id, "markdown");
     const saved = session.toSavedSession();
-    expect(saved.schemaVersion).toBe(2);
+    expect(saved.schemaVersion).toBe(3);
     expect(saved.sources?.[0]).toMatchObject({ id: "4:A", key: "A", libraryID: 4, status: "ready" });
   });
 

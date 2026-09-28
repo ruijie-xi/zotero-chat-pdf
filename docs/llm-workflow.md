@@ -85,15 +85,21 @@ current TurnScope metadata + user message
 
 Converted PDFs are not embedded into the system prompt. The model reads them through tools.
 
-The system prompt teaches the document/Zotero/web workflow but does not contain volatile source metadata. Each user message carries its own immutable TurnScope block, so changing source mentions does not invalidate the stable system prefix and historical user turns can be reconstructed exactly. When an old assistant iteration is replayed in a later prompt, its full tool body is replaced by compact provenance containing tool arguments, result size, and context-delivery status.
+The system prompt teaches the document/Zotero/web workflow but does not contain volatile source metadata. Each user message carries its own immutable TurnScope block. Between compactions, complete provider exchanges remain unchanged and new messages append to the same working context, including across follow-up turns and compatible session restores. Legacy sessions without exact replay metadata are reconstructed once from visible messages and tool provenance.
 
-`contextMaxChars` defaults to 240,000. Initial history construction uses at most 85% of that budget, reserving space for the current turn. Before another model request, current tool results are measured against both a per-result limit and the remaining batch/context budget. A result that would exceed those budgets is retained in full in session history and the UI, while the model receives an explicit context-protection message with the original size, effective limit, and a narrower retry strategy. No partial result is silently presented as complete.
+`contextMaxChars` defaults to 240,000 and now controls working-context compaction, not a cumulative reading allowance. The harness estimates characters for text, tool schemas, and replay fields, with a conservative allowance for image inputs. At about 75% of the configured size it summarizes completed exchanges, then resumes automatically. This is an explicit character-based fallback, not an exact tokenizer or model-capacity discovery mechanism. Recognized provider context errors trigger bounded recovery using smaller complete exchanges.
 
-Provider-reported usage is retained for every agent iteration and accumulated for each assistant turn. The footer sums all stored usage in the current session, including terminal cancelled/error turns when the provider returned usage and session-owned auxiliary calls such as title generation. It reports cache hit tokens, miss tokens, and the weighted hit percentage. Individual assistant messages continue to show their own turn totals.
+Compaction uses the same model, system prompt, and ordered tool definitions, appending a task-independent checkpoint instruction. Its tools are never dispatched. Generated memory preserves objectives, constraints, outcomes, pending work, evidence references, and uncertainty. Program-maintained unread-result ranges and operation receipts survive independently of summary wording. After compaction, a new stable prefix is built; the first resumed request may miss cache. Recent tool bodies remain recoverable from the result archive rather than replaying old provider-signed thinking after a prefix rewrite.
+
+A checkpoint response ending with `finish_reason: length` is retried with the exact same messages, tools, model, and thinking settings. Only the output allowance grows (8,192, 16,384, then 32,768 tokens, including reasoning). All attempt usage is counted; truncated drafts are never committed as checkpoints. After three exhausted attempts the harness stops with an explicit diagnostic, retaining the original history and working state. Compaction request metadata records the finish reason and requested output allowance.
+
+Results too large for immediate delivery are stored completely and represented by an explicit result ID. `read_tool_result` returns exact, zero-based, end-exclusive character pages and the next cursor; page size adapts to working capacity. It checks both current session membership and TurnScope. No fixed 80,000-character result limit or cumulative reading quota remains. Full result bodies are stored once in `agentContext.results`; UI iteration history and exact provider events are hydrated from references when a session is loaded. Compaction changes the active event view, not the full transcript. Binary images are never serialized; restoring a working view containing images requires reconstruction and explicit image rereading.
+
+Provider-reported usage is retained for agent and compaction requests and accumulated for each assistant turn. The footer sums all stored usage in the current session, including terminal cancelled/error turns when the provider returned usage and session-owned auxiliary calls such as title generation. It reports cache hit tokens, miss tokens, and the weighted hit percentage. Individual assistant messages continue to show their own turn totals. Context request records distinguish agent work from compaction and record the context generation, input-size estimate, and provider usage for cache diagnostics.
 
 ## Agent Loop and Tool Scheduling
 
-`runAgentLoop()` reads `agentMaxIterations`, calls the model, and repeats until it receives final text or reaches the iteration cap.
+`runAgentLoop()` continues until final text by default (`agentAutoContinue=true`). Stop remains available. Repeated identical calls with unchanged results trigger a warning and then a resumable error. With automatic continuation disabled, `agentMaxIterations` pauses with saved progress; it never removes tools to force a premature answer. Completed operation receipts are saved before the next mutation and recovered after interruption without automatically replaying the operation.
 
 For each tool-call batch:
 
@@ -117,6 +123,7 @@ Provider replay preserves DeepSeek `reasoning_content` and Gemini thought-signat
 - `search_document`
 - `list_images`
 - `read_image`
+- `read_tool_result` (session result IDs with current source-scope enforcement)
 
 These tools accept stable source IDs and refuse sources outside TurnScope. Search output merges overlapping context windows so repeated neighboring matches do not duplicate the same source lines. Caller-specified match limits remain explicit; large document reads remain possible through narrower line ranges or page-based chunks.
 
@@ -196,6 +203,8 @@ The configurable defaults are language `ch` and timeout 15 minutes. PDFs up to 1
 Document, chunk, manifest, session, and history-index writes use temporary files followed by atomic replacement. Errors retain their stage so upload, polling, ZIP download, and extraction failures remain distinguishable.
 
 ## Rendering and Debug Privacy
+
+Each assistant iteration stores its visible narration independently of the final answer. The live UI updates a dedicated narration node in place, flushes it before tools start, and freezes it before adding the corresponding tool block. Completed text does not move when later iterations stream. History and background-stream restoration preserve reasoning, narration, and tool order; older v3 narration can be recovered from archived provider events by exact stored-result identity. Completion, cancellation, and errors clear pending rendering timers and activity indicators.
 
 Assistant Markdown is parsed by `marked`, math is rendered through KaTeX placeholders, and the HTML is normalized for XHTML. A DOM allowlist then removes disallowed elements, event/style attributes, dangerous protocols, namespaced attack surfaces, and privileged local image URLs before the result enters `innerHTML`.
 

@@ -5,6 +5,7 @@
 export type FluentMessageId =
   | 'chatpdf-menuitem-addtochatpdf'
   | 'chatpdf-menuitem-relatedsessions'
+  | 'pref-agent-auto-continue'
   | 'pref-agent-max-iterations'
   | 'pref-brave-search-api-key'
   | 'pref-cache-dir'

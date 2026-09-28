@@ -21,6 +21,7 @@ declare namespace _ZoteroTypes {
       "activeProfile": string;
       "panelWidth": number;
       "agentMaxIterations": number;
+      "agentAutoContinue": boolean;
       "contextMaxChars": number;
       "enableWebTools": boolean;
       "braveSearchApiKey": string;

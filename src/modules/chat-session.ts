@@ -1,4 +1,5 @@
-import { ChatMessage, MessageSource, IterationRecord, TokenUsage, sumTokenUsage } from "./llm-client";
+import { ChatMessage, ProviderMessage, Tool, MessageSource, IterationRecord, TokenUsage, sumTokenUsage, getLLMSettings } from "./llm-client";
+import { AgentContext, contextFingerprint } from "./agent-context";
 import { getPref } from "../utils/prefs";
 import { SavedSession } from "./chat-history";
 import { makeSourceId, parseSourceId, sourceCacheKey } from "./source-identity";
@@ -8,7 +9,7 @@ export interface ToolCallRecord {
   args: Record<string, unknown>;
   result: string;
   durationMs: number;
-  contextDelivery?: "complete" | "omitted";
+  contextDelivery?: "complete" | "omitted" | "paged";
   contextMessage?: string;
 }
 
@@ -63,6 +64,12 @@ export class ChatSession {
   private history: ChatMessage[] = [];
   private sources: Map<string, SourceItem> = new Map();
   private auxiliaryUsage?: TokenUsage;
+  private agentContext?: AgentContext;
+
+  getAgentContext(): AgentContext | undefined { return this.agentContext; }
+  ensureAgentContext(messages: ProviderMessage[]): AgentContext {
+    return this.agentContext ||= AgentContext.create(messages, "", this.history.length);
+  }
 
   constructor() {
     this.id = crypto.randomUUID?.() ?? Zotero.Utilities.randomString(32);
@@ -92,6 +99,7 @@ export class ChatSession {
   removeSource(identifier: string, libraryID?: number): void {
     const source = this.getSource(identifier, libraryID);
     if (source) this.sources.delete(source.id);
+    if (this.agentContext) this.agentContext.data.fingerprint = "";
     this.updatedAt = Date.now();
   }
 
@@ -193,6 +201,13 @@ export class ChatSession {
     if (errorMessage) msg.errorMessage = errorMessage;
     this.history.push(msg);
     this.updatedAt = Date.now();
+    if (this.agentContext) {
+      this.agentContext.recoverPending();
+      if (status !== "complete" || this.agentContext.messages.at(-1)?.role !== "assistant") {
+        this.agentContext.append({ role: "assistant", content: status === "complete" ? content : `[Turn ${status}] ${content}` });
+      }
+      this.agentContext.data.historyLength = this.history.length;
+    }
   }
 
   /**
@@ -244,6 +259,7 @@ export class ChatSession {
 
   clearHistory(): void {
     this.history = [];
+    this.agentContext = undefined;
     this.updatedAt = Date.now();
   }
 
@@ -251,6 +267,7 @@ export class ChatSession {
   truncateHistoryAt(index: number): void {
     if (index >= 0 && index < this.history.length) {
       this.history.splice(index);
+      this.agentContext = undefined;
       this.updatedAt = Date.now();
     }
   }
@@ -262,7 +279,7 @@ export class ChatSession {
   toSavedSession(): SavedSession {
     const sources = this.getSources();
     const savedSession: SavedSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       id: this.id,
       title: this.title,
       titleSource: this.titleSource,
@@ -298,6 +315,17 @@ export class ChatSession {
       updatedAt: this.updatedAt,
     };
     if (this.auxiliaryUsage) savedSession.auxiliaryUsage = this.auxiliaryUsage;
+    if (this.agentContext) {
+      savedSession.agentContext = this.agentContext.toJSON();
+      // Result bodies are stored once; UI history is hydrated on restore.
+      for (const message of savedSession.messages) {
+        if (message.iterations) message.iterations = message.iterations.map(iteration => ({ ...iteration,
+          toolCalls: iteration.toolCalls.map((call: IterationRecord["toolCalls"][number]) => ({ ...call,
+            result: call.resultId ? "" : call.result,
+          })),
+        }));
+      }
+    }
     return savedSession;
   }
 
@@ -308,6 +336,20 @@ export class ChatSession {
     session.titleSource = data.titleSource || "auto";
     session.createdAt = data.createdAt;
     session.auxiliaryUsage = data.auxiliaryUsage;
+    session.agentContext = data.agentContext ? AgentContext.restore(data.agentContext) : undefined;
+    // Older v3 sessions archived narration in provider events but omitted it
+    // from display iterations. Recover it by exact stored-result identity.
+    const narrationByResult = new Map<string, string>();
+    let narratedCalls: string[] = [];
+    let narration = "";
+    for (const event of session.agentContext?.data.events || []) {
+      if (event.role === "assistant") {
+        narratedCalls = event.tool_calls?.map(call => call.id) || [];
+        narration = typeof event.content === "string" ? event.content : "";
+      } else if (event.role === "tool" && event.resultId && event.tool_call_id && narratedCalls.includes(event.tool_call_id)) {
+        narrationByResult.set(event.resultId, narration);
+      }
+    }
 
     // Restore messages (including per-message sources and timestamps)
     for (const msg of data.messages) {
@@ -329,7 +371,12 @@ export class ChatSession {
         if ((msg as any).toolHistory?.length) m.toolHistory = (msg as any).toolHistory;
         // Restore iterations (new format) or convert from legacy toolHistory
         if ((msg as any).iterations?.length) {
-          m.iterations = (msg as any).iterations;
+          m.iterations = (msg as any).iterations.map((iteration: IterationRecord) => ({ ...iteration,
+            content: iteration.content ?? narrationByResult.get(iteration.toolCalls[0]?.resultId || ""),
+            toolCalls: iteration.toolCalls.map(call => ({ ...call, result: call.resultId && !call.result
+              ? session.agentContext?.data.results.find(result => result.id === call.resultId)?.content || "[Stored result unavailable]"
+              : call.result })),
+          }));
         } else if ((msg as any).toolHistory?.length) {
           // Backward compat: wrap legacy toolHistory into a single iteration
           m.iterations = [{ toolCalls: (msg as any).toolHistory }];
@@ -531,23 +578,29 @@ export class ChatSession {
     return prompt;
   }
 
-  buildAgentMessages(userMessage: string, turnScope?: Set<string>): ChatMessage[] {
-    // Full tool outputs remain persisted and visible. Historical requests only
-    // carry compact provenance so earlier multi-megabyte reads do not silently
-    // overwhelm provider context windows.
-    const configuredMax = Number(getPref("contextMaxChars") || 240_000);
-    const contextMax = Number.isFinite(configuredMax) ? Math.max(20_000, configuredMax) : 240_000;
-    // Leave room for this turn's reasoning, tool-call envelopes, and protected tool results.
-    const maxChars = Math.max(20_000, Math.floor(contextMax * 0.85));
+  buildAgentMessages(userMessage: string, turnScope?: Set<string>, tools: Tool[] = []): ProviderMessage[] {
+    // Resume immutable provider blocks when compatible. Only legacy sessions or
+    // explicit configuration changes need a visible-history reconstruction.
     const systemPrompt = this.buildAgentSystemPrompt();
     const currentScope = this.snapshotSources(
       turnScope || new Set(this.getSources().map((source) => source.id)),
     );
     const currentUserContent = this.buildAgentUserContent(userMessage, currentScope);
+    const { apiBase, model, thinkingMode, thinkEffort } = getLLMSettings();
+    const fingerprint = contextFingerprint({ apiBase, model, thinkingMode, thinkEffort, tools, systemPrompt });
+    if (this.agentContext?.data.fingerprint === fingerprint &&
+        !this.agentContext.data.requiresRebuild && this.agentContext.data.historyLength === this.history.length) {
+      this.agentContext.recoverPending();
+      this.agentContext.append({ role: "user", content: currentUserContent });
+      this.agentContext.data.historyLength = this.history.length + 1;
+      return this.agentContext.messages;
+    }
 
-    Zotero.debug(`[ChatPDF] buildAgentMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${currentUserContent.length} chars, initialBudget=${maxChars}/${contextMax}, historyLen=${this.history.length}`);
+    Zotero.debug(`[ChatPDF] buildAgentMessages: rebuilding working view; systemPrompt=${systemPrompt.length} chars, historyLen=${this.history.length}`);
 
-    const recentHistory = this.truncateHistory(systemPrompt.length, currentUserContent.length, maxChars,
+    // Legacy/mismatched sessions retain every visible turn. The context manager
+    // summarizes complete exchanges instead of silently dropping old requests.
+    const recentHistory = this.truncateHistory(systemPrompt.length, currentUserContent.length, Number.POSITIVE_INFINITY,
       (msg) => {
         if (msg.role === "system") return null; // skip system messages
         if (msg.role !== "user" && msg.role !== "assistant") return null;
@@ -587,7 +640,27 @@ export class ChatSession {
 
     const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
     Zotero.debug(`[ChatPDF] buildAgentMessages: final ${messages.length} messages, ~${totalChars} total chars`);
-    return messages;
+    if (this.agentContext) {
+      if (this.agentContext.data.pending) {
+        const pending = this.agentContext.data.pending;
+        const receipts = JSON.stringify({ calls: pending.assistant.tool_calls, completed: pending.completed });
+        this.agentContext.recoverPending();
+        messages.splice(messages.length - 1, 0, { role: "assistant", content:
+          `[Interrupted operations: ${receipts}. Completed receipts must not be repeated. Calls without receipts have unknown outcomes; inspect state before retrying.]` });
+      }
+      if (this.agentContext.data.checkpoints.length || this.agentContext.data.results.some(result => !result.delivered || result.mutating)) {
+        messages.splice(messages.length - 1, 0, { role: "assistant", content: this.agentContext.checkpointContent(
+          this.agentContext.data.checkpoints.at(-1)?.summary || "Working context reconstructed after a configuration change.") });
+      }
+      this.agentContext.data.active = [];
+      this.agentContext.data.fingerprint = fingerprint;
+      this.agentContext.data.historyLength = this.history.length + 1;
+      this.agentContext.data.requiresRebuild = false;
+      messages.forEach(message => this.agentContext!.append(message));
+    } else {
+      this.agentContext = AgentContext.create(messages, fingerprint, this.history.length + 1);
+    }
+    return this.agentContext.messages;
   }
 
   private buildAgentSystemPrompt(): string {
@@ -615,7 +688,8 @@ export class ChatSession {
       "- Start document searches with focused terms, about 10-20 max_results, and 1-3 context_lines; broaden only when the first pass is insufficient\n" +
       "- Avoid broad punctuation-only or very short formula searches when a distinctive phrase, symbol name, theorem number, or section is available\n" +
       "- Do not re-read an identical line range unless the prior answer/provenance is insufficient for the current question\n" +
-      "- Tool results are subject to an explicit context budget. If context protection withholds an oversized result, follow its narrower retry guidance instead of repeating the same call\n" +
+      "- The harness automatically compacts older context when needed and continues the same task. There is no cumulative document reading allowance.\n" +
+      "- If a result is paged, use read_tool_result with its result_id and next_start to retrieve exact content. A stored result is not yet inspected evidence. Continue reading as needed; do not ask the user to send another message just because context was compacted.\n" +
       "- For broad questions on short papers: read_document without line range can preview or read the document\n" +
       "- For library discovery: search Zotero metadata first, then add/convert relevant PDFs if needed; use judgment before converting broad sets, whole collections, folders, or many PDFs\n" +
       "- Cite the document title and section when answering\n";

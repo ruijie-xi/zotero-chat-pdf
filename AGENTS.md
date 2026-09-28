@@ -8,7 +8,7 @@ ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI
 - Add-on ID: `chatpdf@zotero-plugin`
 - Namespace: `chatpdf`
 - Preference prefix: `extensions.zotero.chatpdf`
-- Current release line: `0.8.x`
+- Current release line: `0.9.x`
 
 ## Runtime and Stack
 

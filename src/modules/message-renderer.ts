@@ -59,7 +59,7 @@ export function createToolBlock(doc: Document, toolHistory: ToolCallRecord[], to
     if (argsStr !== "{}") {
       entry.appendChild(h(doc, "div", { className: "chatpdf-tool-args" }, argsStr));
     }
-    if (tr.contextDelivery === "omitted" && tr.contextMessage) {
+    if ((tr.contextDelivery === "omitted" || tr.contextDelivery === "paged") && tr.contextMessage) {
       entry.appendChild(h(doc, "div", { className: "chatpdf-tool-context-warning" }, tr.contextMessage));
     }
     entry.appendChild(h(doc, "div", { className: "chatpdf-tool-result" }, tr.result));
@@ -95,6 +95,12 @@ export function createIterationBlock(doc: Document, record: IterationRecord, ite
     reasoningBlock.appendChild(toggle);
     reasoningBlock.appendChild(content);
     block.appendChild(reasoningBlock);
+  }
+
+  if (record.content) {
+    const narration = h(doc, "div", { className: "chatpdf-iteration-content" });
+    narration.innerHTML = renderMarkdown(record.content);
+    block.appendChild(narration);
   }
 
   // Tool calls
@@ -396,6 +402,21 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
   let lastTextLen = 0;
   let wasThinkingDone = false;
   let lastUsage = stream.usage;
+  let renderedIterations = 0;
+
+  function updateIterations() {
+    if (renderedIterations === stream.iterations.length) return;
+    reasoningBlock?.remove();
+    contentWrap?.remove();
+    dots?.remove();
+    reasoningBlock = reasoningContentEl = reasoningLabel = reasoningSpinner = reasoningTimerEl = contentWrap = null;
+    lastReasoningLen = lastTextLen = -1;
+    wasThinkingDone = false;
+    while (renderedIterations < stream.iterations.length) {
+      bubble.appendChild(createIterationBlock(doc, stream.iterations[renderedIterations], renderedIterations));
+      renderedIterations++;
+    }
+  }
 
   function updateLiveUsage() {
     updateUsageBar(root, sumTokenUsage([stream.session.getTokenUsage(), stream.usage]));
@@ -420,7 +441,7 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
     reasoningContentEl = h(doc, "div", { className: "chatpdf-reasoning-content" });
     reasoningBlock.appendChild(toggle);
     reasoningBlock.appendChild(reasoningContentEl);
-    bubble.insertBefore(reasoningBlock, bubble.firstChild);
+    bubble.appendChild(reasoningBlock);
   }
 
   function updateReasoning() {
@@ -466,6 +487,7 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
     scrollToBottomIfNeeded(messagesEl!);
   }
 
+  updateIterations();
   updateReasoning();
   if (stream.thinkingDone) wasThinkingDone = true;
   updateContent();
@@ -489,6 +511,7 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
       panelState.activePollIntervals.delete(pollInterval);
       return;
     }
+    updateIterations();
     updateReasoning();
     updateContent();
     if (stream.usage !== lastUsage) updateLiveUsage();

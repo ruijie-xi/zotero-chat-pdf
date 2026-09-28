@@ -5,6 +5,7 @@ import { IterationRecord, TokenUsage } from "./llm-client";
 export interface StreamState {
   session: ChatSession;
   abortController: AbortLike;
+  /** Current iteration only; completed narration and reasoning live in iterations. */
   fullText: string;
   fullReasoning: string;
   thinkingDone: boolean;

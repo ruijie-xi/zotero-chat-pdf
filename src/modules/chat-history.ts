@@ -1,6 +1,7 @@
 import { getCacheDir, ensureDir } from "../utils/cache-dir";
 import { error as logError } from "../utils/log";
 import { atomicWriteJson, withStorageLock } from "../utils/atomic-storage";
+import type { AgentContextData } from "./agent-context";
 
 export interface SavedSource {
   kind?: "image";
@@ -27,6 +28,7 @@ export interface SavedSession {
   messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { id?: string; key: string; libraryID?: number; title: string; parentKey?: string }[]; modelLabel?: string; toolHistory?: any[]; iterations?: any[]; usage?: any; status?: "complete" | "cancelled" | "error"; errorMessage?: string }[];
   /** Provider usage from session-owned LLM calls outside assistant turns, such as title generation. */
   auxiliaryUsage?: any;
+  agentContext?: AgentContextData;
   createdAt: number;
   updatedAt: number;
 }

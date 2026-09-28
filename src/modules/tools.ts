@@ -51,6 +51,7 @@ export interface ToolOptions {
 }
 
 export interface ToolExecutionContext {
+  resultPageChars?: number;
   deliverImage?: (image: ImageInput) => void;
   session: ChatSession;
   signal?: AbortSignal;
@@ -68,6 +69,7 @@ export interface ToolMetadata {
 }
 
 const TOOL_METADATA: Record<string, ToolMetadata> = {
+  read_tool_result: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_images: { readOnly: true, mutatesSession: false, network: false, costly: false },
   read_image: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_sources: { readOnly: true, mutatesSession: false, network: false, costly: false },
@@ -105,6 +107,18 @@ function extractHeadings(markdown: string): { heading: string; line: number }[] 
 
 export function getToolDefinitions(options?: ToolOptions): Tool[] {
   const tools: Tool[] = [
+    {
+      type: "function",
+      function: {
+        name: "read_tool_result",
+        description: "Read exact text from a stored tool result in this session. Use result_id from a paged result or checkpoint. Offsets are zero-based characters, end-exclusive. Follow next_start until the needed content is inspected. Page size adapts to working-context capacity; there is no cumulative read allowance.",
+        parameters: { type: "object", properties: {
+          result_id: { type: "string" },
+          start: { type: "integer", minimum: 0, description: "Start offset; default 0." },
+          max_chars: { type: "integer", minimum: 1, description: "Requested page length. The response explicitly reports the actual range and continuation cursor." },
+        }, required: ["result_id"] },
+      },
+    },
     {
       type: "function",
       function: {
@@ -448,6 +462,17 @@ export async function executeTool(
     let result: string;
 
     switch (name) {
+      case "read_tool_result": {
+        const memory = session.getAgentContext();
+        if (!memory) throw new Error("No stored results are available in this session.");
+        const start = args.start === undefined ? 0 : Number(args.start);
+        const requested = args.max_chars === undefined ? (context.resultPageChars || 40_000) : Number(args.max_chars);
+        if (!Number.isSafeInteger(requested) || requested <= 0) throw new Error("max_chars must be a positive integer.");
+        result = memory.readResult(String(args.result_id || ""), start,
+          Math.min(requested, context.resultPageChars || 40_000),
+          new Set(session.getSources().filter(source => context.turnScope.has(source.id)).map(source => source.id)));
+        break;
+      }
       case "list_images":
       case "read_image": {
         const key = String(args.key || "");
