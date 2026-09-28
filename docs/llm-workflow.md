@@ -226,3 +226,5 @@ npm audit --audit-level=low
 ```
 
 The isolated Zotero smoke test validates temporary add-on installation and real panel behavior without accessing the user's normal profile or credentials. Provider and MinerU network behavior still requires explicit credentialed test runs.
+
+CI runs both dependency auditing and functional verification after a successful locked install. An audit failure still fails the job, but does not hide the typecheck, lint, test, and build results. Installation failure or cancellation prevents functional verification.

@@ -21,6 +21,13 @@ jobs:
         run: |
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global --add url."https://github.com/".insteadOf "git@github.com:"
-      - run: npm ci --ignore-scripts
-      - run: npm audit --audit-level=low
-      - run: npm run verify
+      - name: Install locked dependencies
+        id: install
+        run: npm ci --ignore-scripts
+      - name: Audit dependencies
+        run: npm audit --audit-level=low
+      - name: Typecheck, lint, test, and build
+        # Keep functional results visible when the audit fails. The audit still
+        # fails the job; installation failures and cancellation never run tests.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run verify
