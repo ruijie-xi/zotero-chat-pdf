@@ -22,7 +22,10 @@ export async function resolveModelCapabilities(settings: LLMSettings, signal?: A
   let entry = cache.get(key);
   const manual = positive(settings.contextWindowTokens) || positive(settings.inputTokenLimit);
   if ((!entry || Date.now() - entry.at > 86_400_000 || refresh) && (!manual || !positive(settings.maxOutputTokens) || refresh)) {
-    const controller = new AbortController();
+    // Zotero's privileged module scope does not expose every window constructor.
+    const Controller = typeof AbortController !== "undefined"
+      ? AbortController : (Zotero.getMainWindow() as unknown as { AbortController: new () => AbortController }).AbortController;
+    const controller = new Controller();
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(abort, 15_000);

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.2
+
+- Fix automatic model-capacity discovery in Zotero's privileged scope by using the main window's AbortController when the global constructor is unavailable.
+- Cover model discovery and cancellation without a global AbortController in regression tests.
+
 ## 0.9.1
 
 - Resolve model token capacity from endpoint metadata or explicit model-profile overrides; replace character-based compaction and delivery budgets with locally tokenized request estimates and output reservations.

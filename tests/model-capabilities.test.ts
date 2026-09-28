@@ -3,8 +3,40 @@ vi.unmock("../src/modules/model-capabilities");
 import { resolveModelCapabilities, clearModelCapabilityCache } from "../src/modules/model-capabilities";
 const settings = { apiBase: "https://api.deepseek.com/v1", apiKey: "test-only", model: "deepseek-flash", thinkingMode: "default" as const, thinkEffort: "default" as const };
 beforeEach(() => clearModelCapabilityCache());
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  vi.mocked(Zotero.getMainWindow).mockImplementation(() => window as any);
+});
 describe("model capability resolution", () => {
+  it("discovers metadata in Zotero without a global AbortController", async () => {
+    const Controller = AbortController;
+    const Signal = new Controller().signal.constructor;
+    vi.stubGlobal("AbortController", undefined);
+    vi.mocked(Zotero.getMainWindow).mockReturnValue({ AbortController: Controller } as any);
+    const fetch = vi.fn(async (_url: string, options: RequestInit) => {
+      expect(options.signal).toBeInstanceOf(Signal);
+      expect(options.signal?.aborted).toBe(false);
+      return { ok: true, json: async () => ({ data: [{ id: "deepseek-flash", context_window: 1048576, max_output_tokens: 393216 }] }) };
+    });
+    vi.stubGlobal("fetch", fetch);
+    expect(await resolveModelCapabilities(settings)).toMatchObject({ contextWindow: 1048576, source: "endpoint" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("forwards cancellation and clears its timeout with the window constructor", async () => {
+    vi.useFakeTimers();
+    const Controller = AbortController;
+    const parent = new Controller();
+    vi.stubGlobal("AbortController", undefined);
+    vi.mocked(Zotero.getMainWindow).mockReturnValue({ AbortController: Controller } as any);
+    vi.stubGlobal("fetch", vi.fn((_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
+      options.signal!.addEventListener("abort", () => reject(new DOMException("Cancelled", "AbortError")), { once: true });
+    })));
+    const pending = resolveModelCapabilities(settings, parent.signal);
+    parent.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("uses exact endpoint model metadata, caches it, and keeps accounts separate", async () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ id: "other", context_window: 1 }, { id: "deepseek-flash", context_window: 1048576, max_output_tokens: 393216 }] }) }));
     vi.stubGlobal("fetch", fetch);
