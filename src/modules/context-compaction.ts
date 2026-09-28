@@ -92,7 +92,7 @@ export async function compactAgentContext(
   for (const group of exchangeGroups(userIndex >= 0 ? original.slice(userIndex + 1) : []).reverse()) {
     const candidate = [...group, ...tail];
     // Signed replay may depend on the old prefix. The checkpoint retains its outcome.
-    if (group.some(message => message.reasoning_content || message.extra_content)) break;
+    if (group.some(message => message.reasoning_content || message.extra_content || message.tool_calls?.some(call => call.extra_content))) break;
     if (budget.count([original[0], checkpoint, latestUser, ...candidate], tools) > retainedLimit) break;
     tail.unshift(...group);
   }

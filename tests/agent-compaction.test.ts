@@ -34,6 +34,19 @@ function setup(limit = 240_000) {
 beforeEach(() => { vi.clearAllMocks(); model.mockReset(); execute.mockReset(); });
 
 describe("automatic context compaction", () => {
+  it("keeps nested provider signatures in the archive without replaying them after a prefix rewrite", async () => {
+    const user = { role: "user" as const, content: "Continue the task" };
+    const context = AgentContext.create([{ role: "system", content: "policy" }, user,
+      { role: "assistant", content: "old details ".repeat(2000) },
+      { role: "assistant", content: "check", tool_calls: [{ id: "signed", type: "function", function: { name: "read_document", arguments: "{}" }, extra_content: { google: { thought_signature: "opaque-signature" } } }] },
+      { role: "tool", tool_call_id: "signed", content: "evidence" },
+    ], "model", 1);
+    model.mockResolvedValueOnce({ content: "Read completed. Continue the task." });
+    await compactAgentContext(context, tools, user, budget(100000), vi.fn());
+    expect(context.messages.some(message => message.tool_calls?.length)).toBe(false);
+    expect(context.data.events[3].tool_calls?.[0].extra_content).toEqual({ google: { thought_signature: "opaque-signature" } });
+    expect(context.messages.filter(message => message.content === user.content)).toHaveLength(1);
+  });
   it("retries a reasoning-exhausted summary with a larger output budget and identical cache prefix", async () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const usage = vi.fn();
