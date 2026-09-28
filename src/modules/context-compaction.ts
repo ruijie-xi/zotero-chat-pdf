@@ -1,5 +1,6 @@
-import { AgentContext, COMPACT_PROMPT, ContextMessage, contextSize } from "./agent-context";
+import { AgentContext, COMPACT_PROMPT, ContextMessage } from "./agent-context";
 import { chatWithTools, ProviderContextError, Tool, TokenUsage, sumTokenUsage, LLMSettings } from "./llm-client";
+import { ContextBudget } from "./context-budget";
 
 function checkAbort(signal?: AbortSignal): void {
   if (signal?.aborted) { const error = new Error("Compaction cancelled."); error.name = "AbortError"; throw error; }
@@ -22,41 +23,44 @@ export function exchangeGroups(messages: ContextMessage[]): ContextMessage[][] {
 }
 
 export async function compactAgentContext(
-  context: AgentContext, tools: Tool[], latestUser: ContextMessage, limit: number,
+  context: AgentContext, tools: Tool[], latestUser: ContextMessage, budget: ContextBudget,
   onUsage: (usage?: TokenUsage) => void, signal?: AbortSignal, recoverProviderError = false,
   settings?: LLMSettings,
+  validate?: () => void,
 ): Promise<void> {
   checkAbort(signal);
   const original = context.messages;
   exchangeGroups(original);
-  const target = Math.min(12_000, Math.max(1_000, Math.floor(limit * 0.12)));
+  const target = Math.max(32, Math.min(4096, Math.floor(budget.inputLimit() * 0.1)));
   let compactUsage: TokenUsage | undefined;
   const references = original.filter(message => message.resultId).map(message => `${message.tool_call_id}: ${message.resultId}`).join("; ");
-  const instruction: ContextMessage = { role: "user", content: COMPACT_PROMPT + `\nAim for no more than ${target} characters.` +
-    (references ? `\nOriginal result references for the tool responses above: ${references}` : "") };
+  const instruction: ContextMessage = { role: "user", content: COMPACT_PROMPT + `\nAim for at most ${target} tokens. Preserve essential continuation information.` +
+    (references ? `\nOriginal result references: ${references}` : "") };
   const summarize = async (messages: ContextMessage[]): Promise<string> => {
-    // Reasoning consumes the same output allowance as the visible checkpoint.
-    // Retry the identical prompt with more output room; never replay tools or
-    // append a truncated draft to the working context. The cacheable prefix,
-    // model, thinking settings and tool definitions stay unchanged.
     const request = [...messages, instruction];
-    for (const maxTokens of [8_192, 16_384, 32_768]) {
+    let previousOutput = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
       checkAbort(signal);
+      const maxTokens = budget.outputAllowance(request, tools, Math.min(budget.capabilities.maxOutput, Math.max(target * 2, budget.capabilities.requestedOutput) * 2 ** attempt));
+      if (maxTokens <= previousOutput || maxTokens < target) throw new ProviderContextError("Compaction needs a smaller group to reserve output tokens.");
+      budget.assertFits(request, tools, maxTokens);
+      previousOutput = maxTokens;
       const result = await chatWithTools(request, tools, undefined, undefined, signal, false, { maxTokens, settings });
       onUsage(result.usage);
       compactUsage = sumTokenUsage([compactUsage, result.usage]);
       (context.data.requests ||= []).push({ kind: "compact", generation: context.data.checkpoints.length, usage: result.usage,
-        inputChars: contextSize(request, tools), finishReason: result.finishReason, outputLimit: maxTokens });
+        inputTokens: budget.count(request, tools), countMethod: "local-bpe-estimate", finishReason: result.finishReason, outputLimit: maxTokens });
+      budget.counter.observe(request, tools, result.usage);
       checkAbort(signal);
       if (result.finishReason === "length") continue;
-      if (!result.tool_calls?.length && result.content.trim()) return result.content.trim();
-      throw new Error("Automatic compaction did not return a complete text checkpoint. History and stored results were preserved; retry to continue.");
+      if (!result.tool_calls?.length && result.content.trim() && budget.counter.text(result.content) <= target) return result.content.trim();
+      throw new Error("Automatic compaction did not return a complete checkpoint within its token target. History and stored results were preserved.");
     }
-    throw new Error("Automatic compaction exhausted its output allowance after three attempts (up to 32768 tokens, including reasoning). History and stored results were preserved; retry to continue.");
+    throw new Error("Automatic compaction exhausted its output allowance after three attempts. History and stored results were preserved.");
   };
   let summary: string;
   try {
-    if (recoverProviderError || contextSize([...original, instruction], tools) > limit) throw new ProviderContextError("Summarize complete exchanges in smaller groups.");
+    if (recoverProviderError || !budget.fits([...original, instruction], tools)) throw new ProviderContextError("Summarize complete exchanges in smaller groups.");
     summary = await summarize(original);
   } catch (error) {
     if (!(error instanceof ProviderContextError)) throw error;
@@ -64,24 +68,38 @@ export async function compactAgentContext(
     let notes = "";
     let pending: ContextMessage[] = [];
     const base = () => [original[0], ...(notes ? [{ role: "assistant" as const, content: notes }] : [])];
+    const recoveryOutput = Math.min(budget.capabilities.maxOutput, Math.max(target * 2, budget.capabilities.requestedOutput) * 4);
+    const fits = (messages: ContextMessage[]) => budget.fits([...messages, instruction], tools, recoveryOutput);
     const flush = async () => {
       if (!pending.length) return;
       notes = await summarize([...base(), ...pending]);
-      if (notes.length > limit * 0.3) throw new Error("Compaction failed to reduce context. Original history was preserved.");
       pending = [];
     };
     for (const group of groups) {
-      if (contextSize([...base(), ...pending, ...group, instruction], tools) > limit * 0.55) await flush();
-      if (contextSize([...base(), ...group, instruction], tools) > limit * 0.65) throw new Error("A single exchange exceeds the provider recovery window. Original history is preserved; increase the configured context size or change the model.", { cause: error });
+      if (!fits([...base(), ...pending, ...group])) await flush();
+      if (!fits([...base(), ...group])) throw new Error("A complete exchange cannot fit this model's compaction input/output token budget. Original history is preserved. Use a model with a larger window or reduce its output reservation.", { cause: error });
       pending.push(...group);
     }
     await flush();
     summary = notes;
   }
-  const before = contextSize(original, tools);
-  const after = contextSize([original[0], { role: "assistant", content: context.checkpointContent(summary) }, latestUser], tools);
-  if (!summary || after >= before * 0.85 || after > limit * 0.55) throw new Error("Automatic compaction did not free enough space. Original history and results were preserved; retry to continue.");
+  const checkpoint: ContextMessage = { role: "assistant", content: context.checkpointContent(summary) };
+  const tail: ContextMessage[] = [];
+  const before = budget.count(original, tools);
+  const retainedLimit = Math.min(budget.inputLimit() * 0.55, before * 0.5);
+  const userIndex = original.findLastIndex(message => message.role === "user" && message.content === latestUser.content);
+  // Keep recent complete groups after the current user, in their original order.
+  for (const group of exchangeGroups(userIndex >= 0 ? original.slice(userIndex + 1) : []).reverse()) {
+    const candidate = [...group, ...tail];
+    // Signed replay may depend on the old prefix. The checkpoint retains its outcome.
+    if (group.some(message => message.reasoning_content || message.extra_content)) break;
+    if (budget.count([original[0], checkpoint, latestUser, ...candidate], tools) > retainedLimit) break;
+    tail.unshift(...group);
+  }
+  const after = budget.count([original[0], checkpoint, latestUser, ...tail], tools);
+  if (!summary || after >= before || after > budget.inputLimit() * 0.55) throw new Error("Automatic compaction did not free enough tokens. Original history and results were preserved.");
   checkAbort(signal);
-  context.compact(summary, latestUser, compactUsage);
-  Zotero.debug(`[ChatPDF] compact: beforeChars=${before}, afterChars=${after}, generation=${context.data.checkpoints.length}`);
+  validate?.();
+  context.compact(summary, latestUser, compactUsage, tail);
+  Zotero.debug(`[ChatPDF] compact: beforeTokens=${before}, afterTokens=${after}, countMethod=local-bpe-estimate, generation=${context.data.checkpoints.length}`);
 }

@@ -1,3 +1,4 @@
+import { MODEL_BUDGET_FIELDS } from "./model-profile";
 import { config } from "../../package.json";
 import { ChatSession, SourceItem } from "./chat-session";
 import { createChatInput } from "./tiptap-input";
@@ -720,6 +721,10 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
       setPref("llmModel", selected.model);
       setPref("llmThinkingMode", selected.thinkingMode || "default");
       setPref("llmThinkEffort", selected.thinkEffort || "default");
+      for (const key of MODEL_BUDGET_FIELDS) setPref(key, selected[key] || 0);
+      setPref("tokenizerMode", selected.tokenizerMode || "auto");
+      getPanelState(root).session.contextStats = undefined;
+      updateUsageBar(root, getPanelState(root).session.getTokenUsage());
       setPref("activeProfile", selected.name);
       Zotero.debug(`[ChatPDF] Switched to profile: ${selected.name}`);
     }

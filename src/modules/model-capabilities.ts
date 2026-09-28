@@ -1,0 +1,54 @@
+import type { LLMSettings } from "./llm-client";
+import { getPref } from "../utils/prefs";
+
+export interface ModelCapabilities {
+  contextWindow?: number;
+  inputLimit?: number;
+  maxOutput: number;
+  requestedOutput: number;
+  tokenizer: "deepseek-v4";
+  imageTokens?: number;
+  source: "endpoint" | "manual";
+  fetchedAt: number;
+}
+
+// Account-scoped, memory-only: neither credentials nor metadata enter prompts.
+const cache = new Map<string, { at: number; model: Record<string, any> }>();
+const positive = (n: unknown): number | undefined => Number.isSafeInteger(Number(n)) && Number(n) > 0 ? Number(n) : undefined;
+
+export async function resolveModelCapabilities(settings: LLMSettings, signal?: AbortSignal, refresh = false): Promise<ModelCapabilities> {
+  const base = settings.apiBase.replace(/\/+$/, "");
+  const key = JSON.stringify([base, settings.apiKey, settings.model, getPref("modelCapabilitiesRevision")]);
+  let entry = cache.get(key);
+  const manual = positive(settings.contextWindowTokens) || positive(settings.inputTokenLimit);
+  if ((!entry || Date.now() - entry.at > 86_400_000 || refresh) && (!manual || !positive(settings.maxOutputTokens) || refresh)) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(abort, 15_000);
+    try {
+      if (signal?.aborted) controller.abort();
+      const response = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${settings.apiKey}` }, signal: controller.signal, redirect: "error" });
+      if (response.ok) {
+        const payload = await response.json() as { data?: Record<string, any>[] };
+        const model = payload.data?.find((m: any) => m.id === settings.model);
+        if (model) { entry = { at: Date.now(), model }; cache.set(key, entry); }
+      }
+    } catch (error) { if (signal?.aborted) throw error; }
+    finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
+  }
+  const metadata = entry && Date.now() - entry.at <= 86_400_000 ? entry.model : undefined;
+  const contextWindow = positive(settings.contextWindowTokens) || positive(metadata?.context_window) || positive(metadata?.context_length);
+  const inputLimit = positive(settings.inputTokenLimit) || positive(metadata?.input_token_limit);
+  const maxOutput = positive(settings.maxOutputTokens) || positive(metadata?.max_output_tokens) || positive(metadata?.top_provider?.max_completion_tokens);
+  if ((!contextWindow && !inputLimit) || !maxOutput) throw new Error("Model token limits are unavailable. Set the context/input and maximum output token limits for this model in Preferences, then save its profile. Old character limits are not used.");
+  const officialV4 = new URL(base).hostname === "api.deepseek.com" && /^deepseek-(flash|pro)$/.test(settings.model);
+  if (!officialV4 && settings.tokenizerMode !== "deepseek-v4-estimate") throw new Error("This model has no verified local tokenizer. Select the explicit DeepSeek V4 tokenizer estimate in its profile, or use a supported model. Counts are estimates; provider usage remains authoritative.");
+  const defaultOutput = Math.min(8192, contextWindow ? Math.floor(contextWindow / 4) : 8192);
+  const requestedOutput = Math.min(positive(settings.requestedOutputTokens) || defaultOutput, maxOutput);
+  return { contextWindow, inputLimit, maxOutput, requestedOutput, tokenizer: "deepseek-v4",
+    imageTokens: positive(settings.imageTokenReserve) || (officialV4 ? 1024 : undefined),
+    source: manual ? "manual" : "endpoint", fetchedAt: entry?.at || Date.now() };
+}
+
+export function clearModelCapabilityCache(): void { cache.clear(); }

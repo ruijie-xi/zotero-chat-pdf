@@ -1,3 +1,5 @@
+> Historical implementation plan for 0.9.0. Token capacity policy is superseded by [model-aware-context-plan.md](model-aware-context-plan.md) and the current [LLM workflow](llm-workflow.md). Historical incident evidence below is unchanged.
+
 # Recoverable agent context management
 
 Status: implemented in version 0.9.0, 2026-09-28, including output-budget retries and chronological narration rendering; see `llm-workflow.md` for actual runtime behavior. The capacity policy currently uses the existing explicit character setting rather than automatic token-window discovery. It compacts completed exchanges into a checkpoint and recovers recent evidence from stored results; it does not replay old signed thinking across rewritten prefixes. Active image context is rebuilt after restart. Provider-specific cache performance and summary quality require real-provider evaluation.

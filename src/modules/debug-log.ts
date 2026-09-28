@@ -39,7 +39,8 @@ export async function logLLMRequest(messages: ProviderMessage[], model: string):
     await prepareLogDir();
     const entries = messages.map((message) => ({
       role: message.role,
-      contentLength: message.content.length,
+      textChars: typeof message.content === "string" ? message.content.length : message.content.reduce((n, part) => n + (part.type === "text" ? part.text.length : 0), 0),
+      imageCount: typeof message.content === "string" ? 0 : message.content.filter(part => part.type === "image_url").length,
       ...(logMode === "full" ? { content: typeof message.content === "string" ? message.content : "[Image input omitted from logs]" } : {}),
     }));
     await atomicWriteJson(PathUtils.join(getLogDir(), `req-${timestamp()}.json`), {
@@ -47,7 +48,8 @@ export async function logLLMRequest(messages: ProviderMessage[], model: string):
       mode: logMode,
       model,
       messageCount: messages.length,
-      totalChars: messages.reduce((sum, message) => sum + message.content.length, 0),
+      textChars: entries.reduce((sum, message) => sum + message.textChars, 0),
+      imageCount: entries.reduce((sum, message) => sum + message.imageCount, 0),
       messages: entries,
     });
   } catch (error: any) {

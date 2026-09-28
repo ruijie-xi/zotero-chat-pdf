@@ -22,7 +22,13 @@ declare namespace _ZoteroTypes {
       "panelWidth": number;
       "agentMaxIterations": number;
       "agentAutoContinue": boolean;
-      "contextMaxChars": number;
+      "contextWindowTokens": number;
+      "inputTokenLimit": number;
+      "maxOutputTokens": number;
+      "requestedOutputTokens": number;
+      "imageTokenReserve": number;
+      "tokenizerMode": string;
+      "modelCapabilitiesRevision": number;
       "enableWebTools": boolean;
       "braveSearchApiKey": string;
       "debugLogMode": string;

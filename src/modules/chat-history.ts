@@ -1,6 +1,6 @@
 import { getCacheDir, ensureDir } from "../utils/cache-dir";
 import { error as logError } from "../utils/log";
-import { atomicWriteJson, withStorageLock } from "../utils/atomic-storage";
+import { atomicWrite, atomicWriteJson, withStorageLock } from "../utils/atomic-storage";
 import type { AgentContextData } from "./agent-context";
 
 export interface SavedSource {
@@ -45,6 +45,7 @@ export interface SessionMeta {
 
 /** Prevent a late background save from resurrecting a session deleted in this runtime. */
 const deletedSessionIds = new Set<string>();
+const canonicalSessionIds = new Set<string>();
 
 function getHistoryDir(): string {
   return PathUtils.join(getCacheDir(), "history");
@@ -78,7 +79,17 @@ export async function saveSession(session: SavedSession): Promise<void> {
   await withStorageLock("chat-history", async () => {
     if (deletedSessionIds.has(session.id)) return;
     await ensureHistoryDir();
+    const path = getSessionPath(session.id);
+    if (!canonicalSessionIds.has(session.id) && (session.schemaVersion || 0) >= 4 && await IOUtils.exists(path)) {
+      const bytes = await IOUtils.read(path);
+      const previous = JSON.parse(new TextDecoder().decode(bytes)) as SavedSession;
+      if ((previous.schemaVersion || 0) < 4) {
+        const backup = PathUtils.join(getHistoryDir(), "migration-backups", `${session.id}.pre-v4.json`);
+        if (!(await IOUtils.exists(backup))) await atomicWrite(backup, bytes);
+      }
+    }
     await atomicWriteJson(getSessionPath(session.id), session);
+    if ((session.schemaVersion || 0) >= 4) canonicalSessionIds.add(session.id);
 
     const index = await loadIndex();
     const existing = index.findIndex((m) => m.id === session.id);
@@ -95,7 +106,9 @@ export async function loadSession(id: string): Promise<SavedSession | null> {
   if (!(await IOUtils.exists(path))) return null;
   const bytes = await IOUtils.read(path);
   const json = new TextDecoder().decode(bytes);
-  return JSON.parse(json) as SavedSession;
+  const session = JSON.parse(json) as SavedSession;
+  if ((session.schemaVersion || 0) < 4) canonicalSessionIds.delete(id);
+  return session;
 }
 
 export async function listSessions(): Promise<SessionMeta[]> {
@@ -109,6 +122,8 @@ export async function deleteSession(id: string): Promise<void> {
   await withStorageLock("chat-history", async () => {
     const path = getSessionPath(id);
     if (await IOUtils.exists(path)) await IOUtils.remove(path);
+    const backup = PathUtils.join(getHistoryDir(), "migration-backups", `${id}.pre-v4.json`);
+    if (await IOUtils.exists(backup)) await IOUtils.remove(backup);
     const index = await loadIndex();
     await saveIndex(index.filter((m) => m.id !== id));
   });

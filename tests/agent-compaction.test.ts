@@ -1,3 +1,11 @@
+import { ContextBudget } from "../src/modules/context-budget";
+import { TokenCounter } from "../src/modules/token-accounting";
+import { resolveModelCapabilities } from "../src/modules/model-capabilities";
+import { getLLMSettings } from "../src/modules/llm-client";
+function budget(inputLimit = 240000) {
+ const capabilities = { inputLimit, maxOutput: 32768, requestedOutput: 8192, tokenizer: "deepseek-v4" as const, source: "manual" as const, fetchedAt: 1 };
+ return new ContextBudget(capabilities, new TokenCounter({ encode: (text: string) => ({ ids: { length: text.length } }) } as any, getLLMSettings(), capabilities));
+}
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/modules/llm-client", async importOriginal => ({
   ...await importOriginal<typeof import("../src/modules/llm-client")>(), chatWithTools: vi.fn(),
@@ -8,7 +16,7 @@ import { runAgentLoop } from "../src/modules/agent-loop";
 import { chatWithTools, ProviderContextError, Tool } from "../src/modules/llm-client";
 import { executeTool, getToolMetadata } from "../src/modules/tools";
 import { ChatSession } from "../src/modules/chat-session";
-import { AgentContext, COMPACT_PROMPT, contextSize } from "../src/modules/agent-context";
+import { AgentContext, COMPACT_PROMPT } from "../src/modules/agent-context";
 import { compactAgentContext } from "../src/modules/context-compaction";
 
 const tools: Tool[] = [{ type: "function", function: { name: "read_document", description: "Read", parameters: {} } }];
@@ -16,7 +24,7 @@ const model = vi.mocked(chatWithTools);
 const execute = vi.mocked(executeTool);
 const call = (id: string, name = "read_document", args = {}) => ({ content: "", tool_calls: [{ id, type: "function" as const, function: { name, arguments: JSON.stringify(args) } }], usage: { prompt_tokens: 10, total_tokens: 10 } });
 function setup(limit = 240_000) {
-  vi.mocked(Zotero.Prefs.get).mockImplementation(key => String(key).endsWith("contextMaxChars") ? limit : undefined);
+  vi.mocked(resolveModelCapabilities).mockResolvedValue(budget(limit).capabilities);
   const session = new ChatSession();
   const messages = session.buildAgentMessages("Complete all work", undefined, tools);
   session.addUserMessage("Complete all work");
@@ -32,7 +40,7 @@ describe("automatic context compaction", () => {
     model.mockResolvedValueOnce({ content: "unfinished", finishReason: "length", usage: {
       prompt_tokens: 63_899, completion_tokens: 8_192, completion_tokens_details: { reasoning_tokens: 6_821 },
     } }).mockResolvedValueOnce({ content: "Goal and pending work preserved.", finishReason: "stop", usage: { completion_tokens: 9_000 } });
-    await compactAgentContext(context, tools, { role: "user", content: "continue" }, 100_000, usage);
+    await compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), usage);
     expect(model).toHaveBeenCalledTimes(2);
     expect(model.mock.calls[0].slice(0, 6)).toEqual(model.mock.calls[1].slice(0, 6));
     expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([8_192, 16_384]);
@@ -47,7 +55,7 @@ describe("automatic context compaction", () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const before = context.toJSON();
     model.mockResolvedValue({ content: "partial", finishReason: "length" });
-    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, 100_000, vi.fn())).rejects.toThrow("three attempts");
+    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn())).rejects.toThrow("three attempts");
     expect(model).toHaveBeenCalledTimes(3);
     expect(context.data.events).toEqual(before.events);
     expect(context.data.active).toEqual(before.active);
@@ -58,7 +66,7 @@ describe("automatic context compaction", () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const controller = new AbortController();
     model.mockImplementation(async () => { controller.abort(); return { content: "", finishReason: "length" }; });
-    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, 100_000, vi.fn(), controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn(), controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(model).toHaveBeenCalledTimes(1);
   });
 
@@ -81,7 +89,7 @@ describe("automatic context compaction", () => {
     for (const args of summaryRequests) {
       expect(args[1]).toBe(tools);
       expect(args[0][0]).toEqual(messages[0]);
-      expect(contextSize(args[0], tools)).toBeLessThan(240_000);
+      expect(budget().count(args[0], tools)).toBeLessThan(240_000);
     }
     expect(result.usage?.prompt_tokens).toBe(80 + summaryRequests.length * 30);
     expect(session.getAgentContext()!.data.results.reduce((n, r) => n + r.content.length, 0)).toBe(7 * 68_000);
@@ -108,11 +116,23 @@ describe("automatic context compaction", () => {
     expect(session.getAgentContext()!.data.results[0].content).toHaveLength(500_000);
   });
 
+  it("does not attempt a useless compaction when a later result exceeds even a fresh window", async () => {
+    const { session, messages } = setup();
+    model.mockResolvedValueOnce(call("small"))
+      .mockResolvedValueOnce(call("huge"))
+      .mockResolvedValueOnce({ content: "continue reading stored pages" });
+    execute.mockResolvedValueOnce("small receipt").mockResolvedValueOnce("x".repeat(500000));
+    const result = await runAgentLoop(messages, tools, session);
+    expect(result.iterations[1].toolCalls[0].contextDelivery).toBe("paged");
+    expect(session.getAgentContext()!.data.checkpoints).toHaveLength(0);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("never dispatches tools returned by the summarizer and retains the old context", async () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const before = context.toJSON();
     model.mockResolvedValue(call("unexpected", "mutate"));
-    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, 100_000, vi.fn())).rejects.toThrow("checkpoint");
+    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn())).rejects.toThrow("checkpoint");
     expect(execute).not.toHaveBeenCalled();
     expect(context.toJSON().events).toEqual(before.events);
     expect(context.toJSON().active).toEqual(before.active);
@@ -120,11 +140,27 @@ describe("automatic context compaction", () => {
     expect(context.data.requests?.[0].kind).toBe("compact");
   });
 
+  it("persists the actual token-fitted retrieval range instead of the requested character limit", async () => {
+    const { session, messages } = setup();
+    model.mockResolvedValueOnce(call("huge"))
+      .mockResolvedValueOnce(call("page", "read_tool_result", { result_id: "result-1", max_chars: 1000000 }))
+      .mockResolvedValueOnce({ content: "done" });
+    execute.mockResolvedValueOnce("😀evidence".repeat(60000))
+      .mockImplementationOnce(async (_name, _args, context) => context.readStoredResult!("result-1", 0, 1000000, new Set()));
+    await runAgentLoop(messages, tools, session);
+    const [parent, page] = session.getAgentContext()!.data.results;
+    expect(page.parentRange?.end).toBeLessThan(parent.content.length);
+    expect(page.content).toContain(`next_start=${page.parentRange?.end}`);
+    expect(parent.ranges).toEqual([[0, page.parentRange?.end]]);
+    expect(parent.delivered).not.toBe(true);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("cancellation during compaction never replaces working state", async () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const controller = new AbortController();
     model.mockImplementation(async () => { controller.abort(); return { content: "summary" }; });
-    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, 100_000, vi.fn(), controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn(), controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(context.data.checkpoints).toHaveLength(0);
   });
 

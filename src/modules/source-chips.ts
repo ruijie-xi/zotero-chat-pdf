@@ -119,12 +119,7 @@ function renderSourceChips(root: HTMLElement): void {
     } else if (source.status === "ready" && source.markdown) {
       const charLen = source.markdown.length;
       const sizeText = formatChars(charLen);
-      const isTruncated = source.contextRatio !== undefined && source.contextRatio < 1.0;
-      const badgeClass = isTruncated ? "chatpdf-chip-badge-truncated" : "chatpdf-chip-badge-ready";
-      const label = isTruncated
-        ? `${sizeText} (${Math.round(source.contextRatio! * 100)}%)`
-        : sizeText;
-      const badge = h(doc, "span", { className: `chatpdf-chip-badge ${badgeClass}` }, label);
+      const badge = h(doc, "span", { className: "chatpdf-chip-badge chatpdf-chip-badge-ready" }, `${sizeText} chars`);
       chip.appendChild(badge);
     } else if (source.status !== "pending" && source.status !== "ready") {
       const statusLabels: Record<string, string> = {

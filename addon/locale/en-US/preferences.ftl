@@ -17,6 +17,12 @@ pref-model-profiles = Model Profiles
 pref-profile-name = Profile Name
 pref-agent-max-iterations = Step limit when automatic continuation is off
 pref-agent-auto-continue = Continue automatically until finished (Stop remains available)
-pref-context-max-chars = Working context size (characters; automatic compaction, not a reading quota)
 pref-enable-web-tools = Enable Web Search Tools
 pref-brave-search-api-key = Brave Search API Key (optional)
+pref-context-window-tokens = Combined context window (tokens)
+pref-input-token-limit = Separate input limit (tokens, optional)
+pref-max-output-tokens = Model maximum output (tokens)
+pref-requested-output-tokens = Requested output reservation (tokens, 0 = automatic)
+pref-image-token-reserve = Per-image token reserve (0 = automatic)
+pref-tokenizer-mode = Local token counting
+pref-model-limits-refresh = Refresh model token limits

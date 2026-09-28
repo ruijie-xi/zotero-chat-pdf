@@ -1,3 +1,4 @@
+import type { ModelBudgetSettings } from "./model-profile";
 import { getPref } from "../utils/prefs";
 
 export type VisionContent = ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: "auto" } })[];
@@ -36,7 +37,6 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
-  toolHistory?: { toolName: string; args: Record<string, unknown>; result: string; durationMs: number }[];
   iterations?: IterationRecord[];
   usage?: TokenUsage;
   status?: "complete" | "cancelled" | "error";
@@ -136,7 +136,7 @@ export type ThinkingCallback = (chunk: string, done: boolean) => void;
 export type ThinkingMode = "default" | "enabled" | "disabled";
 export type ThinkEffort = "default" | "high" | "max";
 
-export interface LLMSettings {
+export interface LLMSettings extends ModelBudgetSettings {
   apiBase: string;
   apiKey: string;
   model: string;
@@ -153,7 +153,7 @@ export interface ChatCompletionBodyOptions {
 }
 
 const DEFAULT_API_BASE = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_MODEL = "deepseek-flash";
 
 export function normalizeThinkingMode(value: unknown): ThinkingMode {
   return value === "enabled" || value === "disabled" ? value : "default";
@@ -169,6 +169,12 @@ export function getChatCompletionUrl(apiBase: string): string {
 
 export function getLLMSettings(): LLMSettings {
   return {
+    contextWindowTokens: Number(getPref("contextWindowTokens")) || undefined,
+    inputTokenLimit: Number(getPref("inputTokenLimit")) || undefined,
+    maxOutputTokens: Number(getPref("maxOutputTokens")) || undefined,
+    requestedOutputTokens: Number(getPref("requestedOutputTokens")) || undefined,
+    imageTokenReserve: Number(getPref("imageTokenReserve")) || undefined,
+    tokenizerMode: String(getPref("tokenizerMode") || "auto"),
     apiBase: (getPref("llmApiBase") as string) || DEFAULT_API_BASE,
     apiKey: (getPref("llmApiKey") as string) || "",
     model: (getPref("llmModel") as string) || DEFAULT_MODEL,
@@ -363,8 +369,7 @@ export async function chatWithTools(
     body.extra_body = { google: { thinking_config: { include_thoughts: true } } };
   }
 
-  const totalChars = messages.reduce((s, m) => s + (typeof m.content === "string" ? m.content.length : 0), 0);
-  Zotero.debug(`[ChatPDF] chatWithTools: ${messages.length} messages, ${tools?.length ?? 0} tools, ~${totalChars} chars, stream=${streaming}, thinking=${settings.thinkingMode}, effort=${settings.thinkEffort}`);
+  Zotero.debug(`[ChatPDF] chatWithTools: ${messages.length} messages, ${tools?.length ?? 0} tools, stream=${streaming}, thinking=${settings.thinkingMode}, effort=${settings.thinkEffort}`);
 
   const res = await fetch(url, {
     method: "POST",

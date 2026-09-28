@@ -26,7 +26,7 @@ describe("ChatSession source and persistence semantics", () => {
     const source = session.addSource("A", "Paper", "PARENT", 4);
     session.setSourceReady(source.id, "markdown");
     const saved = session.toSavedSession();
-    expect(saved.schemaVersion).toBe(3);
+    expect(saved.schemaVersion).toBe(4);
     expect(saved.sources?.[0]).toMatchObject({ id: "4:A", key: "A", libraryID: 4, status: "ready" });
   });
 
@@ -49,8 +49,8 @@ describe("ChatSession source and persistence semantics", () => {
 
   it("persists cancelled and error terminal messages", () => {
     const session = new ChatSession();
-    session.addAssistantMessage("partial", undefined, undefined, undefined, undefined, undefined, "cancelled");
-    session.addAssistantMessage("failed", undefined, undefined, undefined, undefined, undefined, "error", "network");
+    session.addAssistantMessage("partial", undefined, undefined, undefined, undefined, "cancelled");
+    session.addAssistantMessage("failed", undefined, undefined, undefined, undefined, "error", "network");
     expect(session.toSavedSession().messages).toMatchObject([
       { status: "cancelled" },
       { status: "error", errorMessage: "network" },
@@ -60,7 +60,7 @@ describe("ChatSession source and persistence semantics", () => {
   it("does not replay full historical tool results into a later request", () => {
     const session = new ChatSession();
     const huge = "x".repeat(50_000);
-    session.addAssistantMessage("answer", undefined, undefined, undefined, [{ toolCalls: [{ toolName: "read_document", args: { key: "A" }, result: huge, durationMs: 1 }] }]);
+    session.addAssistantMessage("answer", undefined, undefined, [{ toolCalls: [{ toolName: "read_document", args: { key: "A" }, result: huge, durationMs: 1 }] }]);
     const messages = session.buildAgentMessages("next");
     const combined = messages.map((message) => message.content).join("\n");
     expect(combined).toContain("50000 characters returned");
@@ -87,7 +87,7 @@ describe("ChatSession source and persistence semantics", () => {
 
   it("sums all provider-reported turn usage for the session", () => {
     const session = new ChatSession();
-    session.addAssistantMessage("one", undefined, undefined, undefined, undefined, {
+    session.addAssistantMessage("one", undefined, undefined, undefined, {
       prompt_tokens: 100,
       completion_tokens: 20,
       total_tokens: 120,
@@ -95,7 +95,7 @@ describe("ChatSession source and persistence semantics", () => {
       prompt_cache_miss_tokens: 30,
       completion_tokens_details: { reasoning_tokens: 5 },
     });
-    session.addAssistantMessage("two", undefined, undefined, undefined, undefined, {
+    session.addAssistantMessage("two", undefined, undefined, undefined, {
       prompt_tokens: 200,
       completion_tokens: 50,
       prompt_cache_hit_tokens: 160,

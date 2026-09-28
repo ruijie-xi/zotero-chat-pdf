@@ -1,13 +1,15 @@
 import { h, scrollToBottomIfNeeded } from "../utils/dom";
 import { formatToolStatus } from "../utils/format";
 import { getPref } from "../utils/prefs";
-import { chatWithTools, ChatMessage, TokenUsage, IterationRecord, sumTokenUsage } from "./llm-client";
+import { chatWithTools, ChatMessage, TokenUsage, IterationRecord, sumTokenUsage, getLLMSettings } from "./llm-client";
+import { resolveModelCapabilities } from "./model-capabilities";
+import { loadTokenizer, TokenCounter } from "./token-accounting";
+import { ContextBudget } from "./context-budget";
 import { runAgentLoop, AgentCallbacks } from "./agent-loop";
 import { getToolDefinitions } from "./tools";
 import { AssistantSegments } from "./assistant-segments";
 import { logLLMRequest, logLLMResponse } from "./debug-log";
 import * as ChatHistory from "./chat-history";
-import { ToolCallRecord } from "./chat-session";
 import {
   getPanelState, StreamState,
   abortCurrentStream, createAbortController,
@@ -83,7 +85,11 @@ async function generateTitle(targetSession: import("./chat-session").ChatSession
       },
     ];
 
-    const titleResult = await chatWithTools(titleMessages, undefined, undefined, undefined, undefined, true);
+    const settings = getLLMSettings();
+    const capabilities = await resolveModelCapabilities(settings);
+    const budget = new ContextBudget(capabilities, new TokenCounter(await loadTokenizer(), settings, capabilities));
+    budget.assertFits(titleMessages);
+    const titleResult = await chatWithTools(titleMessages, undefined, undefined, undefined, undefined, true, { settings, maxTokens: capabilities.requestedOutput });
     const title = titleResult.content.trim().slice(0, 50);
     targetSession.addAuxiliaryUsage(titleResult.usage);
     if (!title && !titleResult.usage) return;
@@ -201,7 +207,6 @@ export async function handleSend(root: HTMLElement): Promise<void> {
 
   let fullText = "";
   let fullReasoning = "";
-  let agentToolHistory: ToolCallRecord[] | undefined;
   let agentIterations: IterationRecord[] | undefined;
   let agentUsage: TokenUsage | undefined;
   let cleanupStreamingUI = () => {};
@@ -341,6 +346,11 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       };
 
       const agentCallbacks: AgentCallbacks = {
+        onContextStats: stats => {
+          if (!isActiveSession()) return;
+          streamSession.contextStats = stats;
+          updateUsageBar(root, sumTokenUsage([streamSession.getTokenUsage(), agentUsage]));
+        },
         onContextSaved: async () => {
           await ChatHistory.saveSession(streamSession.toSavedSession());
         },
@@ -463,7 +473,6 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       });
       fullText = agentResult.content;
       fullReasoning = agentResult.reasoning || "";
-      agentToolHistory = undefined;
       agentIterations = agentResult.iterations;
       agentUsage = agentResult.usage;
       streamState.fullText = fullText;
@@ -501,7 +510,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       logLLMResponse(fullText, fullReasoning || undefined).catch(() => {});
 
     streamState.usage = undefined;
-    streamSession.addAssistantMessage(fullText, fullReasoning || undefined, modelLabel, agentToolHistory, agentIterations, agentUsage);
+    streamSession.addAssistantMessage(fullText, fullReasoning || undefined, modelLabel, agentIterations, agentUsage);
     if (isActiveSession()) {
       refreshSourceChips(root);
       updateUsageBar(root, streamSession.getTokenUsage());
@@ -548,7 +557,6 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         fullText || "Generation stopped before any answer was produced.",
         fullReasoning || undefined,
         undefined,
-        undefined,
         agentIterations,
         agentUsage,
         "cancelled",
@@ -565,7 +573,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         appendMessage(root, "assistant", errorText);
       }
       streamState.usage = undefined;
-      streamSession.addAssistantMessage([fullText, errorText].filter(Boolean).join("\n\n"), fullReasoning || undefined, undefined, undefined, agentIterations, agentUsage, "error", err.message);
+      streamSession.addAssistantMessage([fullText, errorText].filter(Boolean).join("\n\n"), fullReasoning || undefined, undefined, agentIterations, agentUsage, "error", err.message);
       if (state.session === streamSession) updateUsageBar(root, streamSession.getTokenUsage());
       try {
         await ChatHistory.saveSession(streamSession.toSavedSession());

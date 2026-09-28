@@ -1,8 +1,12 @@
+import { MODEL_BUDGET_FIELDS } from "./model-profile";
+import { resolveModelCapabilities } from "./model-capabilities";
+import type { ModelProfile } from "./model-profile";
 import { config } from "../../package.json";
 import {
   DEFAULT_SYSTEM_PROMPT_EN,
   DEFAULT_SYSTEM_PROMPT_CN,
-} from "./chat-session";
+  migrateDefaultPrompt,
+} from "./prompts";
 import {
   buildChatCompletionBody,
   ChatMessage,
@@ -15,15 +19,6 @@ import {
 
 const PREF_PREFIX = config.prefsPrefix;
 const ADDON_REF = config.addonRef;
-
-interface ModelProfile {
-  name: string;
-  apiBase: string;
-  apiKey: string;
-  model: string;
-  thinkingMode?: string;
-  thinkEffort?: string;
-}
 
 function getPrefFull(key: string): string {
   return (Zotero.Prefs.get(`${PREF_PREFIX}.${key}`, true) as string) ?? "";
@@ -122,6 +117,12 @@ function initProfileUI() {
         Zotero.Prefs.set(`${PREF_PREFIX}.llmModel`, p.model, true);
         Zotero.Prefs.set(`${PREF_PREFIX}.llmThinkingMode`, p.thinkingMode || "default", true);
         Zotero.Prefs.set(`${PREF_PREFIX}.llmThinkEffort`, p.thinkEffort || "default", true);
+        for (const key of MODEL_BUDGET_FIELDS) {
+          Zotero.Prefs.set(`${PREF_PREFIX}.${key}`, p[key] || 0, true);
+          setFieldValue(key, String(p[key] || 0));
+        }
+        setPrefFull("tokenizerMode", p.tokenizerMode || "auto");
+        setFieldValue("tokenizerMode", p.tokenizerMode || "auto");
         Zotero.Prefs.set(`${PREF_PREFIX}.activeProfile`, p.name, true);
         // Refresh the displayed pref fields
         setFieldValue("llmApiBase", p.apiBase);
@@ -164,7 +165,12 @@ function initProfileUI() {
     const thinkEffort = getFieldValue("llmThinkEffort", "default");
     const profiles = loadProfiles();
     const existing = profiles.findIndex(p => p.name === name);
-    const profile: ModelProfile = { name, apiBase, apiKey, model, thinkingMode, thinkEffort };
+    const profile: ModelProfile = { name, apiBase, apiKey, model, thinkingMode, thinkEffort, tokenizerMode: getFieldValue("tokenizerMode", "auto") };
+    for (const key of MODEL_BUDGET_FIELDS) {
+      profile[key] = Number(getFieldValue(key)) || 0;
+      Zotero.Prefs.set(`${PREF_PREFIX}.${key}`, profile[key], true);
+    }
+    setPrefFull("tokenizerMode", profile.tokenizerMode!);
     if (existing >= 0) {
       profiles[existing] = profile;
     } else {
@@ -347,7 +353,7 @@ function initPromptUI() {
   Zotero.debug(`[ChatPDF] Preference pane elements found, initializing prompt UI`);
 
   // Initialize: always show the current prompt (default EN if empty)
-  const current = getPrefFull("systemPrompt");
+  const current = migrateDefaultPrompt(getPrefFull("systemPrompt"));
   textarea.value = current || DEFAULT_SYSTEM_PROMPT_EN;
 
   // If pref was empty, persist the default so it's explicit
@@ -393,6 +399,37 @@ function tryInit(retries: number) {
   const promptOk = initPromptUI();
   const testOk = initLLMTestUI();
   initProfileUI();
+  for (const key of ["llmApiBase", "llmModel", "llmApiKey"]) {
+    const field = document.querySelector(`#zotero-prefpane-${ADDON_REF}-${key}`) as HTMLInputElement | null;
+    if (!field || field.dataset.budgetBound) continue;
+    field.dataset.budgetBound = "true";
+    field.addEventListener("change", () => {
+      // Direct edits select a new endpoint/model/account. Do not inherit another model's overrides.
+      for (const budgetKey of MODEL_BUDGET_FIELDS) {
+        Zotero.Prefs.set(`${PREF_PREFIX}.${budgetKey}`, 0, true);
+        setFieldValue(budgetKey, "0");
+      }
+      setPrefFull("tokenizerMode", "auto");
+      setFieldValue("tokenizerMode", "auto");
+      setPrefFull("activeProfile", "");
+    });
+  }
+  const refresh = document.querySelector(`#zotero-prefpane-${ADDON_REF}-refreshModelLimits`) as HTMLButtonElement | null;
+  if (refresh && !refresh.dataset.initialized) {
+    refresh.dataset.initialized = "true";
+    refresh.addEventListener("click", async () => {
+      // Preferences and the panel have separate bundles; invalidate both through a shared revision.
+      Zotero.Prefs.set(`${PREF_PREFIX}.modelCapabilitiesRevision`, Date.now(), true);
+      const status = document.querySelector(`#zotero-prefpane-${ADDON_REF}-modelLimitsStatus`)!;
+      refresh.disabled = true;
+      try {
+        const modelSettings = { apiBase: getFieldValue("llmApiBase"), apiKey: getFieldValue("llmApiKey"), model: getFieldValue("llmModel"), thinkingMode: normalizeThinkingMode(getFieldValue("llmThinkingMode")), thinkEffort: normalizeThinkEffort(getFieldValue("llmThinkEffort")), tokenizerMode: getFieldValue("tokenizerMode") };
+        const limits = await resolveModelCapabilities(modelSettings, undefined, true);
+        status.textContent = `${limits.source}: context ${limits.contextWindow || "separate"}, input ${limits.inputLimit || "shared"}, max output ${limits.maxOutput} tokens. Local counts are estimates.`;
+      } catch (error: any) { status.textContent = error.message; }
+      finally { refresh.disabled = false; }
+    });
+  }
   if (promptOk && testOk) return;
   if (retries > 0) {
     setTimeout(() => tryInit(retries - 1), 100);

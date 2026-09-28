@@ -49,7 +49,7 @@ describe("assistant narration chronology", () => {
       "chatpdf-iteration-content", "chatpdf-tool-block", "chatpdf-iteration-content", "chatpdf-tool-block", "chatpdf-live-content",
     ]);
     const saved = ChatSession.fromSavedSession(createPanelState(window).session.toSavedSession()).getHistory()[1];
-    const historyBubble = appendMessage(root, "assistant", saved.content, undefined, saved.reasoning, undefined, undefined, undefined, undefined, saved.iterations);
+    const historyBubble = appendMessage(root, "assistant", saved.content, undefined, saved.reasoning, undefined, undefined, undefined, saved.iterations);
     expect(historyBubble.textContent!.indexOf("First narration")).toBeLessThan(historyBubble.textContent!.indexOf("Used 1 tool"));
     expect(historyBubble.querySelectorAll(".chatpdf-iteration-content")).toHaveLength(2);
     expect(historyBubble.textContent!.match(/Final answer/g)).toHaveLength(1);

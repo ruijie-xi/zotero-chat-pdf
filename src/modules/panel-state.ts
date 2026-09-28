@@ -1,3 +1,4 @@
+export type { ModelProfile } from "./model-profile";
 import { ChatSession } from "./chat-session";
 import { ChatInputEditor } from "./tiptap-input";
 import { IterationRecord, TokenUsage } from "./llm-client";
@@ -16,14 +17,7 @@ export interface StreamState {
   usage?: TokenUsage;
 }
 
-export interface ModelProfile {
-  name: string;
-  apiBase: string;
-  apiKey: string;
-  model: string;
-  thinkingMode?: string;
-  thinkEffort?: string;
-}
+
 
 export interface AbortLike {
   abort(reason?: unknown): void;

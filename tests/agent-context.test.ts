@@ -47,7 +47,7 @@ describe("durable transcript and working context", () => {
     const result = context.storeResult("raw evidence", "read_document", []);
     context.append({ role: "tool", content: result.content, tool_call_id: "unique-id", resultId: result.id });
     context.append({ role: "assistant", content: "done" });
-    session.addAssistantMessage("done", undefined, undefined, undefined, [{ toolCalls: [{ toolName: "read_document", args: { key: "A" }, result: result.content, resultId: result.id, durationMs: 1 }] }]);
+    session.addAssistantMessage("done", undefined, undefined, [{ toolCalls: [{ toolName: "read_document", args: { key: "A" }, result: result.content, resultId: result.id, durationMs: 1 }] }]);
     const prefix = context.messages;
     expect(prefix.slice(0, first.length)).toEqual(first);
     const saved = session.toSavedSession();
@@ -93,8 +93,8 @@ describe("durable transcript and working context", () => {
     const source = session.addSource("A", "A", undefined, 1);
     session.buildAgentMessages("read");
     const result = session.getAgentContext()!.storeResult("secret evidence", "read_document", [source.id]);
-    const context = { session, requestId: "test", windowId: "window", turnScope: new Set([source.id]), resultPageChars: 6 };
-    expect(await executeTool("read_tool_result", { result_id: result.id }, context)).toContain("next_start=6");
+    const context = { session, requestId: "test", windowId: "window", turnScope: new Set([source.id]) };
+    expect(await executeTool("read_tool_result", { result_id: result.id, max_chars: 6 }, context)).toContain("next_start=6");
     session.removeSource(source.id);
     expect(await executeTool("read_tool_result", { result_id: result.id }, context)).not.toContain("secret evidence");
   });

@@ -1,3 +1,4 @@
+import { DEFAULT_SYSTEM_PROMPT_EN, migrateDefaultPrompt } from "./prompts";
 import { ChatMessage, ProviderMessage, Tool, MessageSource, IterationRecord, TokenUsage, sumTokenUsage, getLLMSettings } from "./llm-client";
 import { AgentContext, contextFingerprint } from "./agent-context";
 import { getPref } from "../utils/prefs";
@@ -15,32 +16,6 @@ export interface ToolCallRecord {
 
 export { IterationRecord } from "./llm-client";
 
-export const DEFAULT_SYSTEM_PROMPT_EN =
-  "You are a helpful research assistant. Answer questions based on the following document(s). " +
-  "Cite specific sections when possible. If the answer is not in the documents, say so.\n\n" +
-  "IMPORTANT formatting rules:\n" +
-  "- Always reply in the same language the user uses.\n" +
-  "- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).\n" +
-  "- For mathematical expressions, use LaTeX syntax with dollar sign delimiters: $...$ for inline math and $$...$$ for display math.\n" +
-  "  For example: The equation $E = mc^2$ or a display formula:\n" +
-  "  $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$\n";
-
-export const DEFAULT_SYSTEM_PROMPT_CN =
-  "你是一个专业的学术研究助手。请根据以下提供的文档内容回答用户的问题。" +
-  "尽可能引用文档中的具体章节。如果答案不在文档中，请明确说明。\n\n" +
-  "重要的格式规则：\n" +
-  "- 始终使用与用户相同的语言回复。\n" +
-  "- 使用标准 Markdown 格式（标题、列表、粗体、代码块等）。\n" +
-  "- 数学公式请使用 LaTeX 语法，用美元符号分隔：$...$ 表示行内公式，$$...$$ 表示独立公式。\n" +
-  "  例如：方程 $E = mc^2$，或独立公式：\n" +
-  "  $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$\n";
-
-export const DEFAULT_NO_DOCS_PROMPT_EN =
-  "You are a helpful research assistant. The user has not added any PDF documents yet. Ask them to add documents to chat about. Always reply in the same language the user uses.";
-
-export const DEFAULT_NO_DOCS_PROMPT_CN =
-  "你是一个专业的学术研究助手。用户尚未添加任何PDF文档。请提示他们添加文档以开始对话。始终使用与用户相同的语言回复。";
-
 export interface SourceItem {
   kind?: "image";
   id: string; // Stable library-qualified source identity
@@ -52,10 +27,11 @@ export interface SourceItem {
   markdown?: string; // Loaded markdown content
   status: "pending" | "converting" | "ready" | "error";
   errorMessage?: string;
-  contextRatio?: number; // 0-1, how much of the document is included after truncation
 }
 
 export class ChatSession {
+  /** Working view estimate, separate from cumulative provider usage. Recomputed on send. */
+  contextStats?: { inputTokens: number; inputLimit: number; source: string };
   id: string;
   title: string = "";
   titleSource: "auto" | "llm" | "user" = "auto";
@@ -190,11 +166,10 @@ export class ChatSession {
     this.updatedAt = Date.now();
   }
 
-  addAssistantMessage(content: string, reasoning?: string, modelLabel?: string, toolHistory?: ToolCallRecord[], iterations?: IterationRecord[], usage?: TokenUsage, status: ChatMessage["status"] = "complete", errorMessage?: string): void {
+  addAssistantMessage(content: string, reasoning?: string, modelLabel?: string, iterations?: IterationRecord[], usage?: TokenUsage, status: ChatMessage["status"] = "complete", errorMessage?: string): void {
     const msg: ChatMessage = { role: "assistant", content, timestamp: Date.now() };
     if (reasoning) msg.reasoning = reasoning;
     if (modelLabel) msg.modelLabel = modelLabel;
-    if (toolHistory?.length) msg.toolHistory = toolHistory;
     if (iterations?.length) msg.iterations = iterations;
     if (usage) msg.usage = usage;
     msg.status = status;
@@ -258,6 +233,7 @@ export class ChatSession {
   }
 
   clearHistory(): void {
+    this.contextStats = undefined;
     this.history = [];
     this.agentContext = undefined;
     this.updatedAt = Date.now();
@@ -279,7 +255,7 @@ export class ChatSession {
   toSavedSession(): SavedSession {
     const sources = this.getSources();
     const savedSession: SavedSession = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       id: this.id,
       title: this.title,
       titleSource: this.titleSource,
@@ -304,7 +280,6 @@ export class ChatSession {
         if (m.timestamp) saved.timestamp = m.timestamp;
         if (m.sources?.length) saved.sources = m.sources;
         if (m.modelLabel) saved.modelLabel = m.modelLabel;
-        if (m.toolHistory?.length) saved.toolHistory = m.toolHistory;
         if (m.iterations?.length) saved.iterations = m.iterations;
         if (m.usage) saved.usage = m.usage;
         if (m.status) saved.status = m.status;
@@ -368,7 +343,6 @@ export class ChatSession {
         if (msg.reasoning) m.reasoning = msg.reasoning;
         if (msg.timestamp) m.timestamp = msg.timestamp;
         if ((msg as any).modelLabel) m.modelLabel = (msg as any).modelLabel;
-        if ((msg as any).toolHistory?.length) m.toolHistory = (msg as any).toolHistory;
         // Restore iterations (new format) or convert from legacy toolHistory
         if ((msg as any).iterations?.length) {
           m.iterations = (msg as any).iterations.map((iteration: IterationRecord) => ({ ...iteration,
@@ -379,7 +353,7 @@ export class ChatSession {
           }));
         } else if ((msg as any).toolHistory?.length) {
           // Backward compat: wrap legacy toolHistory into a single iteration
-          m.iterations = [{ toolCalls: (msg as any).toolHistory }];
+          m.iterations = [{ reasoning: msg.reasoning, toolCalls: (msg as any).toolHistory }];
         }
         if ((msg as any).usage) m.usage = (msg as any).usage;
         if (msg.status) m.status = msg.status;
@@ -409,175 +383,6 @@ export class ChatSession {
     return session;
   }
 
-  buildMessages(userMessage: string): ChatMessage[] {
-    const maxChars = Number.POSITIVE_INFINITY;
-    const systemPrompt = this.buildSystemPrompt();
-
-    Zotero.debug(`[ChatPDF] buildMessages: systemPrompt=${systemPrompt.length} chars, userMsg=${userMessage.length} chars, maxChars=${maxChars}, historyLen=${this.history.length}`);
-
-    if (systemPrompt.length + userMessage.length > maxChars) {
-      Zotero.debug(`[ChatPDF] WARNING: System prompt + user message is very large (${systemPrompt.length + userMessage.length} chars).`);
-    }
-
-    const recentHistory = this.truncateHistory(systemPrompt.length, userMessage.length, maxChars,
-      (msg) => ({ role: msg.role, content: msg.content }));
-
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      ...recentHistory,
-      { role: "user", content: userMessage },
-    ];
-
-    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-    Zotero.debug(`[ChatPDF] Final message array: ${messages.length} messages, ${totalChars} total chars`);
-    for (const m of messages) {
-      Zotero.debug(`[ChatPDF]   [${m.role}] ${m.content.length} chars — "${m.content.slice(0, 60).replace(/\n/g, "\\n")}..."`);
-    }
-
-    return messages;
-  }
-
-  /**
-   * Shared truncation logic: iterate history backwards, keeping recent messages
-   * that fit within the char budget. transformFn maps a ChatMessage to a simplified
-   * { role, content } or null to skip.
-   */
-  private truncateHistory(
-    systemLen: number,
-    userLen: number,
-    maxChars: number,
-    transformFn: (msg: ChatMessage) => { role: string; content: string } | null,
-  ): ChatMessage[] {
-    let totalChars = systemLen + userLen;
-    const recentHistory: ChatMessage[] = [];
-    let droppedCount = 0;
-
-    for (let i = this.history.length - 1; i >= 0; i--) {
-      const msg = this.history[i];
-      const transformed = transformFn(msg);
-      if (!transformed) continue;
-
-      if (totalChars + transformed.content.length > maxChars) {
-        droppedCount = i + 1;
-        break;
-      }
-      totalChars += transformed.content.length;
-      recentHistory.unshift(transformed as ChatMessage);
-    }
-
-    if (droppedCount > 0) {
-      Zotero.debug(`[ChatPDF] Context truncation: dropped ${droppedCount} oldest history messages to fit within ${maxChars} chars`);
-    }
-
-    return recentHistory;
-  }
-
-  private buildSystemPrompt(): string {
-    const allSources = Array.from(this.sources.values());
-    const readySources = allSources.filter(
-      (s) => s.status === "ready" && s.markdown,
-    );
-
-    Zotero.debug(`[ChatPDF] buildSystemPrompt: ${allSources.length} total sources, ${readySources.length} ready`);
-    for (const s of allSources) {
-      Zotero.debug(`[ChatPDF]   source "${s.title}" status=${s.status} hasMarkdown=${!!s.markdown} mdLen=${s.markdown?.length ?? 0}`);
-    }
-
-    if (readySources.length === 0) {
-      const customPrompt = (getPref("systemPrompt") as string) || "";
-      // Detect language from custom prompt, fall back to EN
-      if (customPrompt) {
-        return customPrompt.includes("用户") || customPrompt.includes("文档")
-          ? DEFAULT_NO_DOCS_PROMPT_CN : DEFAULT_NO_DOCS_PROMPT_EN;
-      }
-      return DEFAULT_NO_DOCS_PROMPT_EN;
-    }
-
-    const maxDocChars = Number.POSITIVE_INFINITY;
-    const customPrompt = (getPref("systemPrompt") as string) || "";
-    const instructionText = (customPrompt || DEFAULT_SYSTEM_PROMPT_EN) + "\n\n";
-
-    // Calculate budget for document content
-    const docBudget = maxDocChars - instructionText.length;
-    if (docBudget <= 0) {
-      Zotero.debug(`[ChatPDF] WARNING: Instruction text (${instructionText.length}) leaves no room for document content.`);
-      for (const source of readySources) {
-        source.contextRatio = 0;
-      }
-      return instructionText;
-    }
-
-    // Calculate total raw size of all documents (including delimiters)
-    const docSizes: { source: SourceItem; rawLen: number; delimLen: number }[] = [];
-    let totalRawLen = 0;
-    for (const source of readySources) {
-      const delimLen = `--- BEGIN DOCUMENT: ${source.title} ---\n`.length
-        + `\n--- END DOCUMENT: ${source.title} ---\n\n`.length;
-      const rawLen = source.markdown!.length;
-      docSizes.push({ source, rawLen, delimLen });
-      totalRawLen += rawLen + delimLen;
-    }
-
-    let prompt = instructionText;
-
-    if (totalRawLen <= docBudget) {
-      // Everything fits — include all documents in full
-      for (const { source } of docSizes) {
-        source.contextRatio = 1.0;
-        prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;
-        prompt += source.markdown!;
-        prompt += `\n--- END DOCUMENT: ${source.title} ---\n\n`;
-      }
-    } else {
-      // Need to truncate — distribute budget proportionally by raw markdown length
-      // First subtract delimiter overhead from budget
-      let delimTotal = 0;
-      for (const d of docSizes) delimTotal += d.delimLen;
-      const contentBudget = docBudget - delimTotal;
-
-      if (contentBudget <= 0) {
-        Zotero.debug(`[ChatPDF] WARNING: Document delimiter overhead (${delimTotal}) exceeds docBudget (${docBudget}). No document content included.`);
-        for (const { source } of docSizes) {
-          source.contextRatio = 0;
-        }
-        return instructionText;
-      }
-
-      // Proportional allocation based on raw markdown length
-      const totalContentLen = docSizes.reduce((sum, d) => sum + d.rawLen, 0);
-
-      for (const { source, rawLen } of docSizes) {
-        const allocation = Math.floor(contentBudget * (rawLen / totalContentLen));
-        let content: string;
-        if (rawLen <= allocation) {
-          content = source.markdown!;
-          source.contextRatio = 1.0;
-        } else {
-          const truncMarker = `\n\n[... content truncated (${Math.round((allocation / rawLen) * 100)}% of original included) ...]`;
-          const availableForContent = allocation - truncMarker.length;
-          if (availableForContent <= 0) {
-            content = truncMarker;
-            source.contextRatio = 0;
-          } else {
-            content = source.markdown!.slice(0, availableForContent) + truncMarker;
-            source.contextRatio = availableForContent / rawLen;
-          }
-        }
-        prompt += `--- BEGIN DOCUMENT: ${source.title} ---\n`;
-        prompt += content;
-        prompt += `\n--- END DOCUMENT: ${source.title} ---\n\n`;
-      }
-
-      Zotero.debug(`[ChatPDF] Document truncation applied: budget=${docBudget}, totalRaw=${totalRawLen}`);
-      for (const { source } of docSizes) {
-        Zotero.debug(`[ChatPDF]   "${source.title}" contextRatio=${source.contextRatio?.toFixed(2)}`);
-      }
-    }
-
-    Zotero.debug(`[ChatPDF] System prompt length: ${prompt.length} chars, includes ${readySources.length} documents`);
-    return prompt;
-  }
-
   buildAgentMessages(userMessage: string, turnScope?: Set<string>, tools: Tool[] = []): ProviderMessage[] {
     // Resume immutable provider blocks when compatible. Only legacy sessions or
     // explicit configuration changes need a visible-history reconstruction.
@@ -596,12 +401,11 @@ export class ChatSession {
       return this.agentContext.messages;
     }
 
-    Zotero.debug(`[ChatPDF] buildAgentMessages: rebuilding working view; systemPrompt=${systemPrompt.length} chars, historyLen=${this.history.length}`);
+    Zotero.debug(`[ChatPDF] buildAgentMessages: rebuilding working view; historyLen=${this.history.length}`);
 
     // Legacy/mismatched sessions retain every visible turn. The context manager
     // summarizes complete exchanges instead of silently dropping old requests.
-    const recentHistory = this.truncateHistory(systemPrompt.length, currentUserContent.length, Number.POSITIVE_INFINITY,
-      (msg) => {
+    const recentHistory = this.history.map((msg): ChatMessage | null => {
         if (msg.role === "system") return null; // skip system messages
         if (msg.role !== "user" && msg.role !== "assistant") return null;
 
@@ -630,7 +434,7 @@ export class ChatSession {
           }
         }
         return { role: msg.role, content };
-      });
+      }).filter((msg): msg is ChatMessage => msg !== null);
 
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
@@ -638,8 +442,7 @@ export class ChatSession {
       { role: "user", content: currentUserContent },
     ];
 
-    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-    Zotero.debug(`[ChatPDF] buildAgentMessages: final ${messages.length} messages, ~${totalChars} total chars`);
+    Zotero.debug(`[ChatPDF] buildAgentMessages: final ${messages.length} messages`);
     if (this.agentContext) {
       if (this.agentContext.data.pending) {
         const pending = this.agentContext.data.pending;
@@ -664,14 +467,9 @@ export class ChatSession {
   }
 
   private buildAgentSystemPrompt(): string {
-    const customPrompt = (getPref("systemPrompt") as string) || "";
+    const customPrompt = migrateDefaultPrompt((getPref("systemPrompt") as string) || "");
 
-    const baseInstructions = customPrompt ||
-      "You are a helpful research assistant. Use the available tools to read document content and answer questions accurately. " +
-      "Always reply in the same language the user uses.\n\n" +
-      "IMPORTANT formatting rules:\n" +
-      "- Use standard Markdown for formatting (headings, lists, bold, code blocks, etc.).\n" +
-      "- For mathematical expressions, use LaTeX syntax: $...$ for inline math and $$...$$ for display math.\n";
+    const baseInstructions = customPrompt || DEFAULT_SYSTEM_PROMPT_EN;
 
     const toolInstructions =
       "\n\nYou have access to tools to search Zotero and read documents:\n" +
@@ -695,7 +493,7 @@ export class ChatSession {
       "- Cite the document title and section when answering\n";
 
     const prompt = baseInstructions + toolInstructions;
-    Zotero.debug(`[ChatPDF] buildAgentSystemPrompt: ${prompt.length} chars (stable source-independent prefix)`);
+    Zotero.debug(`[ChatPDF] buildAgentSystemPrompt: stable source-independent prefix`);
     return prompt;
   }
 

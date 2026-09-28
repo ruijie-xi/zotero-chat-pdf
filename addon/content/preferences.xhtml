@@ -138,10 +138,15 @@
     <html:input type="checkbox" id="zotero-prefpane-__addonRef__-agentAutoContinue" preference="agentAutoContinue" />
   </hbox>
 
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-contextMaxChars" data-l10n-id="pref-context-max-chars"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-contextMaxChars" preference="contextMaxChars" style="width: 110px;" min="20000" step="10000" />
-  </hbox>
+  <description>Model token limits: 0 uses endpoint metadata. Save these settings with each model profile.</description>
+  <hbox align="center"><html:label data-l10n-id="pref-context-window-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-contextWindowTokens" preference="contextWindowTokens" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-input-token-limit"/><html:input type="number" id="zotero-prefpane-__addonRef__-inputTokenLimit" preference="inputTokenLimit" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-max-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-maxOutputTokens" preference="maxOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-requested-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-requestedOutputTokens" preference="requestedOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-image-token-reserve"/><html:input type="number" id="zotero-prefpane-__addonRef__-imageTokenReserve" preference="imageTokenReserve" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-tokenizer-mode"/><html:select id="zotero-prefpane-__addonRef__-tokenizerMode" preference="tokenizerMode"><html:option value="auto">Automatic (supported model only)</html:option><html:option value="deepseek-v4-estimate">DeepSeek V4 local tokenizer estimate</html:option></html:select></hbox>
+  <html:button id="zotero-prefpane-__addonRef__-refreshModelLimits" data-l10n-id="pref-model-limits-refresh"/>
+  <html:span id="zotero-prefpane-__addonRef__-modelLimitsStatus"/>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-enableWebTools" data-l10n-id="pref-enable-web-tools"></html:label>

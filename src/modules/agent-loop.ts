@@ -1,9 +1,12 @@
+import { resolveModelCapabilities } from "./model-capabilities";
+import { TokenCounter, loadTokenizer } from "./token-accounting";
+import { ContextBudget } from "./context-budget";
 import { ProviderMessage, VisionContent, Tool, chatWithTools, StreamCallback, TokenUsage, IterationRecord, ChatResult, ProviderContextError, sumTokenUsage, getLLMSettings } from "./llm-client";
 import { ImageInput, MAX_TURN_IMAGE_BYTES } from "./image-input";
 import { executeTool, getToolMetadata, ToolExecutionContext } from "./tools";
 import { ChatSession } from "./chat-session";
 import { getPref } from "../utils/prefs";
-import { ContextMessage, contextLimit, contextSize } from "./agent-context";
+import { ContextMessage, COMPACT_PROMPT } from "./agent-context";
 import { compactAgentContext } from "./context-compaction";
 
 export { IterationRecord } from "./llm-client";
@@ -15,6 +18,7 @@ export interface AgentCallbacks {
   onStream?: StreamCallback;
   onThinking?: AgentThinkingCallback;
   onUsage?: (usage: TokenUsage) => void;
+  onContextStats?: (stats: { inputTokens: number; inputLimit: number; source: string }) => void;
   onCompaction?: (active: boolean) => void;
   onContextSaved?: () => Promise<void>;
 }
@@ -47,15 +51,16 @@ export async function runAgentLoop(
   const maxIterations = Number.isFinite(configuredIterations) ? Math.max(0, Math.floor(configuredIterations)) : 0;
   const autoContinue = getPref("agentAutoContinue") !== false;
   const settings = getLLMSettings();
-  let limit = contextLimit(getPref("contextMaxChars"));
+  const capabilities = await resolveModelCapabilities(settings, signal);
+  const budget = new ContextBudget(capabilities, new TokenCounter(await loadTokenizer(), settings, capabilities));
   const context = session.ensureAgentContext(messages);
+  const fingerprint = context.data.fingerprint;
   const latestUser = [...messages].reverse().find(message => message.role === "user" && typeof message.content === "string");
   if (!latestUser) throw new Error("An active user request is required.");
   const iterations: IterationRecord[] = [];
   let usage: TokenUsage | undefined;
   let imageBytes = 0;
   const imageSources = new Set<string>();
-  let forceCompact = false;
   let repeats = 0;
   let previousCalls = "";
   const toolContext: ToolExecutionContext = {
@@ -66,6 +71,7 @@ export async function runAgentLoop(
   const check = () => {
     if (signal?.aborted) throw abortError();
     if (session.getAgentContext() !== context) throw abortError("Session context was cleared.");
+    if (context.data.fingerprint !== fingerprint) throw abortError("Session source scope changed.");
     if ([...imageSources].some(id => !session.getSource(id) || !toolContext.turnScope.has(id))) throw abortError("Image source was removed.");
   };
   const addUsage = (next?: TokenUsage) => {
@@ -77,8 +83,7 @@ export async function runAgentLoop(
   const compact = async (recover = false) => {
     callbacks.onCompaction?.(true);
     try {
-      await compactAgentContext(context, tools, latestUser, limit, addUsage, signal, recover, settings);
-      forceCompact = false;
+      await compactAgentContext(context, tools, latestUser, budget, addUsage, signal, recover, settings, check);
       await save();
     } finally { callbacks.onCompaction?.(false); }
   };
@@ -86,8 +91,9 @@ export async function runAgentLoop(
   for (let iteration = 0; ; iteration++) {
     check();
     if (!autoContinue && maxIterations > 0 && iteration >= maxIterations) throw new Error(`Paused at the configured ${maxIterations}-step limit. Progress and results were saved. Enable automatic continuation or send a follow-up to continue.`);
-    if (forceCompact || contextSize(context.messages, tools) > limit * 0.75) await compact();
-    toolContext.resultPageChars = Math.max(1_000, Math.floor(limit * 0.25));
+    if (budget.shouldCompact(context.messages, tools, { role: "user", content: COMPACT_PROMPT })) await compact();
+    budget.assertFits(context.messages, tools);
+    callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), inputLimit: budget.inputLimit(), source: capabilities.source });
     let firstThinking = true;
     let thinkingDone = false;
     const thinking = callbacks.onThinking ? (chunk: string, done: boolean) => {
@@ -98,24 +104,27 @@ export async function runAgentLoop(
     } : undefined;
     let result: ChatResult;
     try {
+      budget.assertFits(context.messages, tools);
       result = await chatWithTools(context.messages, tools,
         callbacks.onStream ? (chunk, done) => { if (!done) callbacks.onStream!(chunk, false); } : undefined,
-        thinking, signal, undefined, { settings });
+        thinking, signal, undefined, { settings, maxTokens: capabilities.requestedOutput });
     } catch (error) {
       if (!(error instanceof ProviderContextError)) throw error;
-      limit = Math.max(20_000, Math.floor(limit * 0.75));
       await compact(true);
+      budget.assertFits(context.messages, tools);
       result = await chatWithTools(context.messages, tools,
         callbacks.onStream ? (chunk, done) => { if (!done) callbacks.onStream!(chunk, false); } : undefined,
-        thinking, signal, undefined, { settings });
+        thinking, signal, undefined, { settings, maxTokens: capabilities.requestedOutput });
     }
     if (!firstThinking && !thinkingDone) callbacks.onThinking?.("", true, false);
     addUsage(result.usage);
-    (context.data.requests ||= []).push({ kind: "agent", generation: context.data.checkpoints.length, usage: result.usage, inputChars: contextSize(context.messages, tools) });
+    (context.data.requests ||= []).push({ kind: "agent", generation: context.data.checkpoints.length, usage: result.usage, inputTokens: budget.count(context.messages, tools), countMethod: "local-bpe-estimate" });
+    budget.counter.observe(context.messages, tools, result.usage);
     check();
     Zotero.debug(`[ChatPDF] agent request: step=${iteration + 1}, generation=${context.data.checkpoints.length}, input=${result.usage?.prompt_tokens ?? "unknown"}, hit=${result.usage?.prompt_cache_hit_tokens ?? "unknown"}, miss=${result.usage?.prompt_cache_miss_tokens ?? "unknown"}`);
     if (!result.tool_calls?.length) {
       context.append(assistantMessage(result));
+      callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), inputLimit: budget.inputLimit(), source: capabilities.source });
       const record: IterationRecord = { reasoning: result.reasoning, toolCalls: [], usage: result.usage };
       iterations.push(record);
       callbacks.onIterationComplete?.(iteration + 1, autoContinue ? 0 : maxIterations, record);
@@ -138,7 +147,16 @@ export async function runAgentLoop(
       callbacks.onToolCallStart?.(tc.function.name, args);
       const started = Date.now();
       const images: ImageInput[] = [];
-      const text = await executeTool(tc.function.name, args, { ...toolContext, deliverImage(image) {
+      let retrievedRange: { id: string; start: number; end: number } | undefined;
+      const text = await executeTool(tc.function.name, args, { ...toolContext,
+        readStoredResult(id, start, length, allowed) {
+          const page = context.readResultPage(id, start, length, allowed, content => budget.fits([
+            ...context.messages, assistantMessage(result), ...calls.map(call => ({ role: "tool" as const, tool_call_id: call.tc.id,
+              content: call.tc.id === tc.id ? content : "[Result stored; retrieve with read_tool_result.]" })),
+          ], tools));
+          retrievedRange = { id, start: page.start, end: page.end };
+          return page.content;
+        }, deliverImage(image) {
         check();
         if (imageBytes + image.byteLength > MAX_TURN_IMAGE_BYTES) throw new Error("Image input exceeds the explicit 20 MiB per-turn limit.");
         imageBytes += image.byteLength; imageSources.add(image.sourceId); images.push(image);
@@ -149,13 +167,7 @@ export async function runAgentLoop(
       const sourceIds = original?.sourceIds ?? (source ? [source.id] : [...toolContext.turnScope]);
       const stored = context.storeResult(text, tc.function.name, sourceIds);
       stored.mutating = !getToolMetadata(tc.function.name).readOnly;
-      if (original) {
-        const start = Number(args.start || 0);
-        const length = Math.min(Number(args.max_chars || toolContext.resultPageChars), toolContext.resultPageChars!);
-        if (Number.isSafeInteger(start) && start >= 0 && start <= original.content.length && Number.isSafeInteger(length) && length > 0 && !text.startsWith("Error")) {
-          stored.parentRange = { id: original.id, start, end: Math.min(original.content.length, start + length) };
-        }
-      }
+      if (retrievedRange) stored.parentRange = retrievedRange;
       context.data.pending!.completed.push({ callId: tc.id, resultId: stored.id });
       await save();
       callbacks.onToolCallEnd?.(tc.function.name, text, durationMs);
@@ -173,20 +185,31 @@ export async function runAgentLoop(
       }
     } else for (const call of calls) executed.push(await executeOne(call));
     check();
+    const reference = (item: typeof executed[number]): ContextMessage => ({ ...item.message, resultId: undefined,
+      content: `[Paged tool result: result_id=${item.record.resultId}, total_chars=${item.record.result.length}. The tool executed once and its complete result is stored. Body not yet delivered. Use read_tool_result(result_id="${item.record.resultId}", start=0) and follow next_start. No cumulative read quota applies.]` });
+    const completeGroup = () => [assistantMessage(result), ...executed.map(item => item.message)];
+    // Compact the completed earlier exchanges before publishing this already-executed batch.
+    // Receipts stay pending throughout; cancellation must never cause re-execution.
+    const canFitFresh = budget.fits([context.messages[0], latestUser, ...completeGroup()], tools);
+    if (canFitFresh && !budget.fits([...context.messages, ...completeGroup()], tools) && context.messages.length > 2) await compact();
+    const delivery = executed.map(item => reference(item));
+    for (let i = 0; i < executed.length; i++) {
+      const candidate = [...delivery]; candidate[i] = executed[i].message;
+      if (budget.fits([...context.messages, assistantMessage(result), ...candidate], tools)) delivery[i] = executed[i].message;
+    }
+    budget.assertFits([...context.messages, assistantMessage(result), ...delivery], tools);
     context.append(assistantMessage(result));
-    for (const item of executed) {
-      const available = limit * 0.82 - contextSize(context.messages, tools) - calls.length * 500;
-      if (typeof item.message.content === "string" && item.message.content.length > available) {
-        item.message.content = `[Paged tool result: result_id=${item.record.resultId}, total_chars=${item.record.result.length}. The tool executed and its complete result is stored. Body not yet delivered. Use read_tool_result(result_id="${item.record.resultId}", start=0) and follow next_start to inspect it. No cumulative read quota applies.]`;
-        item.message.resultId = undefined;
-        item.record.contextDelivery = "paged";
-        item.record.contextMessage = item.message.content;
-        forceCompact = contextSize(context.messages, tools) > limit * 0.5;
-      } else {
+    for (let i = 0; i < executed.length; i++) {
+      const item = executed[i];
+      const message = delivery[i];
+      if (message.resultId) {
         item.record.contextDelivery = "complete";
         context.markDelivered(item.record.resultId!);
+      } else {
+        item.record.contextDelivery = "paged";
+        item.record.contextMessage = String(message.content);
       }
-      context.append(item.message);
+      context.append(message);
     }
     const visuals: VisionContent = [];
     for (const item of executed) for (const image of item.images) {

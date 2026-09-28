@@ -51,7 +51,7 @@ export interface ToolOptions {
 }
 
 export interface ToolExecutionContext {
-  resultPageChars?: number;
+  readStoredResult?: (id: string, start: number, length: number, allowed: Set<string>) => string;
   deliverImage?: (image: ImageInput) => void;
   session: ChatSession;
   signal?: AbortSignal;
@@ -466,12 +466,10 @@ export async function executeTool(
         const memory = session.getAgentContext();
         if (!memory) throw new Error("No stored results are available in this session.");
         const start = args.start === undefined ? 0 : Number(args.start);
-        const requested = args.max_chars === undefined ? (context.resultPageChars || 40_000) : Number(args.max_chars);
+        const requested = args.max_chars === undefined ? Number.MAX_SAFE_INTEGER : Number(args.max_chars);
         if (!Number.isSafeInteger(requested) || requested <= 0) throw new Error("max_chars must be a positive integer.");
-        result = memory.readResult(String(args.result_id || ""), start,
-          Math.min(requested, context.resultPageChars || 40_000),
+        return (context.readStoredResult || memory.readResult.bind(memory))(String(args.result_id || ""), start, requested,
           new Set(session.getSources().filter(source => context.turnScope.has(source.id)).map(source => source.id)));
-        break;
       }
       case "list_images":
       case "read_image": {
@@ -545,8 +543,7 @@ export async function executeTool(
 
     const durationMs = Date.now() - startTime;
     Zotero.debug(`[ChatPDF] executeTool: ${name} done in ${durationMs}ms, result=${result.length} chars`);
-    const estimatedTokens = Math.ceil(result.length / 4);
-    return `${result}\n\n[Tool result metadata: ${result.length} characters; approximately ${estimatedTokens} tokens; no hidden truncation applied.]`;
+    return `${result}\n\n[Tool result metadata: ${result.length} characters; no hidden truncation applied.]`;
   } catch (err: any) {
     if (context.signal?.aborted || err?.name === "AbortError") throw err;
     Zotero.debug(`[ChatPDF] executeTool: ${name} error: ${err.message}`);

@@ -155,7 +155,7 @@ describe("agent visual delivery", () => {
     expect(chat).toHaveBeenCalledTimes(2);
     expect(result.iterations[0].toolCalls[0].result).toContain("Image attached");
     expect(JSON.stringify(result)).not.toContain("base64,");
-    session.addAssistantMessage(result.content, undefined, undefined, undefined, result.iterations);
+    session.addAssistantMessage(result.content, undefined, undefined, result.iterations);
     expect(JSON.stringify(session.toSavedSession())).not.toContain("data:image");
   });
 

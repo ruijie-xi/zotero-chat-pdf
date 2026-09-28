@@ -117,14 +117,16 @@ export function createIterationBlock(doc: Document, record: IterationRecord, ite
 export function updateUsageBar(root: HTMLElement, usage?: TokenUsage): void {
   const bar = root.querySelector("#chatpdf-usage-bar") as HTMLElement | null;
   if (!bar) return;
-  const text = formatUsageText(usage, "Session");
+  const stats = getPanelState(root).session.contextStats;
+  const contextText = stats ? `Context ≈${formatTokens(stats.inputTokens)} / ${formatTokens(stats.inputLimit)} tokens (${Math.max(0, Math.round(100 * (1 - stats.inputTokens / stats.inputLimit)))}% available; ${stats.source})` : "";
+  const text = [contextText, formatUsageText(usage, "Session")].filter(Boolean).join(" · ");
   if (!text) {
     bar.style.display = "none";
     return;
   }
   bar.style.display = "";
   bar.textContent = text;
-  bar.title = "Provider-reported cumulative usage for the current session; cache rate is hit / (hit + miss).";
+  bar.title = "Context is a local tokenizer estimate against the input budget after output and safety reservations. Session is cumulative provider usage; cache rate is hit / (hit + miss). Cached input still occupies context.";
 }
 
 export function formatUsageText(usage?: TokenUsage, label?: string): string {
@@ -157,7 +159,7 @@ export function appendUsageMeta(container: HTMLElement, usage?: TokenUsage): voi
 }
 
 /** Append a message bubble to the messages area. */
-export function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string, timestamp?: number, sources?: { key: string; libraryID?: number; title: string }[], modelLabel?: string, toolHistory?: ToolCallRecord[], iterations?: IterationRecord[], usage?: TokenUsage): HTMLElement {
+export function appendMessage(root: HTMLElement, role: "user" | "assistant", content: string, msgIndex?: number, reasoning?: string, timestamp?: number, sources?: { key: string; libraryID?: number; title: string }[], modelLabel?: string, iterations?: IterationRecord[], usage?: TokenUsage): HTMLElement {
   const messagesEl = root.querySelector("#chatpdf-messages");
   if (!messagesEl) return root;
   const doc = root.ownerDocument!;
@@ -180,36 +182,9 @@ export function appendMessage(root: HTMLElement, role: "user" | "assistant", con
 
   if (role === "assistant") {
     // Render stacked iteration blocks (new format)
-    if (iterations?.length) {
-      for (let i = 0; i < iterations.length; i++) {
-        const iterBlock = createIterationBlock(doc, iterations[i], i);
-        bubble.appendChild(iterBlock);
-      }
-    } else {
-      // Legacy: render reasoning/thinking block if available
-      if (reasoning) {
-        const reasoningBlock = h(doc, "div", { className: "chatpdf-reasoning-block" });
-        const toggle = h(doc, "button", { className: "chatpdf-reasoning-toggle" });
-        const chevron = h(doc, "span", { className: "chatpdf-reasoning-chevron" }, "\u25B6");
-        const label = h(doc, "span", { className: "chatpdf-reasoning-label" }, "Thought");
-        toggle.appendChild(chevron);
-        toggle.appendChild(label);
-        toggle.addEventListener("click", () => {
-          reasoningBlock.classList.toggle("chatpdf-reasoning-expanded");
-        });
-        const reasoningContentEl = h(doc, "div", { className: "chatpdf-reasoning-content" });
-        reasoningContentEl.textContent = reasoning;
-        reasoningBlock.appendChild(toggle);
-        reasoningBlock.appendChild(reasoningContentEl);
-        bubble.appendChild(reasoningBlock);
-      }
-
-      // Legacy: render tool call block if tool history is available
-      if (toolHistory?.length) {
-        const totalMs = toolHistory.reduce((sum, t) => sum + t.durationMs, 0);
-        const toolBlock = createToolBlock(doc, toolHistory, totalMs);
-        bubble.appendChild(toolBlock);
-      }
+    const displayIterations = iterations?.length ? iterations : reasoning ? [{ reasoning, toolCalls: [] }] : [];
+    for (let i = 0; i < displayIterations.length; i++) {
+      bubble.appendChild(createIterationBlock(doc, displayIterations[i], i));
     }
 
     try {
@@ -328,7 +303,7 @@ function enterEditMode(root: HTMLElement, row: HTMLElement, bubble: HTMLElement,
         let idx = 0;
         for (const msg of remaining) {
           if (msg.role === "system") continue;
-          appendMessage(root, msg.role as "user" | "assistant", msg.content, idx, msg.reasoning, msg.timestamp, msg.sources, msg.modelLabel, msg.toolHistory, msg.iterations, msg.usage);
+          appendMessage(root, msg.role as "user" | "assistant", msg.content, idx, msg.reasoning, msg.timestamp, msg.sources, msg.modelLabel, msg.iterations, msg.usage);
           idx++;
         }
       }
@@ -363,7 +338,7 @@ export function renderChatHistory(root: HTMLElement): void {
     let msgIndex = 0;
     for (const msg of history) {
       if (msg.role === "system") continue;
-      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning, msg.timestamp, msg.sources, msg.modelLabel, msg.toolHistory, msg.iterations, msg.usage);
+      appendMessage(root, msg.role as "user" | "assistant", msg.content, msgIndex, msg.reasoning, msg.timestamp, msg.sources, msg.modelLabel, msg.iterations, msg.usage);
       msgIndex++;
     }
   }

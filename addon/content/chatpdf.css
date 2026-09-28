@@ -766,11 +766,6 @@
   background: rgba(255, 59, 48, 0.1);
 }
 
-.chatpdf-chip-badge-truncated {
-  color: #8a6200;
-  background: rgba(245, 166, 35, 0.15);
-}
-
 /* Total usage summary */
 .chatpdf-source-summary {
   font-size: 10px;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1
+
+- Resolve model token capacity from endpoint metadata or explicit model-profile overrides; replace character-based compaction and delivery budgets with locally tokenized request estimates and output reservations.
+- Preserve stable provider prefixes, bound checkpoint retries by model limits, and record exact Unicode-safe result page ranges without replaying completed tools.
+- Display working-context token estimates separately from cumulative provider usage; retain character counts for document sizes and retrieval positions.
+- Remove unused document-embedding/truncation code and obsolete capacity settings; normalize legacy tool histories and back up older sessions before atomic schema migration.
+
+
 ## Unreleased
 
 ### New Features

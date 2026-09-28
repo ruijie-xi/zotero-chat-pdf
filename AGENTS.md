@@ -92,7 +92,7 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 | `mineruTimeoutMinutes` | number | `15` |
 | `llmApiBase` | string | `https://api.deepseek.com/v1` |
 | `llmApiKey` | string | `""` |
-| `llmModel` | string | `deepseek-chat` |
+| `llmModel` | string | `deepseek-flash` |
 | `llmThinkingMode` | string | `default` |
 | `llmThinkEffort` | string | `default` |
 | `cacheDir` | string | `""` |
@@ -100,7 +100,13 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 | `modelProfiles` | string | `[]` |
 | `activeProfile` | string | `""` |
 | `agentMaxIterations` | number | `10` |
-| `contextMaxChars` | number | `240000` |
+| `contextWindowTokens` | number | `0` (automatic) |
+| `inputTokenLimit` | number | `0` (automatic) |
+| `maxOutputTokens` | number | `0` (automatic) |
+| `requestedOutputTokens` | number | `0` (automatic) |
+| `imageTokenReserve` | number | `0` (automatic) |
+| `tokenizerMode` | string | `auto` |
+| `modelCapabilitiesRevision` | number | `0` (internal refresh revision) |
 | `enableWebTools` | boolean | `false` |
 | `braveSearchApiKey` | string | `""` |
 | `debugLogMode` | string | `metadata` |

@@ -20,3 +20,13 @@ Object.assign(globalThis, {
   Services: {},
   Components: {},
 });
+
+// Domain-loop tests use a deterministic token stream; tokenizer correctness has separate fixtures.
+vi.mock("../src/modules/token-accounting", async original => ({
+  ...await original<typeof import("../src/modules/token-accounting")>(),
+  loadTokenizer: vi.fn(async () => ({ encode: (text: string) => ({ ids: { length: text.length } }) })),
+}));
+vi.mock("../src/modules/model-capabilities", async original => ({
+  ...await original<typeof import("../src/modules/model-capabilities")>(),
+  resolveModelCapabilities: vi.fn(async () => ({ inputLimit: 240000, maxOutput: 32768, requestedOutput: 8192, tokenizer: "deepseek-v4", imageTokens: 1024, source: "manual", fetchedAt: 1 })),
+}));
