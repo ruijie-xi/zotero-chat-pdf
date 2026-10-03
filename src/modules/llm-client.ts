@@ -1,4 +1,5 @@
 import type { ModelBudgetSettings } from "./model-profile";
+import { buildLLMHeaders, getProviderApiBase, normalizeProvider, ProviderSettings } from "./llm-provider";
 import { getPref } from "../utils/prefs";
 
 export type VisionContent = ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: "auto" } })[];
@@ -141,7 +142,7 @@ export type ThinkingCallback = (chunk: string, done: boolean) => void;
 export type ThinkingMode = "default" | "enabled" | "disabled";
 export type ThinkEffort = "default" | "high" | "max";
 
-export interface LLMSettings extends ModelBudgetSettings {
+export interface LLMSettings extends ModelBudgetSettings, ProviderSettings {
   apiBase: string;
   apiKey: string;
   model: string;
@@ -173,14 +174,16 @@ export function getChatCompletionUrl(apiBase: string): string {
 }
 
 export function getLLMSettings(): LLMSettings {
+  const provider = normalizeProvider(getPref("llmProvider"));
   return {
+    provider,
     contextWindowTokens: Number(getPref("contextWindowTokens")) || undefined,
     inputTokenLimit: Number(getPref("inputTokenLimit")) || undefined,
     maxOutputTokens: Number(getPref("maxOutputTokens")) || undefined,
     requestedOutputTokens: Number(getPref("requestedOutputTokens")) || undefined,
     imageTokenReserve: Number(getPref("imageTokenReserve")) || undefined,
     tokenizerMode: String(getPref("tokenizerMode") || "auto"),
-    apiBase: (getPref("llmApiBase") as string) || DEFAULT_API_BASE,
+    apiBase: getProviderApiBase({ provider, apiBase: (getPref("llmApiBase") as string) || DEFAULT_API_BASE }),
     apiKey: (getPref("llmApiKey") as string) || "",
     model: (getPref("llmModel") as string) || DEFAULT_MODEL,
     thinkingMode: normalizeThinkingMode(getPref("llmThinkingMode")),
@@ -359,7 +362,7 @@ export async function chatWithTools(
     throw new Error("LLM API key not configured. Set it in ChatPDF preferences.");
   }
 
-  const url = getChatCompletionUrl(settings.apiBase);
+  const url = getChatCompletionUrl(getProviderApiBase(settings));
   const streaming = !nonStreaming;
   const gemini = isGeminiApi(url);
 
@@ -378,10 +381,7 @@ export async function chatWithTools(
 
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.apiKey}`,
-    },
+    headers: buildLLMHeaders(settings),
     body: JSON.stringify(body),
     signal,
   });

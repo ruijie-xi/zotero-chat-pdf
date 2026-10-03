@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Replace HTML dropdowns with native Zotero menus in Preferences and the panel profile selector; keep model names editable and use a native menu for suggestions.
+- Add DeepSeek, OpenCode Go and Custom provider choices to Preferences and saved model profiles while retaining legacy configurations as Custom.
+- Isolate provider drafts and credentials, add Go conversation/client headers to main and auxiliary requests, and use labelled catalogue capacity fallbacks for known Go DeepSeek models with explicit local token estimation.
+
 ## 0.9.3
 
 - Recover automatically from output-token exhaustion: retry reasoning-only responses with a larger model-bounded allowance and continue visible partial answers without moving earlier text.

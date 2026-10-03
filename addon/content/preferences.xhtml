@@ -23,6 +23,18 @@
   <separator class="thin" />
 
   <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-llmProvider" data-l10n-id="pref-llm-provider"></html:label>
+    <menulist id="zotero-prefpane-__addonRef__-llmProvider" preference="llmProvider" native="true">
+      <menupopup>
+        <menuitem value="deepseek" label="DeepSeek" />
+        <menuitem value="opencode-go" label="OpenCode Go" />
+        <menuitem value="custom" data-l10n-id="pref-llm-provider-custom" />
+      </menupopup>
+    </menulist>
+  </hbox>
+  <html:p id="zotero-prefpane-__addonRef__-providerHint" data-l10n-id="pref-llm-provider-go-hint" hidden="hidden" style="font-size: 11px;" />
+
+  <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmApiBase" data-l10n-id="pref-llm-api-base"></html:label>
     <html:input type="text" id="zotero-prefpane-__addonRef__-llmApiBase" preference="llmApiBase" style="flex: 1;" />
   </hbox>
@@ -35,24 +47,31 @@
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmModel" data-l10n-id="pref-llm-model"></html:label>
     <html:input type="text" id="zotero-prefpane-__addonRef__-llmModel" preference="llmModel" style="flex: 1;" />
+    <menulist id="zotero-prefpane-__addonRef__-providerModels" native="true" data-l10n-id="pref-llm-model-suggestions" style="max-width: 180px;">
+      <menupopup />
+    </menulist>
   </hbox>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmThinkingMode" data-l10n-id="pref-llm-thinking-mode"></html:label>
-    <html:select id="zotero-prefpane-__addonRef__-llmThinkingMode" preference="llmThinkingMode" style="width: 130px;">
-      <html:option value="default">Default</html:option>
-      <html:option value="enabled">Enabled</html:option>
-      <html:option value="disabled">Disabled</html:option>
-    </html:select>
+    <menulist id="zotero-prefpane-__addonRef__-llmThinkingMode" preference="llmThinkingMode" native="true" style="width: 130px;">
+      <menupopup>
+        <menuitem value="default" label="Default" />
+        <menuitem value="enabled" label="Enabled" />
+        <menuitem value="disabled" label="Disabled" />
+      </menupopup>
+    </menulist>
   </hbox>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmThinkEffort" data-l10n-id="pref-llm-think-effort"></html:label>
-    <html:select id="zotero-prefpane-__addonRef__-llmThinkEffort" preference="llmThinkEffort" style="width: 130px;">
-      <html:option value="default">Default</html:option>
-      <html:option value="high">High</html:option>
-      <html:option value="max">Max</html:option>
-    </html:select>
+    <menulist id="zotero-prefpane-__addonRef__-llmThinkEffort" preference="llmThinkEffort" native="true" style="width: 130px;">
+      <menupopup>
+        <menuitem value="default" label="Default" />
+        <menuitem value="high" label="High" />
+        <menuitem value="max" label="Max" />
+      </menupopup>
+    </menulist>
   </hbox>
 
   <vbox style="margin-top: 4px;">
@@ -82,11 +101,13 @@
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-debugLogMode" data-l10n-id="pref-debug-log-mode"></html:label>
-    <html:select id="zotero-prefpane-__addonRef__-debugLogMode" preference="debugLogMode" style="width: 130px;">
-      <html:option value="off">Off</html:option>
-      <html:option value="metadata">Metadata only</html:option>
-      <html:option value="full">Full content</html:option>
-    </html:select>
+    <menulist id="zotero-prefpane-__addonRef__-debugLogMode" preference="debugLogMode" native="true" style="width: 130px;">
+      <menupopup>
+        <menuitem value="off" label="Off" />
+        <menuitem value="metadata" label="Metadata only" />
+        <menuitem value="full" label="Full content" />
+      </menupopup>
+    </menulist>
   </hbox>
 
   <hbox align="center">
@@ -144,7 +165,15 @@
   <hbox align="center"><html:label data-l10n-id="pref-max-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-maxOutputTokens" preference="maxOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
   <hbox align="center"><html:label data-l10n-id="pref-requested-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-requestedOutputTokens" preference="requestedOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
   <hbox align="center"><html:label data-l10n-id="pref-image-token-reserve"/><html:input type="number" id="zotero-prefpane-__addonRef__-imageTokenReserve" preference="imageTokenReserve" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-tokenizer-mode"/><html:select id="zotero-prefpane-__addonRef__-tokenizerMode" preference="tokenizerMode"><html:option value="auto">Automatic (supported model only)</html:option><html:option value="deepseek-v4-estimate">DeepSeek V4 local tokenizer estimate</html:option></html:select></hbox>
+  <hbox align="center">
+    <html:label data-l10n-id="pref-tokenizer-mode" />
+    <menulist id="zotero-prefpane-__addonRef__-tokenizerMode" preference="tokenizerMode" native="true">
+      <menupopup>
+        <menuitem value="auto" label="Automatic (supported model only)" />
+        <menuitem value="deepseek-v4-estimate" label="DeepSeek V4 local tokenizer estimate" />
+      </menupopup>
+    </menulist>
+  </hbox>
   <html:button id="zotero-prefpane-__addonRef__-refreshModelLimits" data-l10n-id="pref-model-limits-refresh"/>
   <html:span id="zotero-prefpane-__addonRef__-modelLimitsStatus"/>
 

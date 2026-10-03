@@ -9,6 +9,21 @@ afterEach(() => {
   vi.mocked(Zotero.getMainWindow).mockImplementation(() => window as any);
 });
 describe("model capability resolution", () => {
+  it("uses Go catalogue limits when its model listing only supplies IDs, then prefers endpoint metadata and manual limits", async () => {
+    const go = { ...settings, provider: "opencode-go" as const, apiBase: "https://stale.example/v1", model: "deepseek-v4.1-flash", tokenizerMode: "deepseek-v4-estimate", sessionId: "conversation-1" };
+    const fetch = vi.fn(async (_url: string, options: RequestInit) => {
+      expect(_url).toBe("https://opencode.ai/zen/go/v1/models");
+      expect(options.headers).toMatchObject({ "x-opencode-session": go.sessionId, "User-Agent": expect.stringMatching(/^ChatPDF\//) });
+      return { ok: true, json: async () => ({ data: [{ id: go.model }] }) };
+    });
+    vi.stubGlobal("fetch", fetch);
+    expect(await resolveModelCapabilities(go)).toMatchObject({ contextWindow: 1000000, maxOutput: 384000, source: "provider-preset", requestedOutput: 8192 });
+    expect(await resolveModelCapabilities({ ...go, contextWindowTokens: 50000, maxOutputTokens: 10000, requestedOutputTokens: 5000 })).toMatchObject({ contextWindow: 50000, maxOutput: 10000, source: "manual", requestedOutput: 5000 });
+    await expect(resolveModelCapabilities({ ...go, model: "unknown" })).rejects.toThrow("token limits");
+    fetch.mockImplementation(async () => ({ ok: true, json: async () => ({ data: [{ id: go.model, context_window: 800000, max_output_tokens: 200000 }] }) }));
+    expect(await resolveModelCapabilities(go, undefined, true)).toMatchObject({ contextWindow: 800000, maxOutput: 200000, source: "endpoint" });
+    await expect(resolveModelCapabilities({ ...go, tokenizerMode: "auto" })).rejects.toThrow("verified local tokenizer");
+  });
   it("discovers metadata in Zotero without a global AbortController", async () => {
     const Controller = AbortController;
     const Signal = new Controller().signal.constructor;

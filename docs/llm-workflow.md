@@ -14,6 +14,12 @@ ChatPDF runs in Zotero's privileged Firefox chrome context, not Node.js.
 
 ## Main Components
 
+Provider selection uses `llmProvider` (`custom`, `deepseek`, or `opencode-go`) and is stored with each model profile. Missing or unknown values remain custom, preserving legacy endpoints and credentials. Built-in providers resolve to their fixed HTTPS endpoints in the UI and transport; custom retains the editable OpenAI-compatible base. Switching providers isolates in-pane drafts, including keys and token overrides; saved profiles persist those configurations across restarts.
+
+`llm-provider.ts` supplies shared request headers. Go sends the honest `ChatPDF/<version>` user agent and the persisted `ChatSession.id` in `x-opencode-session` for agent steps, retries, compaction and title generation. API tests and metadata refreshes use separate stable pane-local IDs. No client is impersonated. [OpenCode Go documentation](https://opencode.ai/docs/go/#where-can-i-use-it) targets coding-agent traffic; paper-reading acceptance has not been validated.
+
+Go's public `/models` response currently omits token capacities. For the exact supported DeepSeek IDs only, the bundled fallback uses 1,000,000 context tokens and 384,000 maximum output tokens from OpenCode's [models.dev provider catalogue](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode-go/models), including inherited [V4.1 Flash](https://github.com/anomalyco/models.dev/blob/dev/models/deepseek/deepseek-v4.1-flash.toml), [V4 Flash 0731](https://github.com/anomalyco/models.dev/blob/dev/models/deepseek/deepseek-v4-flash-0731.toml) and [Vision Exp](https://github.com/anomalyco/models.dev/blob/dev/models/deepseek/deepseek-v4-flash-vision-exp.toml) limits (checked 2026-10-03). This source is displayed as `provider-preset`; endpoint capacity metadata and manual overrides take precedence. These are catalogue values, not authenticated capacity measurements. Go selects explicit local tokenizer estimation; no remote tokenizer receives conversation text. Unknown models still require explicit limits and estimation mode. Non-official endpoints retain the explicit per-image reserve requirement.
+
 | Component | Responsibility |
 | --- | --- |
 | `hooks.ts` | Add-on startup/shutdown, preferences, menu registration, and window injection |

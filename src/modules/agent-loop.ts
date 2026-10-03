@@ -51,7 +51,7 @@ export async function runAgentLoop(
   const configuredIterations = Number(getPref("agentMaxIterations") ?? 0);
   const maxIterations = Number.isFinite(configuredIterations) ? Math.max(0, Math.floor(configuredIterations)) : 0;
   const autoContinue = getPref("agentAutoContinue") !== false;
-  const settings = getLLMSettings();
+  const settings = { ...getLLMSettings(), sessionId: session.id };
   const capabilities = await resolveModelCapabilities(settings, signal);
   const budget = new ContextBudget(capabilities, new TokenCounter(await loadTokenizer(), settings, capabilities));
   const context = session.ensureAgentContext(messages);

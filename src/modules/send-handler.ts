@@ -85,7 +85,7 @@ async function generateTitle(targetSession: import("./chat-session").ChatSession
       },
     ];
 
-    const settings = getLLMSettings();
+    const settings = { ...getLLMSettings(), sessionId: targetSession.id };
     const capabilities = await resolveModelCapabilities(settings);
     const budget = new ContextBudget(capabilities, new TokenCounter(await loadTokenizer(), settings, capabilities));
     budget.assertFits(titleMessages);

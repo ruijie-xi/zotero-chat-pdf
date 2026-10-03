@@ -1,6 +1,7 @@
 pref("mineruToken", "");
 pref("mineruLanguage", "ch");
 pref("mineruTimeoutMinutes", 15);
+pref("llmProvider", "custom");
 pref("llmApiBase", "https://api.deepseek.com/v1");
 pref("llmApiKey", "");
 pref("llmModel", "deepseek-flash");

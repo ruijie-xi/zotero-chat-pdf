@@ -10,6 +10,7 @@ declare namespace _ZoteroTypes {
       "mineruToken": string;
       "mineruLanguage": string;
       "mineruTimeoutMinutes": number;
+      "llmProvider": string;
       "llmApiBase": string;
       "llmApiKey": string;
       "llmModel": string;

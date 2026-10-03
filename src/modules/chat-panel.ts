@@ -1,10 +1,11 @@
 import { MODEL_BUDGET_FIELDS } from "./model-profile";
+import { getProviderApiBase, normalizeProvider } from "./llm-provider";
 import { config } from "../../package.json";
 import { ChatSession, SourceItem } from "./chat-session";
 import { createChatInput } from "./tiptap-input";
 import { checkImageSize, IMAGE_INPUT_HELP, importImage } from "./image-input";
 import { getPref, setPref } from "../utils/prefs";
-import { h, XUL_NS } from "../utils/dom";
+import { h, XUL_NS, XULMenuList } from "../utils/dom";
 import {
   createPanelState, getPanelState, destroyPanelState,
   abortCurrentStream, resetStreamingUI,
@@ -66,10 +67,11 @@ function getCurrentProfileName(): string {
 }
 
 function refreshProfileSelect(root: HTMLElement): void {
-  const select = root.querySelector("#chatpdf-profile-select") as HTMLSelectElement | null;
+  const select = root.querySelector("#chatpdf-profile-select") as XULMenuList | null;
   if (!select) return;
   const doc = root.ownerDocument!;
-  select.innerHTML = "";
+  const popup = select.querySelector("menupopup")!;
+  popup.replaceChildren();
   const profiles = loadModelProfiles();
   const currentProfile = getCurrentProfileName();
   if (profiles.length === 0) {
@@ -78,12 +80,12 @@ function refreshProfileSelect(root: HTMLElement): void {
   }
   select.style.display = "";
   for (const p of profiles) {
-    const opt = doc.createElementNS("http://www.w3.org/1999/xhtml", "option") as HTMLOptionElement;
-    opt.value = p.name;
-    opt.textContent = p.name;
-    if (p.name === currentProfile) opt.selected = true;
-    select.appendChild(opt);
+    const opt = doc.createElementNS(XUL_NS, "menuitem");
+    opt.setAttribute("value", p.name);
+    opt.setAttribute("label", p.name);
+    popup.appendChild(opt);
   }
+  select.value = currentProfile || profiles[0].name;
 }
 
 // ---- Session management ----
@@ -469,7 +471,12 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
     imagePicker.value = "";
     void addImageFiles(files);
   });
-  const profileSelect = h(doc, "select", { className: "chatpdf-profile-select", id: "chatpdf-profile-select", style: "display:none" }) as HTMLSelectElement;
+  const profileSelect = doc.createElementNS(XUL_NS, "menulist") as XULMenuList;
+  profileSelect.setAttribute("class", "chatpdf-profile-select");
+  profileSelect.id = "chatpdf-profile-select";
+  profileSelect.setAttribute("native", "true");
+  profileSelect.style.display = "none";
+  profileSelect.appendChild(doc.createElementNS(XUL_NS, "menupopup"));
   toolbar.appendChild(historyBtn);
   toolbar.appendChild(newChatBtn);
   toolbar.appendChild(clearLink);
@@ -712,11 +719,12 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   newChatBtn.addEventListener("click", handleNewChat);
   newChatBtnHeader.addEventListener("click", handleNewChat);
 
-  profileSelect.addEventListener("change", () => {
+  profileSelect.addEventListener("command", () => {
     const profiles = loadModelProfiles();
-    const selected = profiles.find(p => p.name === (profileSelect as HTMLSelectElement).value);
+    const selected = profiles.find(p => p.name === profileSelect.value);
     if (selected) {
-      setPref("llmApiBase", selected.apiBase);
+      setPref("llmProvider", normalizeProvider(selected.provider));
+      setPref("llmApiBase", getProviderApiBase(selected));
       setPref("llmApiKey", selected.apiKey);
       setPref("llmModel", selected.model);
       setPref("llmThinkingMode", selected.thinkingMode || "default");

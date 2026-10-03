@@ -1,7 +1,9 @@
 import { MODEL_BUDGET_FIELDS } from "./model-profile";
 import { resolveModelCapabilities } from "./model-capabilities";
 import type { ModelProfile } from "./model-profile";
+import { buildLLMHeaders, createProviderSessionId, getProviderApiBase, LLMProvider, normalizeProvider, PROVIDER_MODELS, PROVIDER_PRESETS } from "./llm-provider";
 import { config } from "../../package.json";
+import { XUL_NS, XULMenuList } from "../utils/dom";
 import {
   DEFAULT_SYSTEM_PROMPT_EN,
   DEFAULT_SYSTEM_PROMPT_CN,
@@ -31,7 +33,7 @@ function setPrefFull(key: string, value: string): void {
 function getFieldValue(key: string, fallback = ""): string {
   const el = document.querySelector(
     `#zotero-prefpane-${ADDON_REF}-${key}`,
-  ) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+  ) as HTMLInputElement | XULMenuList | HTMLTextAreaElement | null;
   if (el && typeof el.value === "string") return el.value;
   return getPrefFull(key) || fallback;
 }
@@ -39,7 +41,7 @@ function getFieldValue(key: string, fallback = ""): string {
 function setFieldValue(key: string, value: string): void {
   const el = document.querySelector(
     `#zotero-prefpane-${ADDON_REF}-${key}`,
-  ) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null;
+  ) as HTMLInputElement | XULMenuList | HTMLTextAreaElement | null;
   if (el && typeof el.value === "string") el.value = value;
 }
 
@@ -61,6 +63,96 @@ function loadProfiles(): ModelProfile[] {
 
 function saveProfiles(profiles: ModelProfile[]): void {
   Zotero.Prefs.set(`${PREF_PREFIX}.modelProfiles`, JSON.stringify(profiles), true);
+}
+
+function readModelFields(name: string, provider = normalizeProvider(getFieldValue("llmProvider"))): ModelProfile {
+  const profile: ModelProfile = {
+    name, provider,
+    apiBase: getProviderApiBase({ provider, apiBase: getFieldValue("llmApiBase") }),
+    apiKey: getFieldValue("llmApiKey"), model: getFieldValue("llmModel"),
+    thinkingMode: getFieldValue("llmThinkingMode", "default"),
+    thinkEffort: getFieldValue("llmThinkEffort", "default"),
+    tokenizerMode: getFieldValue("tokenizerMode", "auto"),
+  };
+  for (const key of MODEL_BUDGET_FIELDS) profile[key] = Number(getFieldValue(key)) || 0;
+  return profile;
+}
+
+function writeModelFields(profile: ModelProfile): void {
+  const provider = normalizeProvider(profile.provider);
+  const values = {
+    llmProvider: provider, llmApiBase: getProviderApiBase({ ...profile, provider }),
+    llmApiKey: profile.apiKey, llmModel: profile.model,
+    llmThinkingMode: profile.thinkingMode || "default", llmThinkEffort: profile.thinkEffort || "default",
+    tokenizerMode: profile.tokenizerMode || "auto",
+  };
+  for (const [key, value] of Object.entries(values)) {
+    setPrefFull(key, value);
+    setFieldValue(key, value);
+  }
+  for (const key of MODEL_BUDGET_FIELDS) {
+    Zotero.Prefs.set(`${PREF_PREFIX}.${key}`, profile[key] || 0, true);
+    setFieldValue(key, String(profile[key] || 0));
+  }
+  setPrefFull("activeProfile", profile.name);
+  syncProviderUI();
+}
+
+function syncProviderUI(): void {
+  const select = document.querySelector(`#zotero-prefpane-${ADDON_REF}-llmProvider`) as XULMenuList | null;
+  if (!select) return;
+  const provider = normalizeProvider(getFieldValue("llmProvider"));
+  select.value = provider;
+  select.setAttribute("data-current-provider", provider);
+  const base = document.querySelector(`#zotero-prefpane-${ADDON_REF}-llmApiBase`) as HTMLInputElement | null;
+  if (base) base.readOnly = provider !== "custom";
+  const hint = document.querySelector(`#zotero-prefpane-${ADDON_REF}-providerHint`) as HTMLElement | null;
+  if (hint) hint.hidden = provider !== "opencode-go";
+  const models = document.querySelector(`#zotero-prefpane-${ADDON_REF}-providerModels`) as XULMenuList | null;
+  if (models) {
+    const popup = models.querySelector("menupopup")!;
+    popup.replaceChildren();
+    models.hidden = provider === "custom";
+    for (const model of PROVIDER_MODELS[provider]) {
+      const option = document.createElementNS(XUL_NS, "menuitem");
+      option.setAttribute("value", model);
+      option.setAttribute("label", model);
+      popup.appendChild(option);
+    }
+  }
+}
+
+function initProviderUI(): boolean {
+  const select = document.querySelector(`#zotero-prefpane-${ADDON_REF}-llmProvider`) as XULMenuList | null;
+  if (!select) return false;
+  if (select.hasAttribute("data-provider-bound")) return true;
+  select.setAttribute("data-provider-bound", "true");
+  // Keep credentials, overrides and unsaved custom edits separate while this pane is open.
+  const drafts = new Map<LLMProvider, ModelProfile>();
+  select.value = normalizeProvider(getPrefFull("llmProvider"));
+  syncProviderUI();
+  select.addEventListener("command", () => {
+    const previous = normalizeProvider(select.getAttribute("data-current-provider"));
+    const provider = normalizeProvider(select.value);
+    drafts.set(previous, readModelFields(getPrefFull("activeProfile"), previous));
+    let next = drafts.get(provider);
+    if (!next) {
+      const preset = provider === "custom" ? undefined : PROVIDER_PRESETS[provider];
+      next = { name: "", provider, apiBase: preset?.apiBase || "", apiKey: "",
+        model: preset?.model || "", tokenizerMode: preset?.tokenizerMode || "auto",
+        thinkingMode: "default", thinkEffort: "default" };
+    }
+    writeModelFields(next);
+  });
+  const models = document.querySelector(`#zotero-prefpane-${ADDON_REF}-providerModels`) as XULMenuList | null;
+  models?.addEventListener("command", () => {
+    const model = models.value;
+    if (!PROVIDER_MODELS[normalizeProvider(select.value)].includes(model)) return;
+    setFieldValue("llmModel", model);
+    setPrefFull("llmModel", model);
+    document.querySelector(`#zotero-prefpane-${ADDON_REF}-llmModel`)?.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  return true;
 }
 
 function initProfileUI() {
@@ -112,24 +204,7 @@ function initProfileUI() {
       loadBtn.textContent = "Load";
       loadBtn.style.cssText = "font-size: 11px; padding: 1px 8px; cursor: pointer;";
       loadBtn.addEventListener("click", () => {
-        Zotero.Prefs.set(`${PREF_PREFIX}.llmApiBase`, p.apiBase, true);
-        Zotero.Prefs.set(`${PREF_PREFIX}.llmApiKey`, p.apiKey, true);
-        Zotero.Prefs.set(`${PREF_PREFIX}.llmModel`, p.model, true);
-        Zotero.Prefs.set(`${PREF_PREFIX}.llmThinkingMode`, p.thinkingMode || "default", true);
-        Zotero.Prefs.set(`${PREF_PREFIX}.llmThinkEffort`, p.thinkEffort || "default", true);
-        for (const key of MODEL_BUDGET_FIELDS) {
-          Zotero.Prefs.set(`${PREF_PREFIX}.${key}`, p[key] || 0, true);
-          setFieldValue(key, String(p[key] || 0));
-        }
-        setPrefFull("tokenizerMode", p.tokenizerMode || "auto");
-        setFieldValue("tokenizerMode", p.tokenizerMode || "auto");
-        Zotero.Prefs.set(`${PREF_PREFIX}.activeProfile`, p.name, true);
-        // Refresh the displayed pref fields
-        setFieldValue("llmApiBase", p.apiBase);
-        setFieldValue("llmApiKey", p.apiKey);
-        setFieldValue("llmModel", p.model);
-        setFieldValue("llmThinkingMode", p.thinkingMode || "default");
-        setFieldValue("llmThinkEffort", p.thinkEffort || "default");
+        writeModelFields(p);
         showProfileStatus(`Loaded profile "${p.name}"`);
         renderProfileList();
       });
@@ -158,31 +233,16 @@ function initProfileUI() {
   profileSaveBtn.addEventListener("click", () => {
     const name = profileNameInput.value.trim();
     if (!name) { showProfileStatus("Enter a profile name", true); return; }
-    const apiBase = getFieldValue("llmApiBase");
-    const apiKey = getFieldValue("llmApiKey");
-    const model = getFieldValue("llmModel");
-    const thinkingMode = getFieldValue("llmThinkingMode", "default");
-    const thinkEffort = getFieldValue("llmThinkEffort", "default");
     const profiles = loadProfiles();
     const existing = profiles.findIndex(p => p.name === name);
-    const profile: ModelProfile = { name, apiBase, apiKey, model, thinkingMode, thinkEffort, tokenizerMode: getFieldValue("tokenizerMode", "auto") };
-    for (const key of MODEL_BUDGET_FIELDS) {
-      profile[key] = Number(getFieldValue(key)) || 0;
-      Zotero.Prefs.set(`${PREF_PREFIX}.${key}`, profile[key], true);
-    }
-    setPrefFull("tokenizerMode", profile.tokenizerMode!);
+    const profile = readModelFields(name);
     if (existing >= 0) {
       profiles[existing] = profile;
     } else {
       profiles.push(profile);
     }
     saveProfiles(profiles);
-    setPrefFull("llmApiBase", apiBase);
-    setPrefFull("llmApiKey", apiKey);
-    setPrefFull("llmModel", model);
-    setPrefFull("llmThinkingMode", thinkingMode);
-    setPrefFull("llmThinkEffort", thinkEffort);
-    Zotero.Prefs.set(`${PREF_PREFIX}.activeProfile`, name, true);
+    writeModelFields(profile);
     showProfileStatus(`Saved profile "${name}"`);
     profileNameInput.value = "";
     renderProfileList();
@@ -207,6 +267,7 @@ function initLLMTestUI() {
   if ((testBtn as any).dataset.chatpdfInitialized === "true") return true;
   (testBtn as any).dataset.chatpdfInitialized = "true";
   const debugOut = debugEl;
+  const sessionId = createProviderSessionId();
 
   function writeDebug(value: unknown) {
     debugOut.style.display = "";
@@ -214,7 +275,8 @@ function initLLMTestUI() {
   }
 
   testBtn.addEventListener("click", async () => {
-    const apiBase = getFieldValue("llmApiBase", "https://api.deepseek.com/v1");
+    const provider = normalizeProvider(getFieldValue("llmProvider"));
+    const apiBase = getProviderApiBase({ provider, apiBase: getFieldValue("llmApiBase", "https://api.deepseek.com/v1") });
     const apiKey = getFieldValue("llmApiKey");
     const model = getFieldValue("llmModel", "deepseek-chat");
     const thinkingMode: ThinkingMode = normalizeThinkingMode(getFieldValue("llmThinkingMode", "default"));
@@ -245,6 +307,7 @@ function initLLMTestUI() {
     }
 
     const requestDebug = {
+      provider,
       url,
       apiKey: maskApiKey(apiKey),
       model,
@@ -275,10 +338,7 @@ function initLLMTestUI() {
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: buildLLMHeaders({ provider, apiBase, apiKey, sessionId }),
         body: JSON.stringify(body),
       });
       const rawText = await res.text();
@@ -396,6 +456,7 @@ function initPromptUI() {
 // Zotero 7 preference pane scripts run in the main window context.
 // The pane XHTML may not be in the DOM yet, so retry until elements appear.
 function tryInit(retries: number) {
+  const providerOk = initProviderUI();
   const promptOk = initPromptUI();
   const testOk = initLLMTestUI();
   initProfileUI();
@@ -409,28 +470,30 @@ function tryInit(retries: number) {
         Zotero.Prefs.set(`${PREF_PREFIX}.${budgetKey}`, 0, true);
         setFieldValue(budgetKey, "0");
       }
-      setPrefFull("tokenizerMode", "auto");
-      setFieldValue("tokenizerMode", "auto");
+      const tokenizerMode = normalizeProvider(getFieldValue("llmProvider")) === "opencode-go" ? "deepseek-v4-estimate" : "auto";
+      setPrefFull("tokenizerMode", tokenizerMode);
+      setFieldValue("tokenizerMode", tokenizerMode);
       setPrefFull("activeProfile", "");
     });
   }
   const refresh = document.querySelector(`#zotero-prefpane-${ADDON_REF}-refreshModelLimits`) as HTMLButtonElement | null;
   if (refresh && !refresh.dataset.initialized) {
     refresh.dataset.initialized = "true";
+    const sessionId = createProviderSessionId();
     refresh.addEventListener("click", async () => {
       // Preferences and the panel have separate bundles; invalidate both through a shared revision.
       Zotero.Prefs.set(`${PREF_PREFIX}.modelCapabilitiesRevision`, Date.now(), true);
       const status = document.querySelector(`#zotero-prefpane-${ADDON_REF}-modelLimitsStatus`)!;
       refresh.disabled = true;
       try {
-        const modelSettings = { apiBase: getFieldValue("llmApiBase"), apiKey: getFieldValue("llmApiKey"), model: getFieldValue("llmModel"), thinkingMode: normalizeThinkingMode(getFieldValue("llmThinkingMode")), thinkEffort: normalizeThinkEffort(getFieldValue("llmThinkEffort")), tokenizerMode: getFieldValue("tokenizerMode") };
+        const modelSettings = { provider: normalizeProvider(getFieldValue("llmProvider")), sessionId, apiBase: getFieldValue("llmApiBase"), apiKey: getFieldValue("llmApiKey"), model: getFieldValue("llmModel"), thinkingMode: normalizeThinkingMode(getFieldValue("llmThinkingMode")), thinkEffort: normalizeThinkEffort(getFieldValue("llmThinkEffort")), tokenizerMode: getFieldValue("tokenizerMode") };
         const limits = await resolveModelCapabilities(modelSettings, undefined, true);
         status.textContent = `${limits.source}: context ${limits.contextWindow || "separate"}, input ${limits.inputLimit || "shared"}, max output ${limits.maxOutput} tokens. Local counts are estimates.`;
       } catch (error: any) { status.textContent = error.message; }
       finally { refresh.disabled = false; }
     });
   }
-  if (promptOk && testOk) return;
+  if (promptOk && testOk && providerOk) return;
   if (retries > 0) {
     setTimeout(() => tryInit(retries - 1), 100);
   } else {

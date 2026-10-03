@@ -47,11 +47,14 @@ At minimum, configure:
 | Setting | Description |
 | --- | --- |
 | MinerU API Token | Used when a PDF needs to be converted. |
+| LLM Provider | DeepSeek, OpenCode Go, or Custom (the existing OpenAI-compatible configuration). |
 | LLM API Base URL | Base URL for an OpenAI-compatible API. |
 | LLM API Key | Bearer token for the model provider. |
 | Model Name | Model identifier accepted by the provider. |
 
-The default API base and model target DeepSeek. You can save multiple model profiles and use **LLM API Test** to check the current endpoint and credentials.
+The default API base and model target DeepSeek; existing settings and profiles remain **Custom**. Built-in providers fill in their endpoint and a default model. Provider selection is saved with each model profile. Switching providers keeps separate drafts while the settings pane is open and does not carry credentials or token overrides to a new provider. Save profiles to retain those configurations across restarts. Use **LLM API Test** to check the current endpoint and credentials.
+
+**OpenCode Go** uses `https://opencode.ai/zen/go/v1` and a Go API key. Suggested DeepSeek IDs include `deepseek-v4.1-flash`, `deepseek-v4-pro`, and `deepseek-v4-flash`, without the `opencode-go/` prefix. ChatPDF sends its own client identity and a stable conversation header on main and auxiliary requests. Local token counts use the explicit DeepSeek V4 estimate. Known Go DeepSeek models use bundled catalogue capacities when `/models` omits them; endpoint metadata and manual overrides take precedence. Unknown models require explicit limits. [Go is intended for coding agents](https://opencode.ai/docs/go/#where-can-i-use-it); this integration does not guarantee service acceptance for paper-reading traffic.
 
 Optional settings include MinerU language and timeout, thinking controls, agent iteration limit, context budget, cache directory, system prompt, debug-log level, and web tools. Brave Search is used when a Brave key is configured; otherwise web search falls back to DuckDuckGo.
 

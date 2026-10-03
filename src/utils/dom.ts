@@ -1,6 +1,11 @@
 /** XUL namespace for creating XUL elements. */
 export const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
+/** Zotero chrome dropdowns use XUL menus; HTML select popups are not reliable there. */
+export interface XULMenuList extends HTMLElement {
+  value: string;
+}
+
 /** Create an element in XHTML namespace (required inside Zotero XUL panels). */
 export function h(doc: Document, tag: string, attrs?: Record<string, string>, ...children: (Node | string)[]): HTMLElement {
   const el = doc.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement;
