@@ -8,6 +8,7 @@ import { ChatSession } from "./chat-session";
 import { getPref } from "../utils/prefs";
 import { ContextMessage, COMPACT_PROMPT } from "./agent-context";
 import { compactAgentContext } from "./context-compaction";
+import { logGenerationResult } from "./debug-log";
 
 export { IterationRecord } from "./llm-client";
 export type AgentThinkingCallback = (chunk: string, done: boolean, isNewBlock: boolean) => void;
@@ -18,7 +19,7 @@ export interface AgentCallbacks {
   onStream?: StreamCallback;
   onThinking?: AgentThinkingCallback;
   onUsage?: (usage: TokenUsage) => void;
-  onContextStats?: (stats: { inputTokens: number; inputLimit: number; source: string }) => void;
+  onContextStats?: (stats: { inputTokens: number; inputLimit: number; source: string; outputLimit?: number; outputPolicy?: string; modelMaxOutput?: number }) => void;
   onCompaction?: (active: boolean) => void;
   onOutputContinuation?: (outputLimit: number) => void;
   onContextSaved?: () => Promise<void>;
@@ -64,7 +65,7 @@ export async function runAgentLoop(
   const imageSources = new Set<string>();
   let repeats = 0;
   let previousCalls = "";
-  let desiredOutput = capabilities.requestedOutput;
+  let desiredOutput = capabilities.generation.outputTokens;
   let previousPartial = "";
   let repeatedPartial = 0;
   const toolContext: ToolExecutionContext = {
@@ -87,7 +88,7 @@ export async function runAgentLoop(
   const compact = async (recover = false) => {
     callbacks.onCompaction?.(true);
     try {
-      await compactAgentContext(context, tools, latestUser, budget, addUsage, signal, recover, settings, check);
+      await compactAgentContext(context, tools, latestUser, budget.withOutput(desiredOutput), addUsage, signal, recover, settings, check);
       await save();
     } finally { callbacks.onCompaction?.(false); }
   };
@@ -95,10 +96,10 @@ export async function runAgentLoop(
   for (let iteration = 0; ; iteration++) {
     check();
     if (!autoContinue && maxIterations > 0 && iteration >= maxIterations) throw new Error(`Paused at the configured ${maxIterations}-step limit. Progress and results were saved. Enable automatic continuation or send a follow-up to continue.`);
-    if (budget.shouldCompact(context.messages, tools, { role: "user", content: COMPACT_PROMPT })) await compact();
-    budget.assertFits(context.messages, tools);
-    let outputLimit = budget.outputAllowance(context.messages, tools, desiredOutput);
-    callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), inputLimit: budget.inputLimit(outputLimit), source: capabilities.source });
+    const outputLimit = budget.outputLimit(desiredOutput);
+    if (budget.shouldCompact(context.messages, tools, { role: "user", content: COMPACT_PROMPT }, outputLimit)) await compact();
+    budget.assertFits(context.messages, tools, outputLimit);
+    callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), source: capabilities.source, ...budget.requestMetadata(outputLimit) });
     let firstThinking = true;
     let thinkingDone = false;
     const thinking = callbacks.onThinking ? (chunk: string, done: boolean) => {
@@ -116,7 +117,6 @@ export async function runAgentLoop(
     } catch (error) {
       if (!(error instanceof ProviderContextError)) throw error;
       await compact(true);
-      outputLimit = budget.outputAllowance(context.messages, tools, desiredOutput);
       budget.assertFits(context.messages, tools, outputLimit);
       result = await chatWithTools(context.messages, tools,
         callbacks.onStream ? (chunk, done) => { if (!done) callbacks.onStream!(chunk, false); } : undefined,
@@ -124,7 +124,8 @@ export async function runAgentLoop(
     }
     if (!firstThinking && !thinkingDone) callbacks.onThinking?.("", true, false);
     addUsage(result.usage);
-    (context.data.requests ||= []).push({ kind: "agent", generation: context.data.checkpoints.length, usage: result.usage, inputTokens: budget.count(context.messages, tools), countMethod: "local-bpe-estimate", finishReason: result.finishReason, outputLimit });
+    (context.data.requests ||= []).push({ kind: "agent", generation: context.data.checkpoints.length, usage: result.usage, inputTokens: budget.count(context.messages, tools), countMethod: "local-bpe-estimate", finishReason: result.finishReason, ...budget.requestMetadata(outputLimit) });
+    void logGenerationResult("agent", settings.model, budget.requestMetadata(outputLimit), budget.count(context.messages, tools), result);
     budget.counter.observe(context.messages, tools, result.usage);
     check();
     Zotero.debug(`[ChatPDF] agent request: step=${iteration + 1}, generation=${context.data.checkpoints.length}, input=${result.usage?.prompt_tokens ?? "unknown"}, hit=${result.usage?.prompt_cache_hit_tokens ?? "unknown"}, miss=${result.usage?.prompt_cache_miss_tokens ?? "unknown"}`);
@@ -145,19 +146,15 @@ export async function runAgentLoop(
       await save();
       if (!autoContinue) throw new Error("The provider reached its output limit. Progress was saved. Enable automatic continuation or send a follow-up to continue.");
       if (repeatedPartial >= 2) throw new Error("Output continuation repeated the same text without progress. Partial output and history were saved.");
-      desiredOutput = Math.min(capabilities.maxOutput, outputLimit * 2);
-      let nextOutput = budget.outputAllowance(context.messages, tools, desiredOutput);
-      if (!partial && nextOutput <= outputLimit && outputLimit < capabilities.maxOutput && context.messages.length > 2) {
-        await compact();
-        nextOutput = budget.outputAllowance(context.messages, tools, desiredOutput);
-      }
+      desiredOutput = budget.outputLimit(outputLimit * 2);
+      const nextOutput = desiredOutput;
       if (!partial && nextOutput <= outputLimit) throw new Error("The provider exhausted the available model output capacity without producing text. Attempts and history were saved; reduce thinking effort or use a model with more output capacity.");
       callbacks.onOutputContinuation?.(nextOutput);
       continue;
     }
     if (!result.tool_calls?.length) {
       context.append(assistantMessage(result));
-      callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), inputLimit: budget.inputLimit(), source: capabilities.source });
+      callbacks.onContextStats?.({ inputTokens: budget.count(context.messages, tools), source: capabilities.source, ...budget.requestMetadata(outputLimit) });
       const record: IterationRecord = { reasoning: result.reasoning, toolCalls: [], usage: result.usage };
       iterations.push(record);
       callbacks.onIterationComplete?.(iteration + 1, autoContinue ? 0 : maxIterations, record);

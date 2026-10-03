@@ -12,7 +12,7 @@ import {
   ModelProfile,
 } from "./panel-state";
 import { showFilteredHistory, showHistoryView, hideHistoryView } from "./history-view";
-import { refreshSourceChips, convertSource } from "./source-chips";
+import { refreshSourceChips, recoverSource } from "./source-chips";
 import { renderChatHistory, updateUsageBar } from "./message-renderer";
 import { handleSend, handleConvertAndSend, autoSaveSession } from "./send-handler";
 import {
@@ -91,7 +91,14 @@ function refreshProfileSelect(root: HTMLElement): void {
 // ---- Session management ----
 
 export async function addItemToSession(item: Zotero.Item, target: Window | HTMLElement): Promise<void> {
-  await addZoteroItemToSession(item, getPanelState(target).session);
+  const state = getPanelState(target);
+  const session = state.session;
+  const added = await addZoteroItemToSession(item, session);
+  if (state.session !== session || !added.sourceKey) return;
+  const source = session.getSource(added.sourceKey);
+  const doc = (target as Window).document || (target as HTMLElement).ownerDocument;
+  const root = doc?.querySelector("#chatpdf-root") as HTMLElement | null;
+  if (source && root) recoverSource(source, root, session);
 }
 
 /** Insert an inline mention chip into the TipTap editor. */
@@ -460,8 +467,6 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   const toolbar = h(doc, "div", { className: "chatpdf-toolbar" });
   const historyBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{1F4CB} History");
   const newChatBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{2795} New Chat");
-  const clearLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Clear chat");
-  const convertAllLink = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "Convert all");
   const imageButton = h(doc, "button", { className: "chatpdf-toolbar-btn", title: IMAGE_INPUT_HELP }, "Add image");
   const imagePicker = h(doc, "input", { type: "file", accept: "image/png,image/jpeg,image/webp", multiple: "multiple", style: "display:none" }) as HTMLInputElement;
   const imageStatus = h(doc, "div", { className: "chatpdf-input-hint", role: "status" });
@@ -479,8 +484,6 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   profileSelect.appendChild(doc.createElementNS(XUL_NS, "menupopup"));
   toolbar.appendChild(historyBtn);
   toolbar.appendChild(newChatBtn);
-  toolbar.appendChild(clearLink);
-  toolbar.appendChild(convertAllLink);
   toolbar.appendChild(imageButton);
   toolbar.appendChild(imagePicker);
   toolbar.appendChild(profileSelect);
@@ -672,24 +675,6 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
       abortCurrentStream(root);
     } else {
       handleSend(root);
-    }
-  });
-
-  clearLink.addEventListener("click", async () => {
-    abortCurrentStream(root);
-    state.session.clearHistory();
-    await autoSaveSession(root, true);
-    const msgs = root.querySelector("#chatpdf-messages");
-    if (msgs) {
-      msgs.innerHTML = "";
-      msgs.appendChild(welcome);
-    }
-    updateUsageBar(root);
-  });
-
-  convertAllLink.addEventListener("click", () => {
-    for (const s of state.session.getSources().filter((s) => s.status === "pending")) {
-      convertSource(s, () => refreshSourceChips(root), undefined, state).catch(() => {});
     }
   });
 

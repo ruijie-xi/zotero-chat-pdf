@@ -28,5 +28,5 @@ vi.mock("../src/modules/token-accounting", async original => ({
 }));
 vi.mock("../src/modules/model-capabilities", async original => ({
   ...await original<typeof import("../src/modules/model-capabilities")>(),
-  resolveModelCapabilities: vi.fn(async () => ({ inputLimit: 240000, maxOutput: 32768, requestedOutput: 8192, tokenizer: "deepseek-v4", imageTokens: 1024, source: "manual", fetchedAt: 1 })),
+  resolveModelCapabilities: vi.fn(async () => ({ inputLimit: 240000, maxOutput: 32768, generation: { outputTokens: 32768, retryCeiling: 32768, source: "model-maximum", thinkingMode: "default", thinkEffort: "default" }, tokenizer: "deepseek-v4", imageTokens: 1024, source: "manual", fetchedAt: 1 })),
 }));

@@ -379,7 +379,7 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
       function: {
         name: "convert_session_source",
         description:
-          "Convert a source already in the current ChatPDF session with MinerU. " +
+          "Convert a source already in the current ChatPDF session with the configured PDF conversion engine. " +
           "Use when the source is needed to answer. Be careful with extreme bulk conversions and explain the cost/risk when relevant.",
         parameters: {
           type: "object",
@@ -395,7 +395,7 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
       function: {
         name: "add_and_convert_zotero_item",
         description:
-          "Add a Zotero item's PDF attachment to this session, then convert it with MinerU if needed. " +
+          "Add a Zotero item's PDF attachment to this session, then convert it with the configured PDF conversion engine if needed. " +
           "Use when the item is relevant and needed to answer. Be careful with extreme bulk conversions and explain the cost/risk when relevant.",
         parameters: {
           type: "object",

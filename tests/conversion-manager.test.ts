@@ -19,6 +19,7 @@ vi.mock("../src/modules/md-cache", () => ({
 vi.mock("../src/modules/mineru-client", () => ({
   MINERU_LONG_PDF_CHUNK_SIZE: 25,
   convertPdf: vi.fn(),
+  getMineruTaskState: vi.fn(),
 }));
 vi.mock("../src/modules/panel-state", () => ({
   createAbortController: () => {
@@ -30,11 +31,12 @@ vi.mock("../src/modules/panel-state", () => ({
 import { atomicWriteJson } from "../src/utils/atomic-storage";
 import {
   cancelConversion,
+  recoverConversion,
   releaseConversion,
   startConversion,
   waitForConversion,
 } from "../src/modules/conversion-manager";
-import { convertPdf } from "../src/modules/mineru-client";
+import { convertPdf, getMineruTaskState } from "../src/modules/mineru-client";
 import * as MDCache from "../src/modules/md-cache";
 
 function attachment(key: string) {
@@ -51,6 +53,7 @@ function attachment(key: string) {
 describe("conversion manager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(Zotero.Prefs.get).mockImplementation((key: any) => String(key).endsWith("pdfConversionEngine") ? "mineru" : undefined);
     Object.assign(IOUtils, { exists: vi.fn(async () => false) });
     Object.assign(Zotero, { Users: { getCurrentUserID: () => 99 } });
     Object.assign(Zotero.Libraries, { get: vi.fn(() => ({ libraryID: 1, libraryType: "user" })) });
@@ -152,5 +155,98 @@ describe("conversion manager", () => {
     expect(JSON.stringify(completed)).not.toMatch(/D:\\private|https:\/\//);
     const persisted = vi.mocked(atomicWriteJson).mock.calls.at(-1)?.[1];
     expect(JSON.stringify(persisted)).not.toMatch(/D:\\private|https:\/\//);
+  });
+
+  async function timedOutUpload(key: string, batchId: string, force = false) {
+    vi.mocked(MDCache.has).mockResolvedValue(false);
+    vi.mocked(convertPdf).mockImplementationOnce(async (_path, _progress, _signal, options) => {
+      await options?.onRemoteTask?.({ taskKey: "full", batchId, state: "uploaded" });
+      throw new Error("MinerU result polling timed out after 15 minutes");
+    });
+    const started = await startConversion({ key, libraryID: 1, force }, "ui:old");
+    expect(await waitForConversion(started.jobId)).toMatchObject({ state: "error" });
+    return started;
+  }
+
+  function successfulRecovery() {
+    vi.mocked(convertPdf).mockResolvedValueOnce({
+      markdown: "Recovered paper", pageCount: 1, chunkSize: 1,
+      chunks: [{ index: 1, startPage: 1, endPage: 1, markdown: "Recovered paper" }], assetCount: 0,
+    });
+  }
+
+  it("rearms an uploaded timeout with the same job and commits its recovered result", async () => {
+    const old = await timedOutUpload("RESUME", "saved-batch");
+    vi.mocked(getMineruTaskState).mockResolvedValue("done");
+    successfulRecovery();
+    const recovered = await recoverConversion({ key: "RESUME", libraryID: 1 }, "ui:new");
+    expect(recovered?.jobId).toBe(old.jobId);
+    expect(await waitForConversion(old.jobId)).toMatchObject({ state: "ready" });
+    expect(vi.mocked(convertPdf).mock.calls.at(-1)?.[3]).toMatchObject({
+      resumeOnly: true, remoteTasks: new Map([["full", { taskKey: "full", batchId: "saved-batch", state: "uploaded" }]]),
+    });
+    expect(MDCache.commitStagedDocument).toHaveBeenCalledWith(old.jobId, "1-RESUME");
+  });
+
+  it("prefers an older completed upload over a newer pending duplicate", async () => {
+    const old = await timedOutUpload("OLDERDONE", "completed-batch");
+    const newer = await timedOutUpload("OLDERDONE", "queued-batch", true);
+    vi.mocked(getMineruTaskState).mockImplementation(async task => task.batchId === "completed-batch" ? "done" : "pending");
+    successfulRecovery();
+    const recovered = await recoverConversion({ key: "OLDERDONE", libraryID: 1 }, "ui:new");
+    expect(recovered?.jobId).toBe(old.jobId);
+    expect(recovered?.jobId).not.toBe(newer.jobId);
+    await waitForConversion(old.jobId);
+  });
+
+  it("adding a never-converted document does not upload it", async () => {
+    vi.mocked(MDCache.has).mockResolvedValue(false);
+    expect(await recoverConversion({ key: "NOUPLOAD", libraryID: 1 }, "ui:new")).toBeNull();
+    expect(convertPdf).not.toHaveBeenCalled();
+    expect(getMineruTaskState).not.toHaveBeenCalled();
+  });
+
+  it("a recovery status failure cannot silently submit a replacement task", async () => {
+    await timedOutUpload("PROBEFAIL", "unavailable-batch");
+    vi.mocked(convertPdf).mockClear();
+    vi.mocked(getMineruTaskState).mockRejectedValue(new Error("MinerU recovery status failed (503)"));
+    await expect(startConversion({ key: "PROBEFAIL", libraryID: 1 })).rejects.toThrow("503");
+    expect(convertPdf).not.toHaveBeenCalled();
+  });
+
+  it("recovery matches conversion options and explicit force starts fresh", async () => {
+    await timedOutUpload("OPTIONS", "old-pipeline");
+    vi.mocked(convertPdf).mockClear();
+    expect(await recoverConversion({ key: "OPTIONS", libraryID: 1, options: { modelVersion: "vlm" } }, "ui:new")).toBeNull();
+    expect(getMineruTaskState).not.toHaveBeenCalled();
+    successfulRecovery();
+    const forced = await startConversion({ key: "OPTIONS", libraryID: 1, force: true });
+    await waitForConversion(forced.jobId);
+    expect(vi.mocked(convertPdf).mock.calls[0][3]?.remoteTasks?.size).toBe(0);
+  });
+
+  it("simultaneous recovery owners share one resumed job", async () => {
+    const old = await timedOutUpload("RESUMEOWNERS", "shared-batch");
+    vi.mocked(convertPdf).mockClear();
+    vi.mocked(getMineruTaskState).mockResolvedValue("pending");
+    let finish!: () => void;
+    let signal!: AbortSignal;
+    vi.mocked(convertPdf).mockImplementationOnce(async (_path, _progress, observed) => {
+      signal = observed!;
+      await new Promise<void>(resolve => { finish = resolve; });
+      return { markdown: "Recovered", pageCount: 1, chunkSize: 1, chunks: [], assetCount: 0 };
+    });
+    const [a, b] = await Promise.all([
+      recoverConversion({ key: "RESUMEOWNERS", libraryID: 1 }, "ui:one"),
+      recoverConversion({ key: "RESUMEOWNERS", libraryID: 1 }, "ui:two"),
+    ]);
+    expect(a?.jobId).toBe(old.jobId);
+    expect(b?.jobId).toBe(old.jobId);
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(convertPdf).toHaveBeenCalledOnce();
+    releaseConversion(old.jobId, "ui:one");
+    expect(signal.aborted).toBe(false);
+    finish();
+    await waitForConversion(old.jobId);
   });
 });

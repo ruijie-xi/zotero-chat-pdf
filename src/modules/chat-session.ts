@@ -27,11 +27,13 @@ export interface SourceItem {
   markdown?: string; // Loaded markdown content
   status: "pending" | "converting" | "ready" | "error";
   errorMessage?: string;
+  selfCheck?: import("./vision-self-check").SelfCheckSummary;
+  conversionStatus?: import("./conversion-manager").ConversionStatus;
 }
 
 export class ChatSession {
   /** Working view estimate, separate from cumulative provider usage. Recomputed on send. */
-  contextStats?: { inputTokens: number; inputLimit: number; source: string };
+  contextStats?: { inputTokens: number; inputLimit: number; source: string; outputLimit?: number; outputPolicy?: string; modelMaxOutput?: number };
   id: string;
   title: string = "";
   titleSource: "auto" | "llm" | "user" = "auto";

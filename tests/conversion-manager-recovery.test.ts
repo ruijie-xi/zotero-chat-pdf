@@ -53,6 +53,7 @@ import * as MDCache from "../src/modules/md-cache";
 
 describe("conversion manager recovery", () => {
   it("isolates invalid entries and resumes a valid MinerU checkpoint", async () => {
+    vi.mocked(Zotero.Prefs.get).mockImplementation((key: any) => String(key).endsWith("pdfConversionEngine") ? "mineru" : undefined);
     Object.assign(IOUtils, {
       exists: vi.fn(async (path: string) => path === "/cache/conversions/jobs.json"),
       read: vi.fn(async () => new TextEncoder().encode(JSON.stringify({ version: 1, jobs }))),

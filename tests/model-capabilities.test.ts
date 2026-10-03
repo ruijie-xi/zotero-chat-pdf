@@ -17,8 +17,8 @@ describe("model capability resolution", () => {
       return { ok: true, json: async () => ({ data: [{ id: go.model }] }) };
     });
     vi.stubGlobal("fetch", fetch);
-    expect(await resolveModelCapabilities(go)).toMatchObject({ contextWindow: 1000000, maxOutput: 384000, source: "provider-preset", requestedOutput: 8192 });
-    expect(await resolveModelCapabilities({ ...go, contextWindowTokens: 50000, maxOutputTokens: 10000, requestedOutputTokens: 5000 })).toMatchObject({ contextWindow: 50000, maxOutput: 10000, source: "manual", requestedOutput: 5000 });
+    expect(await resolveModelCapabilities(go)).toMatchObject({ contextWindow: 1000000, maxOutput: 384000, imageTokens: 1024, source: "provider-preset", generation: { outputTokens: 384000 } });
+    expect(await resolveModelCapabilities({ ...go, contextWindowTokens: 50000, maxOutputTokens: 10000, requestedOutputTokens: 5000 })).toMatchObject({ contextWindow: 50000, maxOutput: 10000, source: "manual", generation: { outputTokens: 5000 } });
     await expect(resolveModelCapabilities({ ...go, model: "unknown" })).rejects.toThrow("token limits");
     fetch.mockImplementation(async () => ({ ok: true, json: async () => ({ data: [{ id: go.model, context_window: 800000, max_output_tokens: 200000 }] }) }));
     expect(await resolveModelCapabilities(go, undefined, true)).toMatchObject({ contextWindow: 800000, maxOutput: 200000, source: "endpoint" });
@@ -68,13 +68,14 @@ describe("model capability resolution", () => {
     vi.stubGlobal("fetch", fetch);
     await expect(resolveModelCapabilities(settings)).rejects.toThrow("token limits");
     const manual = await resolveModelCapabilities({ ...settings, contextWindowTokens: 32768, maxOutputTokens: 4096 });
-    expect(manual).toMatchObject({ contextWindow: 32768, maxOutput: 4096, requestedOutput: 4096, source: "manual" });
+    expect(manual).toMatchObject({ contextWindow: 32768, maxOutput: 4096, generation: { outputTokens: 4096 }, source: "manual" });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
   it("requires an explicit approximate tokenizer for unknown models", async () => {
     const custom = { ...settings, apiBase: "https://example.com/v1", model: "custom", inputTokenLimit: 4096, maxOutputTokens: 1024 };
     await expect(resolveModelCapabilities(custom)).rejects.toThrow("verified local tokenizer");
-    expect(await resolveModelCapabilities({ ...custom, tokenizerMode: "deepseek-v4-estimate" })).toMatchObject({ inputLimit: 4096, imageTokens: undefined });
+    expect(await resolveModelCapabilities({ ...custom, tokenizerMode: "deepseek-v4-estimate" })).toMatchObject({ generation: { outputTokens: 1024, retryCeiling: 1024, source: "model-maximum" } });
+    expect(await resolveModelCapabilities({ ...custom, tokenizerMode: "deepseek-v4-estimate", requestedOutputTokens: 512 })).toMatchObject({ inputLimit: 4096, imageTokens: undefined, generation: { outputTokens: 512, retryCeiling: 512, source: "user" } });
   });
   it("invalidates the shared metadata cache after a preferences refresh", async () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ id: "deepseek-flash", context_window: 4096, max_output_tokens: 4096 }] }) }));
@@ -82,7 +83,7 @@ describe("model capability resolution", () => {
     let revision = 0;
     vi.mocked(Zotero.Prefs.get).mockImplementation(() => revision);
     const small = await resolveModelCapabilities(settings);
-    expect(small.requestedOutput).toBe(1024);
+    expect(small.generation.outputTokens).toBe(4096);
     revision++;
     await resolveModelCapabilities(settings);
     expect(fetch).toHaveBeenCalledTimes(2);

@@ -52,6 +52,9 @@ function parseOptions(value: unknown): ConversionOptions | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("options must be an object");
   const raw = value as Record<string, unknown>;
+  if (raw.engine !== undefined && raw.engine !== "vision" && raw.engine !== "mineru") {
+    throw new Error("options.engine must be vision or mineru");
+  }
   if (raw.model_version !== undefined && raw.model_version !== "pipeline" && raw.model_version !== "vlm") {
     throw new Error("options.model_version must be pipeline or vlm");
   }
@@ -66,6 +69,7 @@ function parseOptions(value: unknown): ConversionOptions | undefined {
     throw new Error("options.mineru_poll_timeout_seconds must be an integer between 60 and 3600");
   }
   return {
+    engine: raw.engine as "vision" | "mineru" | undefined,
     modelVersion: raw.model_version as "pipeline" | "vlm" | undefined,
     language: typeof raw.language === "string" ? raw.language.trim() : undefined,
     isOcr: raw.is_ocr as boolean | undefined,
@@ -99,8 +103,14 @@ function statusPayload(value: ConversionStatus): Record<string, unknown> {
     title: status.title, progress: status.progress, error: status.error, stage: status.stage,
     current_chunk: status.currentChunk, total_chunks: status.totalChunks,
     progress_percent: status.progressPercent, created_at: status.createdAt, updated_at: status.updatedAt,
+    completed_pages: status.completedPages, total_pages: status.totalPages, reused_pages: status.reusedPages,
+    request_count: status.requestCount, usage: status.usage,
+    active_requests: status.activeRequests, receiving_requests: status.receivingRequests,
     retryable: status.retryable, remote_may_continue: status.remoteMayContinue,
     options: status.options && {
+      engine: status.options.engine,
+      vision_model: status.options.vision?.model,
+      vision_chunk_pages: status.options.vision?.chunkPages,
       model_version: status.options.modelVersion, language: status.options.language, is_ocr: status.options.isOcr,
       enable_formula: status.options.enableFormula, enable_table: status.options.enableTable,
       mineru_poll_timeout_seconds: status.options.mineruPollTimeoutSeconds,
@@ -136,6 +146,7 @@ async function dispatch(op: string, rawParams: unknown): Promise<unknown> {
   const input = params(rawParams);
   if (op === "status") return {
     plugin_version: packageJson.version, manifest_version: 3, cache_dir: getCacheDir(),
+    capabilities: { pdf_conversion_engines: ["vision", "mineru"], pdf_self_check: "same-response", pdf_conversion_inspector: true, pdf_stream_preview: true },
     libraries: (Zotero.Libraries.getAll() as any[]).map((library) => ({
       internal_library_id: library.libraryID, library_type: libraryType(library),
       library_id: publicLibraryId(library), name: String(library.name || ""),

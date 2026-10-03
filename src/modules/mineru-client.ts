@@ -1,6 +1,8 @@
 import { getPref } from "../utils/prefs";
 import { ensureDir } from "../utils/cache-dir";
 import { PDFDocument } from "pdf-lib";
+import { buildChunkPlan, mergeChunks, ConvertedPdf, PdfChunkPlanItem, PdfChunkResult } from "./pdf-conversion";
+export type { ConvertedPdf, PdfChunkPlanItem, PdfChunkResult } from "./pdf-conversion";
 
 const MINERU_API_BASE = "https://mineru.net";
 const POLL_INTERVAL_MS = 3000;
@@ -32,25 +34,6 @@ interface BatchResultResponse {
   extract_result: ExtractResult[];
 }
 
-export interface PdfChunkPlanItem {
-  index: number;
-  startPage: number;
-  endPage: number;
-}
-
-export interface PdfChunkResult extends PdfChunkPlanItem {
-  markdown: string;
-  assetCount?: number;
-}
-
-export interface ConvertedPdf {
-  markdown: string;
-  pageCount: number;
-  chunkSize: number;
-  chunks: PdfChunkResult[];
-  assetCount: number;
-}
-
 export interface MineruConversionOptions {
   modelVersion?: "pipeline" | "vlm";
   language?: string;
@@ -67,6 +50,8 @@ export interface MineruRemoteTask {
 }
 
 export interface ConvertPdfOptions {
+  /** Recover existing uploads without submitting any new PDF bytes. */
+  resumeOnly?: boolean;
   outputDir?: string;
   cachedChunks?: Map<number, string>;
   mineru?: MineruConversionOptions;
@@ -79,6 +64,22 @@ export interface ConvertPdfOptions {
 interface MineruJobResult {
   markdown: string;
   assetCount: number;
+}
+
+/** Inspect a saved upload before choosing which conversion to resume. */
+export async function getMineruTaskState(task: MineruRemoteTask, signal?: AbortSignal): Promise<string> {
+  const token = String(getPref("mineruToken") || "");
+  if (!token) throw new Error("MinerU API token not configured. Set it in ChatPDF preferences.");
+  throwIfAborted(signal);
+  const response = await mineruFetch("MinerU recovery status", `${MINERU_API_BASE}/api/v4/extract-results/batch/${task.batchId}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal,
+  });
+  if (!response.ok) throw new Error(`MinerU recovery status failed (${response.status})`);
+  const data = JSON.parse(await response.text()) as { code: number; msg: string; data?: BatchResultResponse };
+  if (data.code !== 0) throw new Error(`MinerU recovery status error (code ${data.code}): ${data.msg}`);
+  const state = data.data?.extract_result?.[0]?.state;
+  if (!state) throw new Error("MinerU recovery status returned no task state");
+  return state;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -363,9 +364,10 @@ export async function convertPdf(
         options?.mineru,
         options?.remoteTasks?.get("full"),
         options?.onRemoteTask,
+        options?.resumeOnly,
       );
       return {
-        markdown: result.markdown,
+        markdown: mergeChunks(PathUtils.filename(pdfPath), 0, [{ index: 1, startPage: 1, endPage: 0, markdown: result.markdown }]),
         pageCount: 0,
         chunkSize: 0,
         chunks: [{ index: 1, startPage: 1, endPage: 0, markdown: result.markdown, assetCount: result.assetCount }],
@@ -392,11 +394,12 @@ export async function convertPdf(
       options?.mineru,
       options?.remoteTasks?.get("full"),
       options?.onRemoteTask,
+      options?.resumeOnly,
     );
     const chunk = { ...plan[0], markdown: result.markdown, assetCount: result.assetCount };
     await options?.onChunkConverted?.(chunk);
     return {
-      markdown: result.markdown,
+      markdown: mergeChunks(fileName, pageCount, [chunk]),
       pageCount,
       chunkSize,
       chunks: [chunk],
@@ -430,6 +433,7 @@ export async function convertPdf(
       options?.mineru,
       options?.remoteTasks?.get(`chunk-${item.index}`),
       options?.onRemoteTask,
+      options?.resumeOnly,
     );
     const chunk = { ...item, markdown: result.markdown, assetCount: result.assetCount };
     convertedChunks.push(chunk);
@@ -449,18 +453,6 @@ export async function convertPdf(
   };
 }
 
-function buildChunkPlan(pageCount: number, chunkSize: number): PdfChunkPlanItem[] {
-  const chunks: PdfChunkPlanItem[] = [];
-  for (let start = 1, index = 1; start <= pageCount; start += chunkSize, index++) {
-    chunks.push({
-      index,
-      startPage: start,
-      endPage: Math.min(pageCount, start + chunkSize - 1),
-    });
-  }
-  return chunks;
-}
-
 function estimatePageCount(pdfBytes: Uint8Array): number | null {
   try {
     const text = new TextDecoder("windows-1252").decode(pdfBytes);
@@ -469,25 +461,6 @@ function estimatePageCount(pdfBytes: Uint8Array): number | null {
   } catch {
     return null;
   }
-}
-
-function mergeChunks(fileName: string, pageCount: number, chunks: PdfChunkResult[]): string {
-  const lines = [
-    `# ${fileName}`,
-    "",
-    `> Converted from a ${pageCount}-page PDF in ${chunks.length} chunks.`,
-    "",
-  ];
-
-  for (const chunk of chunks) {
-    lines.push(`<!-- chatpdf-chunk:${chunk.index} pages:${chunk.startPage}-${chunk.endPage} -->`);
-    lines.push(`## Pages ${chunk.startPage}-${chunk.endPage}`);
-    lines.push("");
-    lines.push(chunk.markdown.trim());
-    lines.push("");
-  }
-
-  return lines.join("\n");
 }
 
 async function convertPdfBytes(
@@ -503,8 +476,12 @@ async function convertPdfBytes(
   conversionOptions?: MineruConversionOptions,
   resumeTask?: MineruRemoteTask,
   onRemoteTask?: (task: MineruRemoteTask) => void | Promise<void>,
+  resumeOnly = false,
 ): Promise<MineruJobResult> {
   let batchId = resumeTask && resumeTask.state !== "submitted" ? resumeTask.batchId : "";
+  if (resumeOnly && !batchId) {
+    throw new Error("No uploaded MinerU task is available for this part. Click Retry to finish conversion.");
+  }
   if (batchId) {
     onProgress?.("processing", "Resuming an uploaded MinerU task...");
   }

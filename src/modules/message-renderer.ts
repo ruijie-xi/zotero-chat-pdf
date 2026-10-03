@@ -119,7 +119,8 @@ export function updateUsageBar(root: HTMLElement, usage?: TokenUsage): void {
   if (!bar) return;
   const stats = getPanelState(root).session.contextStats;
   const contextText = stats ? `Context ≈${formatTokens(stats.inputTokens)} / ${formatTokens(stats.inputLimit)} tokens (${Math.max(0, Math.round(100 * (1 - stats.inputTokens / stats.inputLimit)))}% available; ${stats.source})` : "";
-  const text = [contextText, formatUsageText(usage, "Session")].filter(Boolean).join(" · ");
+  const generationText = stats?.outputLimit ? `Generation ≤${formatTokens(stats.outputLimit)} tokens incl. thinking` : "";
+  const text = [contextText, generationText, formatUsageText(usage, "Session")].filter(Boolean).join(" · ");
   if (!text) {
     bar.style.display = "none";
     return;
@@ -127,6 +128,7 @@ export function updateUsageBar(root: HTMLElement, usage?: TokenUsage): void {
   bar.style.display = "";
   bar.textContent = text;
   bar.title = "Context is a local tokenizer estimate against the input budget after output and safety reservations. Session is cumulative provider usage; cache rate is hit / (hit + miss). Cached input still occupies context.";
+  if (stats?.outputLimit) bar.title += ` Generation allowance: ${stats.outputLimit} tokens (${stats.outputPolicy}); model maximum: ${stats.modelMaxOutput}. An allowance is not actual consumption.`;
 }
 
 export function formatUsageText(usage?: TokenUsage, label?: string): string {

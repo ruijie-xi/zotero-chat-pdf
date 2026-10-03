@@ -3,7 +3,7 @@ import { TokenCounter } from "../src/modules/token-accounting";
 import { resolveModelCapabilities } from "../src/modules/model-capabilities";
 import { getLLMSettings } from "../src/modules/llm-client";
 function budget(inputLimit = 240000) {
- const capabilities = { inputLimit, maxOutput: 32768, requestedOutput: 8192, tokenizer: "deepseek-v4" as const, source: "manual" as const, fetchedAt: 1 };
+ const capabilities = { inputLimit, maxOutput: 32768, generation: { outputTokens: 32768, retryCeiling: 32768, source: "model-maximum" as const, thinkingMode: "default", thinkEffort: "default" }, tokenizer: "deepseek-v4" as const, source: "manual" as const, fetchedAt: 1 };
  return new ContextBudget(capabilities, new TokenCounter({ encode: (text: string) => ({ ids: { length: text.length } }) } as any, getLLMSettings(), capabilities));
 }
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,23 +34,17 @@ function setup(limit = 240_000) {
 beforeEach(() => { vi.clearAllMocks(); model.mockReset(); execute.mockReset(); vi.mocked(Zotero.Prefs.get).mockReset(); });
 
 describe("output limit recovery", () => {
-  it("retries reasoning-only output with a larger allowance and byte-identical request prefix", async () => {
+  it("starts at model capacity and archives reasoning-only exhaustion without retrying the same request", async () => {
     const { session, messages } = setup();
-    model.mockResolvedValueOnce({ content: "", reasoning: "unfinished reasoning", finishReason: "length", usage: { completion_tokens: 8192, completion_tokens_details: { reasoning_tokens: 8192 } } })
-      .mockResolvedValueOnce({ content: "Complete answer", finishReason: "stop", usage: { completion_tokens: 100 } });
+    model.mockResolvedValue({ content: "", reasoning: "unfinished reasoning", finishReason: "length", usage: { completion_tokens: 32768, completion_tokens_details: { reasoning_tokens: 32768 } } });
     const continuation = vi.fn();
-    const result = await runAgentLoop(messages, tools, session, { onOutputContinuation: continuation });
-    expect(result.content).toBe("Complete answer");
-    expect(result.usage?.completion_tokens).toBe(8292);
-    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([8192, 16384]);
-    expect(model.mock.calls[1][0]).toEqual(model.mock.calls[0][0]);
-    expect(model.mock.calls[1][1]).toBe(model.mock.calls[0][1]);
-    expect(model.mock.calls[1][6]?.settings).toEqual(model.mock.calls[0][6]?.settings);
-    expect(continuation).toHaveBeenCalledWith(16384);
+    await expect(runAgentLoop(messages, tools, session, { onOutputContinuation: continuation })).rejects.toThrow("output capacity");
+    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([32768]);
+    expect(continuation).not.toHaveBeenCalled();
     const context = session.getAgentContext()!;
     expect(context.data.events.some(event => event.reasoning_content === "unfinished reasoning")).toBe(true);
     expect(context.messages.some(event => event.reasoning_content === "unfinished reasoning")).toBe(false);
-    expect(context.data.requests?.map(request => [request.finishReason, request.outputLimit])).toEqual([["length", 8192], ["stop", 16384]]);
+    expect(context.data.requests?.[0]).toMatchObject({ finishReason: "length", outputLimit: 32768, usage: { completion_tokens: 32768 } });
   });
 
   it("preserves partial text and extends the cache prefix when continuing a visible answer", async () => {
@@ -60,6 +54,7 @@ describe("output limit recovery", () => {
     const result = await runAgentLoop(messages, tools, session);
     expect(result.iterations[0].content).toBe("Part one");
     expect(result.content).toBe("Part two");
+    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([32768, 32768]);
     const [first, second] = model.mock.calls.map(args => args[0]);
     expect(second.slice(0, first.length)).toEqual(first);
     expect(second.at(-2)).toEqual({ role: "assistant", content: "Part one" });
@@ -79,13 +74,13 @@ describe("output limit recovery", () => {
       .mockResolvedValueOnce(call("complete", "mutate"))
       .mockResolvedValueOnce({ content: "done" });
     execute.mockResolvedValue("saved once");
-    await runAgentLoop(messages, tools, session);
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(model.mock.calls[1][0]).toEqual(model.mock.calls[0][0]);
+    await expect(runAgentLoop(messages, tools, session)).rejects.toThrow("output capacity");
+    expect(execute).not.toHaveBeenCalled();
+    expect(model).toHaveBeenCalledTimes(1);
     const context = session.getAgentContext()!;
     expect(context.data.events.some(event => event.tool_calls?.[0].id === "truncated")).toBe(true);
     expect(context.messages.some(event => event.tool_calls?.[0].id === "truncated")).toBe(false);
-    expect(context.data.results).toHaveLength(1);
+    expect(context.data.results).toHaveLength(0);
     expect(context.data.pending).toBeUndefined();
   });
 
@@ -95,33 +90,35 @@ describe("output limit recovery", () => {
       .mockResolvedValueOnce({ content: "", finishReason: "length" })
       .mockResolvedValueOnce({ content: "done" });
     execute.mockResolvedValue("receipt");
-    await runAgentLoop(messages, tools, session);
+    await expect(runAgentLoop(messages, tools, session)).rejects.toThrow("output capacity");
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(model.mock.calls[2][0]).toEqual(model.mock.calls[1][0]);
+    expect(model).toHaveBeenCalledTimes(2);
+    expect(session.getAgentContext()!.data.results[0].content).toBe("receipt");
   });
 
   it("stops at the model output ceiling without unbounded empty retries", async () => {
     const { session, messages } = setup();
     model.mockResolvedValue({ content: "", reasoning: "still thinking", finishReason: "length" });
     await expect(runAgentLoop(messages, tools, session)).rejects.toThrow("available model output capacity");
-    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([8192, 16384, 32768]);
-    expect(session.getAgentContext()!.data.requests).toHaveLength(3);
+    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([32768]);
+    expect(session.getAgentContext()!.data.requests).toHaveLength(1);
   });
 
-  it("bounds each expanded reservation by the combined model context window", async () => {
+  it("reserves full output capacity inside the combined model context window", async () => {
     const { session, messages } = setup();
-    const caps = { ...budget().capabilities, contextWindow: 20000 };
+    const caps = { ...budget().capabilities, contextWindow: 50000 };
     vi.mocked(resolveModelCapabilities).mockResolvedValue(caps);
-    model.mockResolvedValueOnce({ content: "", finishReason: "length" }).mockResolvedValueOnce({ content: "done" });
+    model.mockResolvedValueOnce({ content: "partial", finishReason: "length" }).mockResolvedValueOnce({ content: "done" });
     await runAgentLoop(messages, tools, session);
     const counter = new ContextBudget(caps, budget().counter);
-    for (const args of model.mock.calls) expect(counter.count(args[0], tools) + args[6]!.maxTokens! + counter.margin).toBeLessThanOrEqual(20000);
+    expect(model.mock.calls.map(args => args[6]!.maxTokens)).toEqual([32768, 32768]);
+    for (const args of model.mock.calls) expect(counter.count(args[0], tools) + args[6]!.maxTokens! + counter.margin).toBeLessThanOrEqual(50000);
   });
 
   it("honors cancellation between an exhausted response and its retry", async () => {
     const { session, messages } = setup();
     const controller = new AbortController();
-    model.mockResolvedValue({ content: "", finishReason: "length" });
+    model.mockResolvedValue({ content: "partial", finishReason: "length" });
     await expect(runAgentLoop(messages, tools, session, { onOutputContinuation: () => controller.abort() }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(model).toHaveBeenCalledTimes(1);
     expect(session.getAgentContext()!.data.requests).toHaveLength(1);
@@ -155,35 +152,29 @@ describe("automatic context compaction", () => {
     expect(context.data.events[3].tool_calls?.[0].extra_content).toEqual({ google: { thought_signature: "opaque-signature" } });
     expect(context.messages.filter(message => message.content === user.content)).toHaveLength(1);
   });
-  it("retries a reasoning-exhausted summary with a larger output budget and identical cache prefix", async () => {
+  it("gives a short checkpoint the full model generation capacity, including reasoning", async () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const usage = vi.fn();
-    model.mockResolvedValueOnce({ content: "unfinished", finishReason: "length", usage: {
-      prompt_tokens: 63_899, completion_tokens: 8_192, completion_tokens_details: { reasoning_tokens: 6_821 },
-    } }).mockResolvedValueOnce({ content: "Goal and pending work preserved.", finishReason: "stop", usage: { completion_tokens: 9_000 } });
+    model.mockResolvedValue({ content: "Goal and pending work preserved.", finishReason: "stop", usage: { completion_tokens: 17000, completion_tokens_details: { reasoning_tokens: 16990 } } });
     await compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), usage);
-    expect(model).toHaveBeenCalledTimes(2);
-    expect(model.mock.calls[0].slice(0, 6)).toEqual(model.mock.calls[1].slice(0, 6));
-    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([8_192, 16_384]);
-    expect(usage).toHaveBeenCalledTimes(2);
-    expect(context.data.checkpoints[0].usage?.completion_tokens).toBe(17_192);
-    expect(context.data.checkpoints[0].summary).not.toContain("unfinished");
-    expect(context.data.requests?.map(request => request.finishReason)).toEqual(["length", "stop"]);
+    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([32768]);
+    expect(usage).toHaveBeenCalledTimes(1);
+    expect(context.data.checkpoints[0].usage?.completion_tokens).toBe(17000);
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("bounds exhausted-summary retries and keeps the original context intact", async () => {
+  it("stops an exhausted checkpoint at model capacity and keeps the original context intact", async () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const before = context.toJSON();
     model.mockResolvedValue({ content: "partial", finishReason: "length" });
-    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn())).rejects.toThrow("three attempts");
-    expect(model).toHaveBeenCalledTimes(3);
+    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn())).rejects.toThrow("generation limit");
+    expect(model).toHaveBeenCalledTimes(1);
     expect(context.data.events).toEqual(before.events);
     expect(context.data.active).toEqual(before.active);
     expect(context.data.checkpoints).toEqual([]);
   });
 
-  it("stops cancelled compaction before attempting a larger output budget", async () => {
+  it("stops cancelled compaction before another request", async () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
     const controller = new AbortController();
     model.mockImplementation(async () => { controller.abort(); return { content: "", finishReason: "length" }; });

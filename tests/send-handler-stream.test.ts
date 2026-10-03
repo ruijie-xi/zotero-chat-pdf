@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/modules/agent-loop", () => ({ runAgentLoop: vi.fn() }));
 vi.mock("../src/modules/chat-history", () => ({ saveSession: vi.fn(async () => {}) }));
-vi.mock("../src/modules/debug-log", () => ({ logLLMRequest: vi.fn(async () => {}), logLLMResponse: vi.fn(async () => {}) }));
+vi.mock("../src/modules/debug-log", () => ({ logLLMRequest: vi.fn(async () => {}), logLLMResponse: vi.fn(async () => {}), logGenerationResult: vi.fn(async () => {}) }));
 vi.mock("../src/modules/source-chips", () => ({ refreshSourceChips: vi.fn(), convertSource: vi.fn() }));
 import { handleSend } from "../src/modules/send-handler";
 import { runAgentLoop } from "../src/modules/agent-loop";

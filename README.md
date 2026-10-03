@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-ChatPDF is a Zotero 7–10 add-on for reading and discussing research papers with an OpenAI-compatible language model. It adds a persistent chat panel to Zotero, converts PDFs through MinerU, and lets the assistant work with papers in your Zotero library.
+ChatPDF is a Zotero 7–10 add-on for reading and discussing research papers with an OpenAI-compatible language model. It adds a persistent chat panel to Zotero, converts PDFs through a vision model or MinerU, and lets the assistant work with papers in your Zotero library.
 
 ![ChatPDF side panel in Zotero](docs/images/chatpdf-zotero-panel.png)
 
@@ -26,7 +26,7 @@ The source code is available for adaptation. You can use AI coding agents to hel
 ## Requirements
 
 - Zotero 7, 8, 9, or 10.0.
-- A MinerU API token for PDF conversion.
+- A vision-capable OpenAI-compatible model for PDF conversion, or a MinerU API token when selecting MinerU.
 - An API key for an OpenAI-compatible chat-completions service.
 
 ## Installation
@@ -46,7 +46,9 @@ At minimum, configure:
 
 | Setting | Description |
 | --- | --- |
-| MinerU API Token | Used when a PDF needs to be converted. |
+| PDF conversion engine | Vision model (default), or MinerU. |
+| Conversion model profile | Optional saved vision model profile; blank uses the current chat model. |
+| MinerU API Token | Required only when selecting MinerU. |
 | LLM Provider | DeepSeek, OpenCode Go, or Custom (the existing OpenAI-compatible configuration). |
 | LLM API Base URL | Base URL for an OpenAI-compatible API. |
 | LLM API Key | Bearer token for the model provider. |
@@ -56,7 +58,7 @@ The default API base and model target DeepSeek; existing settings and profiles r
 
 **OpenCode Go** uses `https://opencode.ai/zen/go/v1` and a Go API key. Suggested DeepSeek IDs include `deepseek-v4.1-flash`, `deepseek-v4-pro`, and `deepseek-v4-flash`, without the `opencode-go/` prefix. ChatPDF sends its own client identity and a stable conversation header on main and auxiliary requests. Local token counts use the explicit DeepSeek V4 estimate. Known Go DeepSeek models use bundled catalogue capacities when `/models` omits them; endpoint metadata and manual overrides take precedence. Unknown models require explicit limits. [Go is intended for coding agents](https://opencode.ai/docs/go/#where-can-i-use-it); this integration does not guarantee service acceptance for paper-reading traffic.
 
-Optional settings include MinerU language and timeout, thinking controls, agent iteration limit, context budget, cache directory, system prompt, debug-log level, and web tools. Brave Search is used when a Brave key is configured; otherwise web search falls back to DuckDuckGo.
+Optional settings include PDF pages per request, concurrency, render DPI, page-image caching, request timeout, MinerU language and timeout, thinking controls, agent iteration limit, context budget, cache directory, system prompt, debug-log level, and web tools. Brave Search is used when a Brave key is configured; otherwise web search falls back to DuckDuckGo.
 
 ## Quick Start
 
@@ -76,13 +78,19 @@ Mention one or more source chips in the editor to restrict a question to those p
 
 Large PDFs are converted in page ranges. Completed ranges are cached, so an interrupted conversion can continue without repeating finished work. The assistant can search the converted document and read only the relevant chunks instead of loading the whole paper into every request.
 
-Conversion errors identify the failing stage: upload preparation, PDF upload, result polling, result download, or ZIP extraction. Retrying usually resumes from the last completed range.
+Vision conversion renders pages with Zotero's bundled PDF.js, sends page images to the selected model, and caches validated Markdown and optional page images. Defaults are four pages per request, two concurrent requests, 150 DPI, and a 180-second request timeout. No external PDF renderer is required. Page markers, text/symbol coverage and KaTeX syntax checks reject incomplete output; failed ranges are split and retried with validation feedback. These checks cannot prove mathematical transcription accuracy.
+
+**Retry** continues compatible saved chunks. **Reconvert** starts fresh with the selected engine; the previous cache remains intact until the replacement passes validation. Existing MinerU caches remain readable. MinerU retains its upload/poll/download/extraction stages. See [PDF conversion details](docs/pdf-vision-conversion.md).
+
+By default, the conversion model appends a short structured self-check in the same response. The plugin applies only exact local edits and revalidates the result; no separate review request or second full transcription is sent. The `Self-check X/Y` badge records the checked page count. This is model self-checking, not independent verification; use **Reconvert** to apply it to an older cache.
+
+Click **View conversion process** under a PDF source to inspect validated-page progress, elapsed time, parallel chunks, requests, reported token usage, the page images sent to the model, and Markdown with exact self-check corrections. Live drafts use the original streaming response and remain labeled unvalidated until checks pass. Viewing the panel makes no model request. Disable **Live conversion preview** in settings if your endpoint rejects streaming. A failed cache write can retry a complete, digest-verified checkpoint without rendering or model calls.
 
 ## Local MCP Integration
 
 When ChatPDF is running, it registers one exact-protocol loopback endpoint at `POST /chatpdf/v1` on Zotero's local server. A local MCP server can discover the cache and Zotero library mapping, read the current Zotero selection, start/list/poll/cancel conversions, and recover known job IDs after an agent restart. The MCP server reads `document.md`, chunks, manifests, and extracted assets directly from the same cache used by the panel.
 
-Conversion requests from the panel and MCP are deduplicated by `libraryID:attachmentKey`. Each panel window and the bridge owns an independent lease, so one panel cannot cancel work still used elsewhere; explicit MCP cancellation remains job-wide. MCP callers may choose pipeline/VLM, language, OCR, formula/table extraction, and a bounded MinerU polling timeout for each job. One atomic conversion registry records safe checkpoints, chunk progress, timestamps, and errors without storing tokens or signed upload URLs. Active work resumes after Zotero restarts when a checkpoint is safe; otherwise the job becomes explicitly `interrupted` and retryable.
+Conversion requests from the panel and MCP are deduplicated by `libraryID:attachmentKey`. Each panel window and the bridge owns an independent lease, so one panel cannot cancel work still used elsewhere; explicit MCP cancellation remains job-wide. MCP callers may choose `options.engine` (`vision` or `mineru`), or MinerU pipeline/VLM, language, OCR, formula/table extraction, and a bounded MinerU polling timeout for each job. One atomic conversion registry records safe checkpoints, chunk progress, timestamps, and errors without storing tokens or signed upload URLs. Active work resumes after Zotero restarts when a checkpoint is safe; otherwise the job becomes explicitly `interrupted` and retryable.
 
 A ready cache hit also enriches a legacy manifest with canonical document, Zotero library, attachment, and parent-paper identity. This does not contact MinerU or alter the cached Markdown, and it lets later cache-only reads preserve those associations while Zotero is temporarily unavailable.
 
@@ -98,7 +106,7 @@ For safety, ChatPDF blocks embedded credentials, localhost, private/link-local n
 
 The default cache directory is `~/.chatpdf-cache/`; you can change it in ChatPDF settings. It contains converted Markdown and assets, resumable conversion metadata, chat history, and optional debug logs.
 
-- A PDF is sent to MinerU only when conversion is requested.
+- PDF conversion sends rendered page images to the selected vision provider, or PDF bytes to MinerU when that engine is selected. Conversion starts only when requested; startup can resume previously requested active work.
 - Conversation messages, relevant document content, and tool results are sent to your configured LLM provider.
 - Web queries and requested pages are sent to the selected search service and website only when web tools are enabled and used.
 - Debug logging defaults to metadata only. **Full** logging can contain prompts, paper text, answers, reasoning, and tool results.
@@ -110,7 +118,7 @@ The default cache directory is `~/.chatpdf-cache/`; you can change it in ChatPDF
 
 **The model request fails:** use **LLM API Test** and verify the base URL, key, model name, and provider compatibility.
 
-**PDF conversion fails:** check the named conversion stage, MinerU token, network/proxy settings, and configured timeout, then retry.
+**PDF conversion fails:** check the named stage, selected engine, conversion model's image support and token budgets, API key, network/proxy settings, and timeout. Retry continues saved chunks; use Reconvert after changing the source PDF or conversion model. MinerU requires its own token.
 
 **A source cannot be read:** confirm that it is converted and included in the current question's source mentions or session.
 

@@ -2,9 +2,28 @@
 
 ## Unreleased
 
+- Add a default vision PDF-to-Markdown engine using Zotero PDF.js, independent conversion model profiles, bounded parallel requests, page-image caching, and a Reconvert action; retain MinerU as an optional engine.
+- Gate cache replacement on page coverage, formula syntax and chunk/line consistency; split invalid output, preserve cancellation, back off transient API failures, and resume validated staged chunks without mixing old assets or changed PDFs.
+- Emit chunk markers for single-chunk MinerU conversions and use the automatic image-token estimate for supported Go DeepSeek profiles.
+- Add an optional, default-on same-response model self-check with structured page-local edits, no separate review request, final-Markdown digests for checkpoint reuse, and explicit checked-page badges; retain existing v2 checkpoint behavior.
+- Add a local conversion inspector with per-page image/Markdown comparison, original-response streaming drafts, exact self-check edits, request/usage history and cache-write-only recovery of trusted finalized checkpoints.
+- Simplify the chat toolbar by removing Clear chat and Convert all; retain per-source conversion and Ctrl+Enter conversion-and-send.
+- Keep conversion process and chunk-navigation controls attached while streaming progress changes, preventing flicker and clicks lost to DOM replacement.
+
 - Replace HTML dropdowns with native Zotero menus in Preferences and the panel profile selector; keep model names editable and use a native menu for suggestions.
 - Add DeepSeek, OpenCode Go and Custom provider choices to Preferences and saved model profiles while retaining legacy configurations as Custom.
 - Isolate provider drafts and credentials, add Go conversation/client headers to main and auxiliary requests, and use labelled catalogue capacity fallbacks for known Go DeepSeek models with explicit local token estimation.
+
+## 0.9.5
+
+- Remove the plugin's lower initial generation allowance: automatic requests use the resolved model output maximum from the first call, across agent responses, checkpoints, and titles.
+- Reserve that complete capacity when planning context and retain automatic continuation at the service limit. Explicit user ceilings and cancellation/no-progress safeguards remain in effect.
+
+## 0.9.4
+
+- Resolve generation allowances independently of context space: official DeepSeek uses its documented mode defaults (8K without thinking, 64K with thinking, 128K at maximum effort), bounded by model capacity. Unknown endpoints require an explicit per-request limit.
+- Reserve the complete generation allowance before accepting input; compact complete exchanges instead of silently shrinking output. Preserve manual ceilings through agent and checkpoint retries, and keep visible-text targets separate from reasoning budgets.
+- Show the effective generation allowance separately from context occupancy and model maximum; record sanitized request policy, finish reason, and provider usage for agent, checkpoint, and title calls.
 
 ## 0.9.3
 
@@ -25,6 +44,10 @@
 
 
 ## Unreleased
+
+- Add a default vision PDF-to-Markdown engine using Zotero PDF.js, independent conversion model profiles, bounded parallel requests, page-image caching, and a Reconvert action; retain MinerU as an optional engine.
+- Gate cache replacement on page coverage, formula syntax and chunk/line consistency; split invalid output, preserve cancellation, back off transient API failures, and resume validated staged chunks without mixing old assets or changed PDFs.
+- Emit chunk markers for single-chunk MinerU conversions and use the automatic image-token estimate for supported Go DeepSeek profiles.
 
 ### New Features
 

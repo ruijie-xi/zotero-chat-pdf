@@ -6,6 +6,25 @@
   <label><html:h2 data-l10n-id="pref-title"></html:h2></label>
 
   <hbox align="center">
+    <html:label data-l10n-id="pref-pdf-engine"/>
+    <menulist id="zotero-prefpane-__addonRef__-pdfConversionEngine" preference="pdfConversionEngine" native="true">
+      <menupopup><menuitem value="vision" data-l10n-id="pref-pdf-engine-vision"/><menuitem value="mineru" data-l10n-id="pref-pdf-engine-mineru"/></menupopup>
+    </menulist>
+  </hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-profile"/><html:input type="text" id="zotero-prefpane-__addonRef__-pdfVisionProfile" preference="pdfVisionProfile" placeholder="Current chat model" style="flex: 1;"/><menulist id="zotero-prefpane-__addonRef__-pdfVisionProfiles" native="true"><menupopup/></menulist></hbox>
+  <html:p data-l10n-id="pref-pdf-vision-hint" style="font-size: 11px;"/>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-pages"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionChunkPages" preference="pdfVisionChunkPages" min="1" max="10" style="width: 80px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-concurrency"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionConcurrency" preference="pdfVisionConcurrency" min="1" max="4" style="width: 80px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-dpi"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionDpi" preference="pdfVisionDpi" min="72" max="300" style="width: 80px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-images"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionCachePageImages" preference="pdfVisionCachePageImages"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-timeout"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionTimeoutSeconds" preference="pdfVisionTimeoutSeconds" min="30" max="1800" style="width: 80px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-self-check"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionSelfCheck" preference="pdfVisionSelfCheck"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-stream"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionStream" preference="pdfVisionStream"/></hbox>
+  <description data-l10n-id="pref-pdf-vision-stream-hint"/>
+  <html:p data-l10n-id="pref-pdf-vision-self-check-hint" style="font-size: 11px;"/>
+  <separator class="thin"/>
+
+  <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-mineruToken" data-l10n-id="pref-mineru-token"></html:label>
     <html:input type="password" id="zotero-prefpane-__addonRef__-mineruToken" preference="mineruToken" style="flex: 1;" />
   </hbox>
@@ -160,6 +179,7 @@
   </hbox>
 
   <description>Model token limits: 0 uses endpoint metadata. Save these settings with each model profile.</description>
+  <description>Automatic generation uses the model's maximum output capacity without an additional plugin limit. A positive value sets your own ceiling for every request and retry. Input space is reserved accordingly; history is compacted when needed.</description>
   <hbox align="center"><html:label data-l10n-id="pref-context-window-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-contextWindowTokens" preference="contextWindowTokens" min="0" step="1" style="width: 120px;"/></hbox>
   <hbox align="center"><html:label data-l10n-id="pref-input-token-limit"/><html:input type="number" id="zotero-prefpane-__addonRef__-inputTokenLimit" preference="inputTokenLimit" min="0" step="1" style="width: 120px;"/></hbox>
   <hbox align="center"><html:label data-l10n-id="pref-max-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-maxOutputTokens" preference="maxOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>

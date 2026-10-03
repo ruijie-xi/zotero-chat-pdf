@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-ChatPDF 是一款支持 Zotero 7–10 的插件，让你可以通过兼容 OpenAI 接口的大语言模型阅读和讨论研究论文。它在 Zotero 中提供常驻聊天面板，通过 MinerU 转换 PDF，并让助手使用 Zotero 文库中的论文完成研究任务。
+ChatPDF 是一款支持 Zotero 7–10 的插件，让你可以通过兼容 OpenAI 接口的大语言模型阅读和讨论研究论文。它在 Zotero 中提供常驻聊天面板，通过视觉模型或 MinerU 转换 PDF，并让助手使用 Zotero 文库中的论文完成研究任务。
 
 ![Zotero 中的 ChatPDF 侧边面板](docs/images/chatpdf-zotero-panel.png)
 
@@ -26,7 +26,7 @@ ChatPDF 主要为个人使用而开发，并按当前状态分享。由于 Zoter
 ## 使用要求
 
 - Zotero 7、8、9 或 10.0。
-- 用于 PDF 转换的 MinerU API Token。
+- 用于 PDF 转换的视觉模型；选择 MinerU 引擎时才需要 MinerU API Token。
 - 兼容 OpenAI Chat Completions 接口的模型服务 API Key。
 
 ## 安装
@@ -46,7 +46,9 @@ Windows/Linux 打开 **编辑 → 设置 → ChatPDF**；macOS 打开 **Zotero �
 
 | 设置 | 说明 |
 | --- | --- |
-| MinerU API Token | PDF 需要转换时使用。 |
+| PDF conversion engine | 默认使用视觉模型，也可选择 MinerU。 |
+| Conversion model profile | 可选择单独保存的视觉模型配置；留空使用当前聊天模型。 |
+| MinerU API Token | 只在选择 MinerU 时需要。 |
 | LLM Provider | DeepSeek、OpenCode Go 或 Custom（原有的 OpenAI 兼容配置）。 |
 | LLM API Base URL | 兼容 OpenAI 接口的服务基础地址。 |
 | LLM API Key | 模型服务的 Bearer Token。 |
@@ -56,7 +58,7 @@ Windows/Linux 打开 **编辑 → 设置 → ChatPDF**；macOS 打开 **Zotero �
 
 **OpenCode Go** 使用 `https://opencode.ai/zen/go/v1` 和 Go API Key。建议的 DeepSeek 模型包括 `deepseek-v4.1-flash`、`deepseek-v4-pro` 和 `deepseek-v4-flash`，不加 `opencode-go/` 前缀。主对话、压缩和标题请求都会发送 ChatPDF 客户端标识及稳定的会话头；本地 token 计数使用显式的 DeepSeek V4 估算模式。已知 Go DeepSeek 型号在 `/models` 缺少容量时使用内置目录预设，接口元数据和手动覆盖优先；未知型号需要填写容量。[Go 面向编程 Agent](https://opencode.ai/docs/go/#where-can-i-use-it)，接入不代表服务方保证接受论文阅读用途。
 
-其他可选设置包括 MinerU 语言和超时、思考控制、Agent 最大迭代次数、上下文预算、缓存目录、系统提示词、调试日志级别和网络工具。配置 Brave Key 时使用 Brave Search；否则网页搜索回退到 DuckDuckGo。
+其他可选设置包括每次请求页数、并发数、渲染 DPI、页图缓存、请求超时、MinerU 语言和超时、思考控制、Agent 最大迭代次数、上下文预算、缓存目录、系统提示词、调试日志级别和网络工具。配置 Brave Key 时使用 Brave Search；否则网页搜索回退到 DuckDuckGo。
 
 ## 快速开始
 
@@ -76,7 +78,13 @@ Windows/Linux 打开 **编辑 → 设置 → ChatPDF**；macOS 打开 **Zotero �
 
 大型 PDF 会按页码范围转换。已完成的范围会被缓存，因此中断后可以继续，而无需重复已经完成的工作。助手可以搜索转换后的文档并只读取相关分块，不必在每次请求中载入整篇论文。
 
-转换错误会标明失败阶段：上传准备、PDF 上传、结果轮询、结果下载或 ZIP 解压。重试时通常会从上次完成的位置继续。
+视觉转换在 Zotero 内使用自带 PDF.js 渲染页图，将图片发送给所选视觉模型，并缓存通过校验的 Markdown 与可选页图。默认每次请求 4 页、2 路并发、150 DPI、180 秒超时，无需安装外部 PDF 工具。页面标记、文本与符号覆盖率、KaTeX 语法检查会拦截不完整输出，再带着校验反馈拆分重试；这些检查不能证明数学符号逐字正确。
+
+**Retry** 复用兼容的已完成分块；**Reconvert** 用当前引擎重新转换，只有完整结果通过校验后才替换旧缓存。已有 MinerU 缓存可继续读取。MinerU 引擎仍保留上传、轮询、下载和解压阶段。详见 [PDF 转换说明](docs/pdf-vision-conversion.md)。
+
+默认让转换模型在同一次响应末尾输出简短的结构化自检结果。插件只应用精确的定点修订，再重新校验，不另发审查请求，也不重复转写全文。`Self-check X/Y` 显示已自检页数。这属于原模型自检，不能代替独立复核；旧缓存需点击 **Reconvert** 才会采用。
+
+点击 PDF 来源下的 **View conversion process**，可查看已校验页数、耗时、并发分块、请求记录、服务商报告的 token 用量，以及实际发送的页图、Markdown 和自检修改前后的片段。实时草稿来自原请求的流式响应，通过校验前会明确标记。查看详情不调用模型；接口拒绝流式请求时，可在设置中关闭 **Live conversion preview**。若只在缓存写入阶段失败，可校验并复用完整检查点，直接重试写入，无需重新渲染或调用模型。
 
 ## 本地 MCP 集成
 
@@ -98,7 +106,7 @@ ChatPDF 运行时会在 Zotero 本地服务器注册唯一的精确协议端点 
 
 默认缓存目录是 `~/.chatpdf-cache/`，可在 ChatPDF 设置中修改。其中包括转换后的 Markdown 和资源、可续跑的转换信息、聊天历史以及可选调试日志。
 
-- 只有请求转换时，PDF 才会发送到 MinerU。
+- PDF 转换会把渲染后的页图发送到所选视觉模型服务商；选择 MinerU 时则发送 PDF 文件。只有请求转换时才会开始，启动时可以续跑此前已请求的活跃任务。
 - 对话消息、相关文档内容和工具结果会发送到你配置的 LLM 服务商。
 - 只有启用并实际使用网络工具时，查询和目标网页才会发送到搜索服务和对应网站。
 - 调试日志默认只记录元数据；**Full** 模式可能包含提示词、论文正文、回答、推理和工具结果。
@@ -110,7 +118,7 @@ ChatPDF 运行时会在 Zotero 本地服务器注册唯一的精确协议端点 
 
 **模型请求失败：**运行 **LLM API Test**，检查基础地址、Key、模型名称以及服务兼容性。
 
-**PDF 转换失败：**根据错误中标明的阶段，检查 MinerU Token、网络/代理和超时设置，然后重试。
+**PDF 转换失败：**根据错误中标明的阶段，检查所选引擎、转换模型的视觉能力与 Token 预算、API Key、网络/代理和超时设置。Retry 继续已保存的分块；修改 PDF 或转换模型后使用 Reconvert。MinerU 需要单独的 Token。
 
 **无法读取来源：**确认来源已完成转换，并包含在当前问题 mention 的范围或当前会话中。
 

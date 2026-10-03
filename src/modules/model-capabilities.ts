@@ -1,12 +1,13 @@
 import type { LLMSettings } from "./llm-client";
 import { getPref } from "../utils/prefs";
 import { buildLLMHeaders, createProviderSessionId, getProviderApiBase, getProviderModelLimits, normalizeProvider } from "./llm-provider";
+import { GenerationPolicy, isOfficialDeepSeek, resolveGenerationPolicy } from "./generation-policy";
 
 export interface ModelCapabilities {
   contextWindow?: number;
   inputLimit?: number;
   maxOutput: number;
-  requestedOutput: number;
+  generation: GenerationPolicy;
   tokenizer: "deepseek-v4";
   imageTokens?: number;
   source: "endpoint" | "manual" | "provider-preset";
@@ -17,7 +18,7 @@ export interface ModelCapabilities {
 const cache = new Map<string, { at: number; model: Record<string, any> }>();
 const positive = (n: unknown): number | undefined => Number.isSafeInteger(Number(n)) && Number(n) > 0 ? Number(n) : undefined;
 
-export async function resolveModelCapabilities(settings: LLMSettings, signal?: AbortSignal, refresh = false): Promise<ModelCapabilities> {
+export async function resolveModelCapabilities(settings: LLMSettings, signal?: AbortSignal, refresh = false, requireTokenizer = true): Promise<ModelCapabilities> {
   const base = getProviderApiBase(settings).replace(/\/+$/, "");
   const key = JSON.stringify([normalizeProvider(settings.provider), base, settings.apiKey, settings.model, getPref("modelCapabilitiesRevision")]);
   let entry = cache.get(key);
@@ -49,12 +50,11 @@ export async function resolveModelCapabilities(settings: LLMSettings, signal?: A
   const inputLimit = positive(settings.inputTokenLimit) || positive(metadata?.input_token_limit);
   const maxOutput = positive(settings.maxOutputTokens) || endpointOutput || preset?.maxOutput;
   if ((!contextWindow && !inputLimit) || !maxOutput) throw new Error("Model token limits are unavailable. Set the context/input and maximum output token limits for this model in Preferences, then save its profile. Old character limits are not used.");
-  const officialV4 = new URL(base).hostname === "api.deepseek.com" && /^deepseek-(flash|pro)$/.test(settings.model);
-  if (!officialV4 && settings.tokenizerMode !== "deepseek-v4-estimate") throw new Error("This model has no verified local tokenizer. Select the explicit DeepSeek V4 tokenizer estimate in its profile, or use a supported model. Counts are estimates; provider usage remains authoritative.");
-  const defaultOutput = Math.min(8192, contextWindow ? Math.floor(contextWindow / 4) : 8192);
-  const requestedOutput = Math.min(positive(settings.requestedOutputTokens) || defaultOutput, maxOutput);
-  return { contextWindow, inputLimit, maxOutput, requestedOutput, tokenizer: "deepseek-v4",
-    imageTokens: positive(settings.imageTokenReserve) || (officialV4 ? 1024 : undefined),
+  const officialV4 = isOfficialDeepSeek({ ...settings, apiBase: base });
+  if (requireTokenizer && !officialV4 && settings.tokenizerMode !== "deepseek-v4-estimate") throw new Error("This model has no verified local tokenizer. Select the explicit DeepSeek V4 tokenizer estimate in its profile, or use a supported model. Counts are estimates; provider usage remains authoritative.");
+  const generation = resolveGenerationPolicy(settings, maxOutput);
+  return { contextWindow, inputLimit, maxOutput, generation, tokenizer: "deepseek-v4",
+    imageTokens: positive(settings.imageTokenReserve) || (officialV4 || (preset && /deepseek/i.test(settings.model)) ? 1024 : undefined),
     source: manual || positive(settings.maxOutputTokens) ? "manual" : preset && (!endpointContext || !endpointOutput) ? "provider-preset" : "endpoint", fetchedAt: entry?.at || Date.now() };
 }
 

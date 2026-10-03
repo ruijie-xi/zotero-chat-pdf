@@ -1,3 +1,13 @@
+// Vision conversion uses a saved model profile, or the current chat model.
+pref("pdfConversionEngine", "vision");
+pref("pdfVisionProfile", "");
+pref("pdfVisionChunkPages", 4);
+pref("pdfVisionConcurrency", 2);
+pref("pdfVisionDpi", 150);
+pref("pdfVisionCachePageImages", true);
+pref("pdfVisionTimeoutSeconds", 180);
+pref("pdfVisionSelfCheck", true);
+pref("pdfVisionStream", true);
 pref("mineruToken", "");
 pref("mineruLanguage", "ch");
 pref("mineruTimeoutMinutes", 15);
@@ -17,6 +27,7 @@ pref("agentAutoContinue", true);
 pref("contextWindowTokens", 0);
 pref("inputTokenLimit", 0);
 pref("maxOutputTokens", 0);
+// 0 uses the resolved model maximum; positive values are explicit user ceilings, including reasoning and retries.
 pref("requestedOutputTokens", 0);
 pref("imageTokenReserve", 0);
 pref("tokenizerMode", "auto");

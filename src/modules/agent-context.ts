@@ -33,7 +33,8 @@ export interface AgentContextData {
   active: number[];
   results: StoredResult[];
   checkpoints: ContextCheckpoint[];
-  requests?: { kind: "agent" | "compact"; generation: number; usage?: TokenUsage; inputChars?: number; inputTokens?: number; countMethod?: "local-bpe-estimate"; finishReason?: string; outputLimit?: number }[];
+  requests?: { kind: "agent" | "compact"; generation: number; usage?: TokenUsage; inputChars?: number; inputTokens?: number; countMethod?: "local-bpe-estimate"; finishReason?: string; outputLimit?: number;
+    initialOutputLimit?: number; outputPolicy?: string; modelMaxOutput?: number; contextWindow?: number; inputLimit?: number; thinkingMode?: string; thinkEffort?: string }[];
   pending?: { assistant: ContextMessage; completed: { callId: string; resultId: string }[] };
   /** Binary image inputs are deliberately never serialized. */
   requiresRebuild?: boolean;

@@ -10,7 +10,7 @@ vi.mock("pdf-lib", () => ({
   },
 }));
 
-import { convertPdf } from "../src/modules/mineru-client";
+import { convertPdf, getMineruTaskState } from "../src/modules/mineru-client";
 
 describe("MinerU client cancellation", () => {
   beforeEach(() => {
@@ -31,5 +31,28 @@ describe("MinerU client cancellation", () => {
     controller.abort();
 
     await expect(conversion).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("automatic recovery refuses to upload a PDF without a saved upload", async () => {
+    globalThis.fetch = vi.fn();
+    await expect(convertPdf("/pdf/paper.pdf", undefined, undefined, { resumeOnly: true }))
+      .rejects.toThrow("No uploaded MinerU task");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("checks a saved task using only a GET and reports its remote state", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      code: 0, data: { extract_result: [{ state: "done" }] },
+    }))) as typeof fetch;
+    expect(await getMineruTaskState({ taskKey: "full", batchId: "saved-batch", state: "uploaded" })).toBe("done");
+    expect(fetch).toHaveBeenCalledWith("https://mineru.net/api/v4/extract-results/batch/saved-batch", expect.objectContaining({
+      headers: { Authorization: "Bearer test-token" },
+    }));
+  });
+
+  it("recovery status HTTP errors stay visible", async () => {
+    globalThis.fetch = vi.fn(async () => new Response("Unavailable", { status: 503 })) as typeof fetch;
+    await expect(getMineruTaskState({ taskKey: "full", batchId: "saved-batch", state: "uploaded" }))
+      .rejects.toThrow("503");
   });
 });

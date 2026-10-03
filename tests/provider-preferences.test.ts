@@ -48,8 +48,8 @@ afterEach(() => {
 describe("provider selection in preferences", () => {
   it("uses native Zotero menus for every dropdown and persists command selections", () => {
     expect(document.querySelectorAll("select, datalist")).toHaveLength(0);
-    expect(document.querySelectorAll("menulist")).toHaveLength(6);
-    for (const [key, value] of [["llmProvider", "deepseek"], ["llmThinkingMode", "disabled"], ["llmThinkEffort", "max"], ["debugLogMode", "off"], ["tokenizerMode", "deepseek-v4-estimate"]]) {
+    expect(document.querySelectorAll("menulist")).toHaveLength(8);
+    for (const [key, value] of [["pdfConversionEngine", "vision"], ["llmProvider", "deepseek"], ["llmThinkingMode", "disabled"], ["llmThinkEffort", "max"], ["debugLogMode", "off"], ["tokenizerMode", "deepseek-v4-estimate"]]) {
       const menu = field(key);
       expect(menu.namespaceURI).toBe(XUL_NS);
       expect(menu.getAttribute("native")).toBe("true");

@@ -1,5 +1,7 @@
 import { getCacheDir, ensureDir } from "../utils/cache-dir";
 import { atomicWriteJson, atomicWriteText, withStorageLock } from "../utils/atomic-storage";
+import type { VisionConversionConfig } from "./vision-conversion-config";
+import type { TokenUsage } from "./llm-client";
 
 export interface DocumentChunkMeta {
   index: number;
@@ -11,6 +13,7 @@ export interface DocumentChunkMeta {
   charCount?: number;
   assetCount?: number;
   errorMessage?: string;
+  selfCheck?: import("./vision-self-check").VisionSelfCheck;
 }
 
 export interface DocumentManifest {
@@ -22,7 +25,13 @@ export interface DocumentManifest {
   libraryId?: number;
   attachmentKey?: string;
   parentItemKey?: string;
-  converter?: "mineru";
+  converter?: "mineru" | "vision" | "deepseek-vision";
+  conversionConfig?: VisionConversionConfig;
+  sourceDigest?: string;
+  qualityGate?: "page-markers-text-coverage-katex-v1" | "page-markers-text-symbols-katex-v2" | "page-markers-text-symbols-katex-self-check-v3";
+  conversionUsage?: TokenUsage;
+  conversionDetails?: import("./conversion-details").ConversionDetails;
+  conversionJobId?: string;
   title?: string;
   pageCount: number;
   chunkSize: number;
@@ -152,6 +161,13 @@ export async function writeStagedChunk(jobId: string, index: number, content: st
   await atomicWriteText(stagedChunkPath(jobId, index), content);
 }
 
+export async function readFinalizedStaging(jobId: string): Promise<{ markdown: string; manifest: DocumentManifest } | null> {
+  const staging = getConversionStagingDir(jobId);
+  const doc = PathUtils.join(staging, "document.md"), meta = PathUtils.join(staging, "manifest.json");
+  if (!await IOUtils.exists(doc) || !await IOUtils.exists(meta)) return null;
+  return { markdown: new TextDecoder().decode(await IOUtils.read(doc)), manifest: JSON.parse(new TextDecoder().decode(await IOUtils.read(meta))) };
+}
+
 export async function finalizeStagedDocument(
   jobId: string,
   markdown: string,
@@ -172,14 +188,19 @@ export async function commitStagedDocument(jobId: string, cacheKey: string): Pro
   const backup = `${canonical}.backup-${safeJobId(jobId)}`;
   if (!await IOUtils.exists(staging)) throw new Error("Conversion staging directory is missing");
   await ensureDir(documentsDir());
-  await withStorageLock(`document:${cacheKey}`, async () => {
+  let operation = "preparing the cache swap";
+  try { await withStorageLock(`document:${cacheKey}`, async () => {
     let lastError: unknown;
     for (let attempt = 1; attempt <= 5; attempt++) {
+      operation = "restoring the previous cache";
       if (!await IOUtils.exists(canonical) && await IOUtils.exists(backup)) await IOUtils.move(backup, canonical);
+      operation = "removing a stale backup";
       if (await IOUtils.exists(backup)) await IOUtils.remove(backup, { recursive: true });
       const hadCanonical = await IOUtils.exists(canonical);
       try {
+        operation = "backing up the previous cache";
         if (hadCanonical) await IOUtils.move(canonical, backup);
+        operation = "installing the converted cache";
         await IOUtils.move(staging, canonical);
         if (hadCanonical && await IOUtils.exists(backup)) {
           await IOUtils.remove(backup, { recursive: true }).catch((error: any) => {
@@ -196,7 +217,11 @@ export async function commitStagedDocument(jobId: string, cacheKey: string): Pro
       }
     }
     throw lastError;
-  });
+  }); } catch (error: any) {
+    const code = /\bNS_ERROR_[A-Z_]+\b/.exec(String(error?.message || ""))?.[0]
+      || (/^(?:NotAllowed|NotFound|NotSupported|InvalidState|Operation|Unknown)Error$/.test(error?.name || "") ? error.name : "I/O error");
+    throw new Error(`PDF cache commit failed while ${operation} (${code}). Converted pages are saved; use Retry.`, { cause: error });
+  }
 }
 
 /** Repair only swap artifacts; normal reads never scan backup directories. */

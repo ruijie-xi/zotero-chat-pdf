@@ -2,7 +2,7 @@
 
 ## Project Summary
 
-ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI-compatible LLM APIs. MinerU converts PDFs to Markdown, the plugin caches results locally, and an agent accesses documents and the Zotero library through tools.
+ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI-compatible LLM APIs. A vision model (default) or MinerU converts PDFs to Markdown, the plugin caches results locally, and an agent accesses documents and the Zotero library through tools.
 
 - GitHub: `ruijie-xi/zotero-chat-pdf`
 - Add-on ID: `chatpdf@zotero-plugin`
@@ -53,6 +53,9 @@ Core modules:
 - `src/modules/source-chips.ts`: source UI adapter for the shared conversion manager.
 - `src/modules/conversion-manager.ts`: owner-aware deduplication, history/recovery, v3 manifests, and cache commits.
 - `src/modules/chatpdf-bridge.ts`: one exact-protocol loopback endpoint for live selection and conversion control.
+- `src/modules/pdf-renderer.ts`: Zotero PDF.js page rasterization in a disposable XUL browser.
+- `src/modules/vision-client.ts`: model requests, page coverage and KaTeX validation, splitting, bounded retries, cancellation, and page assets.
+- `src/modules/pdf-conversion.ts`: shared chunk planning/merging and cache-contract checks.
 - `src/modules/mineru-client.ts`: upload, polling, ZIP download/extraction, chunking, and stage diagnostics.
 - `src/modules/md-cache.ts`: atomic Markdown/chunk/manifest cache.
 - `src/modules/markdown-renderer.ts`: Markdown/KaTeX to sanitized XHTML-safe HTML.
@@ -87,6 +90,15 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 
 | Key | Type | Default |
 | --- | --- | --- |
+| `pdfConversionEngine` | string | `vision` |
+| `pdfVisionProfile` | string | `""` (current chat profile) |
+| `pdfVisionChunkPages` | number | `4` |
+| `pdfVisionConcurrency` | number | `2` |
+| `pdfVisionDpi` | number | `150` |
+| `pdfVisionCachePageImages` | boolean | `true` |
+| `pdfVisionTimeoutSeconds` | number | `180` |
+| `pdfVisionSelfCheck` | boolean | `true` (same-response model self-check) |
+| `pdfVisionStream` | boolean | `true` (live drafts from the original response) |
 | `mineruToken` | string | `""` |
 | `mineruLanguage` | string | `ch` |
 | `mineruTimeoutMinutes` | number | `15` |

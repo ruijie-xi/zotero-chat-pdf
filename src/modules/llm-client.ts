@@ -202,7 +202,7 @@ export function applyThinkingSettings(
     body.thinking = { type: thinkingMode };
   }
 
-  if (thinkEffort !== "default") {
+  if (thinkEffort !== "default" && thinkingMode !== "disabled") {
     body.reasoning_effort = thinkEffort;
     if (thinkingMode === "default") {
       body.thinking = { type: "enabled" };

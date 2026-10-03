@@ -176,6 +176,16 @@ function initProfileUI() {
     if (!profileList) return;
     profileList.innerHTML = "";
     const profiles = loadProfiles();
+    const suggestions = document.querySelector(`#zotero-prefpane-${ADDON_REF}-pdfVisionProfiles > menupopup`);
+    if (suggestions) {
+      suggestions.replaceChildren();
+      for (const profile of profiles) {
+        const option = document.createElementNS(XUL_NS, "menuitem");
+        option.setAttribute("value", profile.name);
+        option.setAttribute("label", profile.name);
+        suggestions.appendChild(option);
+      }
+    }
     const activeProfile = Zotero.Prefs.get(`${PREF_PREFIX}.activeProfile`, true) as string || "";
 
     if (profiles.length === 0) {
@@ -460,6 +470,14 @@ function tryInit(retries: number) {
   const promptOk = initPromptUI();
   const testOk = initLLMTestUI();
   initProfileUI();
+  const visionProfiles = document.querySelector(`#zotero-prefpane-${ADDON_REF}-pdfVisionProfiles`) as XULMenuList | null;
+  if (visionProfiles && !visionProfiles.hasAttribute("data-initialized")) {
+    visionProfiles.setAttribute("data-initialized", "true");
+    visionProfiles.addEventListener("command", () => {
+      setPrefFull("pdfVisionProfile", visionProfiles.value);
+      setFieldValue("pdfVisionProfile", visionProfiles.value);
+    });
+  }
   for (const key of ["llmApiBase", "llmModel", "llmApiKey"]) {
     const field = document.querySelector(`#zotero-prefpane-${ADDON_REF}-${key}`) as HTMLInputElement | null;
     if (!field || field.dataset.budgetBound) continue;
@@ -488,7 +506,7 @@ function tryInit(retries: number) {
       try {
         const modelSettings = { provider: normalizeProvider(getFieldValue("llmProvider")), sessionId, apiBase: getFieldValue("llmApiBase"), apiKey: getFieldValue("llmApiKey"), model: getFieldValue("llmModel"), thinkingMode: normalizeThinkingMode(getFieldValue("llmThinkingMode")), thinkEffort: normalizeThinkEffort(getFieldValue("llmThinkEffort")), tokenizerMode: getFieldValue("tokenizerMode") };
         const limits = await resolveModelCapabilities(modelSettings, undefined, true);
-        status.textContent = `${limits.source}: context ${limits.contextWindow || "separate"}, input ${limits.inputLimit || "shared"}, max output ${limits.maxOutput} tokens. Local counts are estimates.`;
+        status.textContent = `${limits.source}: context ${limits.contextWindow || "separate"}, input ${limits.inputLimit || "shared"}, model max output ${limits.maxOutput}; generation ${limits.generation.outputTokens} tokens including thinking (${limits.generation.source}). Local counts are estimates.`;
       } catch (error: any) { status.textContent = error.message; }
       finally { refresh.disabled = false; }
     });

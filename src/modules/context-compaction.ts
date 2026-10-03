@@ -1,6 +1,7 @@
 import { AgentContext, COMPACT_PROMPT, ContextMessage } from "./agent-context";
 import { chatWithTools, ProviderContextError, Tool, TokenUsage, sumTokenUsage, LLMSettings } from "./llm-client";
 import { ContextBudget } from "./context-budget";
+import { logGenerationResult } from "./debug-log";
 
 function checkAbort(signal?: AbortSignal): void {
   if (signal?.aborted) { const error = new Error("Compaction cancelled."); error.name = "AbortError"; throw error; }
@@ -33,23 +34,30 @@ export async function compactAgentContext(
   exchangeGroups(original);
   const target = Math.max(32, Math.min(4096, Math.floor(budget.inputLimit() * 0.1)));
   let compactUsage: TokenUsage | undefined;
+  let requiredOutput = budget.outputLimit();
   const references = original.filter(message => message.resultId).map(message => `${message.tool_call_id}: ${message.resultId}`).join("; ");
   const instruction: ContextMessage = { role: "user", content: COMPACT_PROMPT + `\nAim for at most ${target} tokens. Preserve essential continuation information.` +
     (references ? `\nOriginal result references: ${references}` : "") };
   const summarize = async (messages: ContextMessage[]): Promise<string> => {
     const request = [...messages, instruction];
     let previousOutput = 0;
+    const initialOutput = requiredOutput;
     for (let attempt = 0; attempt < 3; attempt++) {
       checkAbort(signal);
-      const maxTokens = budget.outputAllowance(request, tools, Math.min(budget.capabilities.maxOutput, Math.max(target * 2, budget.capabilities.requestedOutput) * 2 ** attempt));
-      if (maxTokens <= previousOutput || maxTokens < target) throw new ProviderContextError("Compaction needs a smaller group to reserve output tokens.");
+      const maxTokens = budget.outputLimit(initialOutput * 2 ** attempt);
+      if (maxTokens <= previousOutput) throw new Error("Automatic compaction exhausted the configured generation limit. Original history is preserved.");
+      if (!budget.fits(request, tools, maxTokens)) {
+        requiredOutput = maxTokens;
+        throw new ProviderContextError("Compaction needs a smaller group to reserve the complete generation allowance.");
+      }
       budget.assertFits(request, tools, maxTokens);
       previousOutput = maxTokens;
       const result = await chatWithTools(request, tools, undefined, undefined, signal, false, { maxTokens, settings });
       onUsage(result.usage);
       compactUsage = sumTokenUsage([compactUsage, result.usage]);
       (context.data.requests ||= []).push({ kind: "compact", generation: context.data.checkpoints.length, usage: result.usage,
-        inputTokens: budget.count(request, tools), countMethod: "local-bpe-estimate", finishReason: result.finishReason, outputLimit: maxTokens });
+        inputTokens: budget.count(request, tools), countMethod: "local-bpe-estimate", finishReason: result.finishReason, ...budget.requestMetadata(maxTokens) });
+      void logGenerationResult("compact", settings?.model || "unknown", budget.requestMetadata(maxTokens), budget.count(request, tools), result);
       budget.counter.observe(request, tools, result.usage);
       checkAbort(signal);
       if (result.finishReason === "length") continue;
@@ -65,23 +73,33 @@ export async function compactAgentContext(
   } catch (error) {
     if (!(error instanceof ProviderContextError)) throw error;
     const groups = exchangeGroups(original.slice(1));
-    let notes = "";
-    let pending: ContextMessage[] = [];
-    const base = () => [original[0], ...(notes ? [{ role: "assistant" as const, content: notes }] : [])];
-    const recoveryOutput = Math.min(budget.capabilities.maxOutput, Math.max(target * 2, budget.capabilities.requestedOutput) * 4);
-    const fits = (messages: ContextMessage[]) => budget.fits([...messages, instruction], tools, recoveryOutput);
-    const flush = async () => {
-      if (!pending.length) return;
-      notes = await summarize([...base(), ...pending]);
-      pending = [];
-    };
-    for (const group of groups) {
-      if (!fits([...base(), ...pending, ...group])) await flush();
-      if (!fits([...base(), ...group])) throw new Error("A complete exchange cannot fit this model's compaction input/output token budget. Original history is preserved. Use a model with a larger window or reduce its output reservation.", { cause: error });
-      pending.push(...group);
+    summary = "";
+    // Preserve the full selected output reservation when partitioning input.
+    for (let partition = 0; partition < 3; partition++) {
+      const recoveryOutput = requiredOutput;
+      let notes = "";
+      let pending: ContextMessage[] = [];
+      const base = () => [original[0], ...(notes ? [{ role: "assistant" as const, content: notes }] : [])];
+      const fits = (messages: ContextMessage[]) => budget.fits([...messages, instruction], tools, recoveryOutput)
+        && (!recoverProviderError || budget.count([...messages, instruction], tools) <= budget.inputLimit(recoveryOutput) * 0.5);
+      const flush = async () => {
+        if (!pending.length) return;
+        notes = await summarize([...base(), ...pending]);
+        pending = [];
+      };
+      try {
+        for (const group of groups) {
+          if (!fits([...base(), ...pending, ...group])) await flush();
+          if (!fits([...base(), ...group])) throw new Error("A complete exchange cannot fit this model's compaction input/output token budget. Original history is preserved. Use a model with a larger window or reduce its output reservation.", { cause: error });
+          pending.push(...group);
+        }
+        await flush();
+        summary = notes;
+        break;
+      } catch (retryError) {
+        if (!(retryError instanceof ProviderContextError) || requiredOutput <= recoveryOutput || partition === 2) throw retryError;
+      }
     }
-    await flush();
-    summary = notes;
   }
   const checkpoint: ContextMessage = { role: "assistant", content: context.checkpointContent(summary) };
   const tail: ContextMessage[] = [];

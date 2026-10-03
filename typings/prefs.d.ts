@@ -7,6 +7,15 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
+      "pdfConversionEngine": string;
+      "pdfVisionProfile": string;
+      "pdfVisionChunkPages": number;
+      "pdfVisionConcurrency": number;
+      "pdfVisionDpi": number;
+      "pdfVisionCachePageImages": boolean;
+      "pdfVisionTimeoutSeconds": number;
+      "pdfVisionSelfCheck": boolean;
+      "pdfVisionStream": boolean;
       "mineruToken": string;
       "mineruLanguage": string;
       "mineruTimeoutMinutes": number;

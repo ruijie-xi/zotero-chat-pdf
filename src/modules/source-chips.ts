@@ -4,6 +4,7 @@ import { SourceItem } from "./chat-session";
 import {
   conversionRequestFromSource,
   releaseConversion,
+  recoverConversion,
   startConversion,
   subscribeConversion,
   waitForConversion,
@@ -12,18 +13,26 @@ import * as MDCache from "./md-cache";
 import * as ChatHistory from "./chat-history";
 import { createAbortController, getPanelState, PanelState } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
+import { summarizeSelfChecks } from "./vision-self-check";
+import { openConversionInspector, conversionProgressText } from "./conversion-inspector";
 
-/** Convert a pending source to markdown via MinerU. */
+/** Convert a source using the configured PDF engine. */
 export async function convertSource(
   source: SourceItem,
   onProgress?: (msg: string) => void,
   externalSignal?: AbortSignal,
   panelState?: PanelState,
   targetSession = panelState?.session,
+  recoverOnly = false,
+  force = false,
 ): Promise<void> {
   if (source.kind === "image") return;
   if (!targetSession) throw new Error("Conversion requires an owning chat session.");
   const controllers = panelState?.conversionAbortControllers ?? new Map();
+  if (controllers.has(source.id)) return;
+  const previousStatus = source.status;
+  const previousError = source.errorMessage;
+  const stillAttached = () => targetSession.getSource(source.id) === source;
   targetSession.setSourceStatus(source.id, "converting");
   const { controller: convController, signal: convSignal } = createAbortController(panelState?.win);
   controllers.set(source.id, convController);
@@ -33,22 +42,40 @@ export async function convertSource(
   onProgress?.("Starting conversion...");
   let unsubscribe: () => void = () => undefined;
   let jobId = "";
+  const progressTimer = panelState && onProgress ? panelState.win.setInterval(() => {
+    if (stillAttached() && source.status === "converting" && source.conversionStatus) onProgress(conversionProgressText(source.conversionStatus));
+  }, 1000) : undefined;
   const owner = `ui:${panelState?.windowId || "detached"}:${source.id}`;
   try {
-    const started = await startConversion(conversionRequestFromSource(source), owner);
+    const request = conversionRequestFromSource(source);
+    if (force) request.force = true;
+    const started = recoverOnly
+      ? await recoverConversion(request, owner, convSignal)
+      : await startConversion(request, owner);
+    if (!started) {
+      if (stillAttached()) targetSession.setSourceStatus(source.id, previousStatus, previousError);
+      onProgress?.("No existing conversion to recover");
+      return;
+    }
     jobId = started.jobId;
+    source.conversionStatus = started;
     const releaseOwner = () => releaseConversion(jobId, owner);
     convSignal.addEventListener("abort", releaseOwner, { once: true });
     if (convSignal.aborted) releaseOwner();
-    unsubscribe = subscribeConversion(jobId, (status) => onProgress?.(status.progress));
+    unsubscribe = subscribeConversion(jobId, (status) => {
+      if (stillAttached()) source.conversionStatus = status;
+      onProgress?.(status.progress);
+    });
     const finished = await waitForConversion(jobId, convSignal);
     convSignal.removeEventListener("abort", releaseOwner);
     if (finished.state === "ready") {
-      const markdown = await MDCache.read(source.cacheKey, source.key);
+      const [markdown, manifest] = await Promise.all([MDCache.read(source.cacheKey, source.key), MDCache.readManifest(source.cacheKey, source.key)]);
+      if (convSignal.aborted || !stillAttached()) return;
       targetSession.setSourceReady(source.id, markdown);
+      source.selfCheck = manifest?.converter === "vision" ? summarizeSelfChecks(manifest.chunks, manifest.pageCount) : undefined;
       onProgress?.("Ready");
     } else if (finished.state === "cancelled") {
-      targetSession.setSourceStatus(source.id, "pending");
+      if (stillAttached()) targetSession.setSourceStatus(source.id, "pending");
       onProgress?.("Conversion stopped");
     } else {
       throw new Error(finished.error || finished.progress || "Conversion failed");
@@ -56,20 +83,34 @@ export async function convertSource(
   } catch (err: any) {
     if (err.name === "AbortError" || convSignal.aborted) {
       Zotero.debug(`[ChatPDF] convertSource aborted for ${source.key}`);
-      targetSession.setSourceStatus(source.id, "pending");
+      if (stillAttached()) targetSession.setSourceStatus(source.id, "pending");
       onProgress?.("Conversion stopped");
     } else {
       Zotero.debug(`[ChatPDF] convertSource error: ${err.message}\n${err.stack}`);
-      targetSession.setSourceStatus(source.id, "error", err.message);
+      if (stillAttached()) targetSession.setSourceStatus(source.id, "error", err.message);
       onProgress?.(err.message);
       throw err;
     }
   } finally {
+    if (progressTimer !== undefined) panelState?.win.clearInterval(progressTimer);
     unsubscribe();
     if (jobId) releaseConversion(jobId, owner);
     externalSignal?.removeEventListener("abort", forwardAbort);
-    controllers.delete(source.id);
+    if (controllers.get(source.id) === convController) controllers.delete(source.id);
+    if (jobId && stillAttached()) {
+      await ChatHistory.saveSession(targetSession.toSavedSession()).catch((err: any) => {
+        Zotero.debug(`[ChatPDF] save after source conversion failed: ${err.message}`);
+      });
+    }
   }
+}
+
+/** Adding a known source recovers uploaded results without starting a new upload. */
+export function recoverSource(source: SourceItem, root: HTMLElement, targetSession = getPanelState(root).session): void {
+  if (source.kind === "image" || source.status === "ready") return;
+  const state = getPanelState(root);
+  void convertSource(source, () => refreshSourceChips(root), undefined, state, targetSession, true)
+    .catch(() => refreshSourceChips(root));
 }
 
 function saveCurrentSession(root: HTMLElement): void {
@@ -80,6 +121,15 @@ function saveCurrentSession(root: HTMLElement): void {
   });
 }
 
+interface SourceRow {
+  source: SourceItem;
+  element: HTMLElement;
+  chip?: HTMLElement;
+  signature: string;
+  progress?: HTMLElement;
+}
+const sourceRows = new WeakMap<Element, Map<string, SourceRow>>();
+
 /** Render the source chips UI in the panel. */
 function renderSourceChips(root: HTMLElement): void {
   const state = getPanelState(root);
@@ -87,12 +137,42 @@ function renderSourceChips(root: HTMLElement): void {
   const container = root.querySelector("#chatpdf-source-chips");
   if (!container) return;
   const doc = root.ownerDocument!;
-  container.innerHTML = "";
-
   const sources = session.getSources();
-  if (sources.length === 0) return;
+  const rows = sourceRows.get(container) || new Map<string, SourceRow>();
+  sourceRows.set(container, rows);
+  const wanted: HTMLElement[] = [];
+  const sourceIds = new Set(sources.map(source => source.id));
+  for (const [id, row] of rows) {
+    if (!sourceIds.has(id) || session.getSource(id) !== row.source) { row.element.remove(); rows.delete(id); }
+  }
 
   for (const source of sources) {
+    let row = rows.get(source.id);
+    if (!row) {
+      row = { source, element: h(doc, "div", { className: "chatpdf-source-entry" }), signature: "" };
+      rows.set(source.id, row);
+      if (source.kind !== "image") {
+        const detailRow = h(doc, "div", { className: "chatpdf-source-conversion-row" });
+        const inspect = h(doc, "button", { type: "button", className: "chatpdf-chip-text-btn" }, "View conversion process");
+        // This control stays attached during every streamed progress update.
+        inspect.addEventListener("click", () => openConversionInspector(root, source, async () => {
+          await convertSource(source, () => refreshSourceChips(root), undefined, getPanelState(root)).catch(() => {});
+          refreshSourceChips(root);
+        }));
+        row.progress = h(doc, "span");
+        detailRow.append(inspect, row.progress); row.element.appendChild(detailRow);
+      }
+    }
+    wanted.push(row.element);
+    if (row.progress) {
+      const text = source.conversionStatus && source.status === "converting" ? conversionProgressText(source.conversionStatus) : "";
+      if (row.progress.textContent !== text) row.progress.textContent = text;
+      row.progress.hidden = !text;
+    }
+    const signature = JSON.stringify([source.kind, source.status, source.title, source.errorMessage, source.markdown?.length,
+      source.selfCheck?.pagesChecked, source.selfCheck?.pagesTotal, source.selfCheck?.editsApplied]);
+    if (row.signature === signature) continue;
+    row.signature = signature;
     const chipTitle = source.errorMessage || (source.kind === "image" ? "Image source — requires a vision-capable model" : "Open PDF");
     const chip = h(doc, "div", { className: `chatpdf-source-chip chatpdf-source-chip-${source.status}`, title: chipTitle });
     chip.addEventListener("click", () => {
@@ -121,6 +201,11 @@ function renderSourceChips(root: HTMLElement): void {
       const sizeText = formatChars(charLen);
       const badge = h(doc, "span", { className: "chatpdf-chip-badge chatpdf-chip-badge-ready" }, `${sizeText} chars`);
       chip.appendChild(badge);
+      if (source.selfCheck) {
+        const check = source.selfCheck;
+        const label = check.pagesChecked ? `Self-check ${check.pagesChecked}/${check.pagesTotal}` : "Not self-checked";
+        chip.appendChild(h(doc, "span", { className: "chatpdf-chip-badge", title: `Same-model self-check; ${check.editsApplied} local edits. This is not independent verification.` }, label));
+      }
     } else if (source.status !== "pending" && source.status !== "ready") {
       const statusLabels: Record<string, string> = {
         converting: "Converting...",
@@ -133,8 +218,19 @@ function renderSourceChips(root: HTMLElement): void {
     // Actions
     const actions = h(doc, "span", { className: "chatpdf-chip-actions" });
 
-    if (source.status === "pending" && source.kind !== "image") {
-      const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: "Convert" }, "Convert");
+    if ((source.status === "ready" || source.status === "error") && source.kind !== "image") {
+      const reconvert = h(doc, "button", { className: "chatpdf-chip-text-btn", title: "Replace this PDF cache using the selected conversion engine" }, "Reconvert");
+      reconvert.addEventListener("click", (e: Event) => {
+        e.stopPropagation();
+        void convertSource(source, () => refreshSourceChips(root), undefined, state, state.session, false, true)
+          .catch(() => refreshSourceChips(root));
+      });
+      actions.appendChild(reconvert);
+    }
+
+    if ((source.status === "pending" || source.status === "error") && source.kind !== "image") {
+      const label = source.status === "error" ? "Retry" : "Convert";
+      const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: label }, label);
       convertBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         convertSource(source, () => refreshSourceChips(root), undefined, state).catch(() => refreshSourceChips(root));
@@ -173,17 +269,25 @@ function renderSourceChips(root: HTMLElement): void {
     actions.appendChild(removeBtn);
 
     chip.appendChild(actions);
-    container.appendChild(chip);
+    if (row.chip) row.element.replaceChild(chip, row.chip);
+    else row.element.prepend(chip);
+    row.chip = chip;
+  }
+
+  // Reconcile only additions/removals/reordering; never detach an unchanged row.
+  for (const [index, row] of wanted.entries()) {
+    if (container.children[index] !== row) container.insertBefore(row, container.children[index] || null);
   }
 
   // Total source size summary
   const readySources = sources.filter((s) => s.status === "ready" && s.markdown);
   if (readySources.length > 0) {
     const totalChars = readySources.reduce((sum, s) => sum + (s.markdown?.length ?? 0), 0);
-    const summary = h(doc, "div", { className: "chatpdf-source-summary" },
-      `${formatChars(totalChars)} chars`);
-    container.appendChild(summary);
-  }
+    const summary = container.querySelector(".chatpdf-source-summary") || h(doc, "div", { className: "chatpdf-source-summary" });
+    const text = `${formatChars(totalChars)} chars`;
+    if (summary.textContent !== text) summary.textContent = text;
+    if (summary !== container.lastElementChild) container.appendChild(summary);
+  } else container.querySelector(".chatpdf-source-summary")?.remove();
 }
 
 /** Refresh source chips without allowing Firefox to move the active chat cursor. */

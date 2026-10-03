@@ -35,6 +35,7 @@ export interface PanelState {
   historyFilterParentKey: string | null;
   historyFilterTitle: string | null;
   conversionAbortControllers: Map<string, AbortLike>;
+  conversionInspectorCleanup: (() => void) | null;
   backgroundStreams: Map<string, StreamState>;
   activePollIntervals: Set<number>;
   copyHandler: ((event: Event) => void) | null;
@@ -65,6 +66,7 @@ export function createPanelState(win: Window): PanelState {
     historyFilterParentKey: null,
     historyFilterTitle: null,
     conversionAbortControllers: new Map(),
+    conversionInspectorCleanup: null,
     backgroundStreams: new Map(),
     activePollIntervals: new Set(),
     copyHandler: null,
@@ -82,6 +84,7 @@ export function destroyPanelState(win: Window): void {
   const state = states.get(win);
   if (!state) return;
   state.currentAbortController?.abort();
+  state.conversionInspectorCleanup?.();
   for (const controller of state.conversionAbortControllers.values()) controller.abort();
   for (const stream of state.backgroundStreams.values()) stream.abortController.abort();
   for (const interval of state.activePollIntervals) win.clearInterval(interval);

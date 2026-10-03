@@ -1,4 +1,6 @@
 pref-title = ChatPDF Settings
+pref-pdf-vision-stream = Live conversion preview
+pref-pdf-vision-stream-hint = Show generated text as it arrives, using the same request. Disable this if your endpoint rejects streaming; JSON responses are accepted without resending.
 pref-mineru-token = MinerU API Token
 pref-mineru-language = MinerU document language
 pref-mineru-timeout = MinerU timeout (minutes)
@@ -29,7 +31,22 @@ pref-brave-search-api-key = Brave Search API Key (optional)
 pref-context-window-tokens = Combined context window (tokens)
 pref-input-token-limit = Separate input limit (tokens, optional)
 pref-max-output-tokens = Model maximum output (tokens)
-pref-requested-output-tokens = Requested output reservation (tokens, 0 = automatic)
+pref-requested-output-tokens = Optional generation limit, including thinking (tokens, 0 = model maximum)
 pref-image-token-reserve = Per-image token reserve (0 = automatic)
 pref-tokenizer-mode = Local token counting
 pref-model-limits-refresh = Refresh model token limits
+
+pref-pdf-engine = PDF conversion engine
+pref-pdf-engine-vision =
+    .label = Vision model
+pref-pdf-engine-mineru =
+    .label = MinerU
+pref-pdf-vision-profile = Conversion model profile
+pref-pdf-vision-pages = Pages per request (1-10)
+pref-pdf-vision-concurrency = Concurrent requests (1-4)
+pref-pdf-vision-dpi = Page render DPI (72-300)
+pref-pdf-vision-images = Cache page images for document image tools
+pref-pdf-vision-timeout = Vision request timeout (seconds)
+pref-pdf-vision-self-check = Model self-check in the same response
+pref-pdf-vision-self-check-hint = The conversion model appends only local edits or an empty result, without a second API call or resending page images. This saves token overhead but is not independent verification. Existing caches require Reconvert to use it.
+pref-pdf-vision-hint = Select a saved vision-capable model profile, or leave blank to use the current chat model. PDF page images are sent to that model's API. Token limits and per-image reserve come from its profile. Conversion disables thinking when the endpoint supports it. Existing cached PDFs remain available; use Reconvert to replace one.

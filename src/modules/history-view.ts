@@ -8,6 +8,7 @@ import {
 } from "./panel-state";
 import { renderChatHistory, refreshSourceChips, renderLiveStreamState, updateUsageBar } from "./message-renderer";
 import { autoSaveSession } from "./send-handler";
+import { recoverSource } from "./source-chips";
 
 /** Show history filtered to a specific parent item. Called from context menu. */
 export function showFilteredHistory(parentKey: string, title: string): void {
@@ -210,6 +211,8 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
         if (msgs) msgs.innerHTML = "";
         renderChatHistory(root);
         refreshSourceChips(root);
+
+        for (const source of currentSession.getSources()) recoverSource(source, root, currentSession);
 
         // If there's an active background stream, render its current state
         if (bgStream && msgs) {

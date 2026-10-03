@@ -9,7 +9,7 @@ import fixtures from "./fixtures/deepseek-v4-tokens.json";
 
 const tokenizer = new Tokenizer(JSON.parse(readFileSync("addon/content/tokenizers/deepseek-v4.json", "utf8")), JSON.parse(readFileSync("addon/content/tokenizers/deepseek-v4-config.json", "utf8")));
 const settings = { apiBase: "https://api.deepseek.com/v1", apiKey: "", model: "deepseek-flash", thinkingMode: "default" as const, thinkEffort: "default" as const };
-const capabilities: ModelCapabilities = { contextWindow: 10000, maxOutput: 4000, requestedOutput: 2000, tokenizer: "deepseek-v4", source: "endpoint", fetchedAt: 1, imageTokens: 1024 };
+const capabilities: ModelCapabilities = { contextWindow: 10000, maxOutput: 4000, generation: { outputTokens: 4000, retryCeiling: 4000, source: "model-maximum", thinkingMode: "default", thinkEffort: "default" }, tokenizer: "deepseek-v4", source: "endpoint", fetchedAt: 1, imageTokens: 1024 };
 const counter = () => new TokenCounter(tokenizer, settings, capabilities);
 
 describe("local token accounting", () => {
@@ -45,7 +45,8 @@ describe("local token accounting", () => {
   });
   it("reserves output against combined capacity and respects separate input limits", () => {
     const budget = new ContextBudget(capabilities, counter());
-    expect(budget.inputLimit()).toBe(7800);
+    expect(budget.inputLimit()).toBe(5800);
+    expect(budget.inputLimit(2000)).toBe(7800);
     expect(budget.inputLimit(4000)).toBe(5800);
     const separate = new ContextBudget({ ...capabilities, contextWindow: undefined, inputLimit: 10000 }, counter());
     expect(separate.inputLimit(4000)).toBe(9800);

@@ -8,7 +8,7 @@ import { ContextBudget } from "./context-budget";
 import { runAgentLoop, AgentCallbacks } from "./agent-loop";
 import { getToolDefinitions } from "./tools";
 import { AssistantSegments } from "./assistant-segments";
-import { logLLMRequest, logLLMResponse } from "./debug-log";
+import { logLLMRequest, logLLMResponse, logGenerationResult } from "./debug-log";
 import * as ChatHistory from "./chat-history";
 import {
   getPanelState, StreamState,
@@ -89,8 +89,9 @@ async function generateTitle(targetSession: import("./chat-session").ChatSession
     const capabilities = await resolveModelCapabilities(settings);
     const budget = new ContextBudget(capabilities, new TokenCounter(await loadTokenizer(), settings, capabilities));
     budget.assertFits(titleMessages);
-    const titleResult = await chatWithTools(titleMessages, undefined, undefined, undefined, undefined, true, { settings, maxTokens: capabilities.requestedOutput });
-    const title = titleResult.content.trim().slice(0, 50);
+    const titleResult = await chatWithTools(titleMessages, undefined, undefined, undefined, undefined, true, { settings, maxTokens: budget.outputLimit() });
+    void logGenerationResult("title", settings.model, budget.requestMetadata(), budget.count(titleMessages), titleResult);
+    const title = titleResult.finishReason === "length" ? "" : titleResult.content.trim().slice(0, 50);
     targetSession.addAuxiliaryUsage(titleResult.usage);
     if (!title && !titleResult.usage) return;
 

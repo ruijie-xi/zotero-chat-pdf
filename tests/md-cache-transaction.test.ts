@@ -60,4 +60,21 @@ describe("Markdown cache transactions", () => {
     expect(existing).toContain(canonical);
     expect(existing).not.toContain(backup);
   });
+
+  it("keeps the old cache and staged pages while reporting a path-free persistent move error", async () => {
+    const staging = "/cache/conversions/staging/job";
+    const canonical = "/cache/documents/1-ATT";
+    const existing = new Set([staging, canonical]);
+    Object.assign(IOUtils, {
+      exists: vi.fn(async (path: string) => existing.has(path)),
+      remove: vi.fn(async (path: string) => { existing.delete(path); }),
+      move: vi.fn(async () => { throw new Error("Could not move D:\\private\\paper (NS_ERROR_FILE_ACCESS_DENIED)"); }),
+    });
+    await expect(commitStagedDocument("job", "1-ATT")).rejects.toThrow(
+      "PDF cache commit failed while backing up the previous cache (NS_ERROR_FILE_ACCESS_DENIED). Converted pages are saved; use Retry.",
+    );
+    expect(existing).toContain(staging);
+    expect(existing).toContain(canonical);
+    expect(IOUtils.move).toHaveBeenCalledTimes(5);
+  });
 });

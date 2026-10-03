@@ -1,7 +1,18 @@
 import { atomicWriteJson } from "../utils/atomic-storage";
 import { SourceItem } from "./chat-session";
+import { getPref } from "../utils/prefs";
+import { convertPdfWithVision } from "./vision-client";
+import { getVisionConversionConfig, sameVisionConfig, validateVisionConversionConfig, VisionConversionConfig } from "./vision-conversion-config";
+import { validateConversionContract, ConvertedPdf, buildChunkPlan } from "./pdf-conversion";
+import { VISION_QUALITY_GATE } from "./vision-quality";
+import { parseVisionPages, checkVisionMath } from "./vision-quality";
+import { SELF_CHECK_QUALITY_GATE } from "./vision-self-check";
+import { applyConversionEvent, ConversionDetails, ConversionDetailEvent, conversionCounts, conversionDraftPage, emptyConversionDetails, interruptConversionRequests } from "./conversion-details";
+import { sumTokenUsage, TokenUsage } from "./llm-client";
+import { readImageFile, imageMime } from "./image-input";
 import {
   convertPdf,
+  getMineruTaskState,
   MineruConversionOptions,
   MineruRemoteTask,
   MINERU_LONG_PDF_CHUNK_SIZE,
@@ -18,6 +29,8 @@ export type ConversionState =
   | "error" | "cancelled" | "interrupted" | "unknown";
 
 export interface ConversionOptions {
+  engine?: "mineru" | "vision";
+  vision?: VisionConversionConfig;
   modelVersion?: "pipeline" | "vlm";
   language?: string;
   isOcr?: boolean;
@@ -51,6 +64,14 @@ export interface ConversionStatus {
   retryable: boolean;
   remoteMayContinue: boolean;
   options?: ConversionOptions;
+  completedPages?: number;
+  totalPages?: number;
+  reusedPages?: number;
+  requestCount?: number;
+  activeRequests?: number;
+  receivingRequests?: number;
+  usage?: TokenUsage;
+  runStartedAt?: number;
 }
 
 interface StoredJob {
@@ -61,6 +82,8 @@ interface StoredJob {
   remoteTasks: Record<string, MineruRemoteTask>;
   completedChunks: number[];
   manifest?: MDCache.DocumentManifest;
+  sourceDigest?: string;
+  details?: ConversionDetails;
 }
 
 interface Job extends StoredJob {
@@ -71,6 +94,7 @@ interface Job extends StoredJob {
   listeners: Set<(status: ConversionStatus) => void>;
   owners: Set<string>;
   suspending: boolean;
+  drafts: Map<number, { requestId: string; markdown: string }>;
 }
 
 const STATES = new Set<ConversionState>([
@@ -79,6 +103,7 @@ const STATES = new Set<ConversionState>([
 const TERMINAL = new Set<ConversionState>(["ready", "error", "cancelled", "interrupted"]);
 const jobs = new Map<string, Job>();
 const activeByCacheKey = new Map<string, Job>();
+const startingByCacheKey = new Map<string, Promise<ConversionStatus | null>>();
 let initialized = false;
 let initializing: Promise<void> | null = null;
 let persistQueue = Promise.resolve();
@@ -93,12 +118,16 @@ export function sanitizeConversionStatus(status: ConversionStatus): ConversionSt
     ...status,
     progress: redact(status.progress, `Conversion stage: ${stage}; location details redacted`),
     error: redact(status.error, `Conversion failed during ${stage}; location details redacted`),
-    options: status.options ? { ...status.options } : undefined,
+    options: status.options ? { ...status.options, vision: status.options.vision ? { ...status.options.vision, apiBase: "" } : undefined } : undefined,
   };
 }
 
 function normalizeOptions(options?: ConversionOptions): ConversionOptions {
+  const engine = options?.engine || (options?.modelVersion ? "mineru" : getPref("pdfConversionEngine") === "mineru" ? "mineru" : "vision");
+  if (engine !== "vision" && engine !== "mineru") throw new Error("PDF conversion engine must be vision or mineru");
   return {
+    engine,
+    vision: engine === "vision" ? validateVisionConversionConfig(options?.vision || getVisionConversionConfig()) : undefined,
     modelVersion: options?.modelVersion || "pipeline",
     language: options?.language,
     isOcr: options?.isOcr ?? false,
@@ -120,7 +149,14 @@ function mineruOptions(options?: ConversionOptions): MineruConversionOptions {
   };
 }
 
-const snapshot = (job: Job) => sanitizeConversionStatus(job.status);
+const snapshot = (job: Job) => sanitizeConversionStatus({ ...job.status,
+  ...(job.details?.pageCount ? { ...conversionCounts(job.details), totalPages: job.details.pageCount,
+    requestCount: job.details.requests.length, usage: job.manifest?.conversionUsage,
+    activeRequests: job.details.requests.filter(request => request.state === "waiting" || request.state === "receiving").length,
+    receivingRequests: job.details.requests.filter(request => request.state === "receiving").length,
+    progressPercent: job.status.state === "ready" ? 100 : job.status.stage === "commit" ? 99
+      : Math.min(99, 99 * conversionCounts(job.details).completedPages / job.details.pageCount) } : {}),
+});
 const stored = (job: Job): StoredJob => ({
   jobId: job.jobId,
   cacheKey: job.cacheKey,
@@ -129,6 +165,8 @@ const stored = (job: Job): StoredJob => ({
   remoteTasks: { ...job.remoteTasks },
   completedChunks: [...job.completedChunks],
   manifest: job.manifest,
+  sourceDigest: job.sourceDigest,
+  details: job.details ? JSON.parse(JSON.stringify(job.details)) : undefined,
 });
 
 function persist(): Promise<void> {
@@ -145,6 +183,13 @@ function update(job: Job, patch: Partial<ConversionStatus>): void {
 }
 
 async function complete(job: Job, patch: Partial<ConversionStatus>): Promise<void> {
+  if (patch.state === "ready") job.drafts.clear();
+  if (job.details) {
+    for (const chunk of job.details.chunks) {
+      if (chunk.stage !== "ready") chunk.stage = patch.state === "cancelled" ? "cancelled" : "error";
+    }
+    applyConversionEvent(job.details, { type: "message", message: patch.state === "ready" ? "Complete document installed in cache" : String(patch.error || patch.progress || patch.state) });
+  }
   update(job, patch);
   activeByCacheKey.delete(job.cacheKey);
   job.owners.clear();
@@ -173,6 +218,8 @@ function createJob(request: ConversionRequest, cacheKey: string, jobId?: string)
     listeners: new Set(),
     owners: new Set(),
     suspending: false,
+    drafts: new Map(),
+    details: emptyConversionDetails(),
     status: {
       jobId: id,
       state: "pending",
@@ -184,6 +231,7 @@ function createJob(request: ConversionRequest, cacheKey: string, jobId?: string)
       createdAt,
       updatedAt: createdAt,
       retryable: false,
+      runStartedAt: Date.now(),
       remoteMayContinue: false,
       options: normalizeOptions(request.options),
     },
@@ -191,11 +239,23 @@ function createJob(request: ConversionRequest, cacheKey: string, jobId?: string)
 }
 
 function restoreJob(value: StoredJob): Job {
-  const job = createJob(value.request, value.cacheKey, value.jobId);
-  job.status = sanitizeConversionStatus({ ...value.status, options: normalizeOptions(value.request.options) });
+  // Registry v1 jobs created before engine selection always belong to MinerU.
+  const request = { ...value.request, options: normalizeOptions({ ...value.request.options, engine: value.request.options?.engine || "mineru" }) };
+  const job = createJob(request, value.cacheKey, value.jobId);
+  job.status = sanitizeConversionStatus({ ...value.status, options: request.options });
   job.remoteTasks = { ...(value.remoteTasks || {}) };
   job.completedChunks = [...(value.completedChunks || [])];
   job.manifest = value.manifest;
+  job.details = value.details?.version === 1 && Array.isArray(value.details.chunks) && Array.isArray(value.details.requests)
+    && Array.isArray(value.details.events) && Array.isArray(value.details.renderedPages) ? value.details : value.manifest?.conversionDetails || emptyConversionDetails();
+  interruptConversionRequests(job.details);
+  if (job.manifest && !job.details.chunks.length) {
+    job.details.pageCount = job.manifest.pageCount;
+    job.details.chunks = job.manifest.chunks.map(chunk => ({ index: chunk.index, startPage: chunk.startPage, endPage: chunk.endPage,
+      stage: chunk.status === "ready" ? "ready" : "queued", editsApplied: chunk.selfCheck?.editsApplied }));
+    applyConversionEvent(job.details, { type: "message", message: "Loaded saved page ranges from the manifest; earlier request history is shown only if recorded" });
+  }
+  job.sourceDigest = value.sourceDigest;
   if (TERMINAL.has(job.status.state)) {
     job.resolved = true;
     job.resolve(snapshot(job));
@@ -228,6 +288,8 @@ function parseStored(value: unknown): StoredJob | null {
       ? job.completedChunks.filter((value): value is number => Number.isInteger(value) && value > 0)
       : [],
     manifest: job.manifest,
+    details: job.details,
+    sourceDigest: typeof job.sourceDigest === "string" ? job.sourceDigest : undefined,
   };
 }
 
@@ -289,7 +351,12 @@ function makeManifest(
     ...libraryFields(job.request.libraryID),
     attachmentKey: job.request.key,
     parentItemKey: job.request.parentItemKey,
-    converter: "mineru",
+    converter: job.request.options?.engine || "mineru",
+    conversionConfig: job.request.options?.vision,
+    sourceDigest: job.sourceDigest,
+    conversionJobId: job.jobId,
+    qualityGate: job.request.options?.engine === "vision"
+      ? job.request.options.vision?.selfCheck ? SELF_CHECK_QUALITY_GATE : VISION_QUALITY_GATE : undefined,
     title,
     pageCount,
     chunkSize,
@@ -308,6 +375,7 @@ function markChunkReady(manifest: MDCache.DocumentManifest, chunk: PdfChunkResul
     status: "ready",
     charCount: chunk.markdown.length,
     assetCount: chunk.assetCount,
+    selfCheck: chunk.selfCheck,
     errorMessage: undefined,
   });
   manifest.updatedAt = Date.now();
@@ -333,12 +401,44 @@ function progressPatch(state: Parameters<ProgressCallback>[0], message: string):
   return { state: "converting", stage, progress: message };
 }
 
-async function run(job: Job, recovering = false): Promise<void> {
+/** Only a finalized, digest-bound self-checked checkpoint can bypass rendering/model work. */
+async function readCommitRecovery(job: Job, staged: Map<number, string>): Promise<ConvertedPdf | undefined> {
+  const saved = await MDCache.readFinalizedStaging(job.jobId);
+  if (!saved) return undefined;
+  const manifest = saved.manifest;
+  if (manifest.sourceDigest !== job.sourceDigest || manifest.converter !== "vision"
+    || !sameVisionConfig(manifest.conversionConfig, job.request.options?.vision)) throw new Error("Finished conversion checkpoint does not match the PDF or settings. Use Reconvert.");
+  const plan = buildChunkPlan(manifest.pageCount, manifest.chunkSize);
+  const chunks: PdfChunkResult[] = [];
+  for (const item of plan) {
+    const markdown = staged.get(item.index), meta = manifest.chunks.find(chunk => chunk.index === item.index);
+    const trusted = job.manifest?.chunks.find(chunk => chunk.index === item.index)?.selfCheck;
+    if (!markdown || !trusted || JSON.stringify(meta?.selfCheck) !== JSON.stringify(trusted)) throw new Error("Finished conversion checkpoint has incomplete self-check records. Use Reconvert.");
+    const digest = await (Zotero.getMainWindow() as any).crypto.subtle.digest("SHA-256", new TextEncoder().encode(markdown));
+    const hex = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+    if (hex !== trusted.markdownDigest) throw new Error("Finished conversion checkpoint changed after validation. Use Reconvert.");
+    parseVisionPages(markdown, Array.from({ length: item.endPage - item.startPage + 1 }, (_, offset) => item.startPage + offset));
+    checkVisionMath(markdown);
+    chunks.push({ ...item, markdown, selfCheck: trusted, assetCount: meta?.assetCount });
+  }
+  const result = { markdown: saved.markdown, pageCount: manifest.pageCount, chunkSize: manifest.chunkSize, chunks,
+    assetCount: chunks.reduce((sum, chunk) => sum + (chunk.assetCount || 0), 0) };
+  validateConversionContract(result, manifest);
+  job.manifest = manifest;
+  job.details ||= emptyConversionDetails();
+  if (!job.details.chunks.length) applyConversionEvent(job.details, { type: "plan", pageCount: manifest.pageCount, chunks: plan });
+  for (const chunk of chunks) applyConversionEvent(job.details, { type: "chunk", chunk: chunk.index, stage: "ready", reused: true, editsApplied: chunk.selfCheck?.editsApplied });
+  applyConversionEvent(job.details, { type: "message", message: "Validated finished checkpoint; retrying cache write without rendering or model requests" });
+  return result;
+}
+
+async function run(job: Job, recovering = false, resumeOnly = false): Promise<void> {
   try {
     update(job, {
       state: recovering ? "recovering" : "converting",
+      runStartedAt: Date.now(),
       stage: "resolve_pdf",
-      progress: recovering ? "Recovering conversion after Zotero restart" : "Resolving PDF",
+      progress: recovering ? "Recovering saved PDF conversion work" : "Resolving PDF",
       error: "",
       retryable: false,
     });
@@ -349,21 +449,36 @@ async function run(job: Job, recovering = false): Promise<void> {
     const title = job.request.title
       || String((attachment as any).parentItem?.getField?.("title") || attachment.getField("title") || job.request.key);
     update(job, { title });
-    await MDCache.prepareConversionStaging(
-      job.jobId,
-      job.request.force ? undefined : job.cacheKey,
-      job.request.force ? undefined : job.request.key,
-    );
+    const vision = job.request.options?.engine === "vision";
+    let pdfData: Uint8Array | undefined;
+    if (vision) {
+      pdfData = await IOUtils.read(pdfPath);
+      const hash = await (Zotero.getMainWindow() as any).crypto.subtle.digest("SHA-256", pdfData);
+      const digest = [...new Uint8Array(hash)].map(n => n.toString(16).padStart(2, "0")).join("");
+      if (job.sourceDigest && job.sourceDigest !== digest) throw new Error("The PDF changed since conversion started. Use Reconvert to start fresh.");
+      job.sourceDigest = digest;
+      await persist();
+    }
+    const existing = await MDCache.readManifest(job.cacheKey, job.request.key);
+    const canSeed = !job.request.force && (vision
+      ? existing?.converter === "vision" && existing.sourceDigest === job.sourceDigest
+        && sameVisionConfig(existing.conversionConfig, job.request.options?.vision)
+      : !existing?.converter || existing.converter === "mineru");
+    await MDCache.prepareConversionStaging(job.jobId, canSeed ? job.cacheKey : undefined, canSeed ? job.request.key : undefined);
     const staged = await MDCache.readStagedChunks(job.jobId, job.completedChunks);
-    const cached = job.request.force
-      ? staged
-      : new Map([...(await reusableChunks(job.cacheKey, job.request.key)), ...staged]);
-    const result = await convertPdf(pdfPath, (state, message) => update(job, progressPatch(state, message)), job.controller.signal, {
-      outputDir: MDCache.getConversionStagingDir(job.jobId),
-      cachedChunks: cached,
-      mineru: mineruOptions(job.request.options),
-      remoteTasks: new Map(Object.entries(job.remoteTasks)),
-      onRemoteTask: async (task) => {
+    const cached = canSeed && !vision
+      ? new Map([...(await reusableChunks(job.cacheKey, job.request.key)), ...staged]) : staged;
+    const cachedSelfChecks = new Map((job.manifest?.chunks || []).flatMap(chunk => chunk.selfCheck ? [[chunk.index, chunk.selfCheck] as const] : []));
+    const priorUsage = job.manifest?.conversionUsage;
+    const observe = (event: ConversionDetailEvent) => {
+      job.details ||= emptyConversionDetails();
+      applyConversionEvent(job.details, event);
+      update(job, {});
+      if (event.type === "request" || event.type === "message" || event.type === "request-update" && event.patch.endedAt
+        || event.type === "chunk" && event.stage === "ready") void persist();
+    };
+    const callbacks = {
+      onRemoteTask: async (task: MineruRemoteTask) => {
         job.remoteTasks[task.taskKey] = task;
         update(job, {
           stage: task.state === "submitted" ? "submit" : task.state === "uploaded" ? "poll" : job.status.stage,
@@ -371,29 +486,47 @@ async function run(job: Job, recovering = false): Promise<void> {
         });
         await persist();
       },
-      onPlan: async (pageCount, chunkSize, plan) => {
+      onPlan: async (pageCount: number, chunkSize: number, plan: PdfChunkPlanItem[]) => {
         job.manifest = makeManifest(job, title, pageCount, chunkSize, plan, cached);
+        job.manifest.conversionUsage = priorUsage;
+        observe({ type: "plan", pageCount, chunks: plan });
         update(job, {
           totalChunks: plan.length,
           currentChunk: job.completedChunks.length || undefined,
-          progressPercent: plan.length ? Math.round(job.completedChunks.length * 1000 / plan.length) / 10 : 0,
+          progressPercent: 0,
         });
         await persist();
       },
-      onChunkConverted: async (chunk) => {
+      onChunkConverted: async (chunk: PdfChunkResult) => {
         await MDCache.writeStagedChunk(job.jobId, chunk.index, chunk.markdown);
         if (!job.completedChunks.includes(chunk.index)) job.completedChunks.push(chunk.index);
         job.completedChunks.sort((a, b) => a - b);
         if (job.manifest) markChunkReady(job.manifest, chunk);
         const total = job.status.totalChunks || 1;
+        const completed = job.details?.chunks.filter(value => value.stage === "ready").length || 0;
         update(job, {
           currentChunk: chunk.index,
-          progressPercent: Math.min(100, Math.round(job.completedChunks.length * 1000 / total) / 10),
+          progressPercent: Math.min(99, Math.round((vision ? completed : job.completedChunks.length) * 990 / total) / 10),
           progress: `Converted chunk ${job.completedChunks.length}/${total}`,
         });
         await persist();
       },
-    });
+    };
+    const finalized = vision && recovering && job.request.options?.vision?.selfCheck && job.manifest?.chunks.every(chunk => chunk.status === "ready")
+      ? await readCommitRecovery(job, staged) : undefined;
+    const result = finalized || (vision
+      ? await convertPdfWithVision(pdfPath, (stage, message) => update(job, { state: "converting", stage, progress: message }), job.controller.signal, {
+        ...callbacks, outputDir: MDCache.getConversionStagingDir(job.jobId),
+        cachedChunks: cached, cachedSelfChecks, config: job.request.options!.vision!, sessionId: job.jobId, resumeOnly, pdfData,
+        onDetail: observe,
+        onPreview: (chunk, requestId, markdown) => { job.drafts.set(chunk, { requestId, markdown }); update(job, {}); },
+        onUsage: usage => { if (job.manifest) job.manifest.conversionUsage = sumTokenUsage([priorUsage, usage].filter((value): value is TokenUsage => !!value)); },
+      })
+      : await convertPdf(pdfPath, (state, message) => update(job, progressPatch(state, message)), job.controller.signal, {
+        ...callbacks, outputDir: MDCache.getConversionStagingDir(job.jobId), cachedChunks: cached, resumeOnly,
+        mineru: mineruOptions(job.request.options), remoteTasks: new Map(Object.entries(job.remoteTasks)),
+      }));
+    if (job.controller.signal.aborted) throw Object.assign(new Error("Conversion aborted by user"), { name: "AbortError" });
     job.manifest ||= makeManifest(
       job,
       title,
@@ -402,13 +535,20 @@ async function run(job: Job, recovering = false): Promise<void> {
       result.chunks,
       new Map(result.chunks.map((chunk) => [chunk.index, chunk.markdown])),
     );
+    for (const chunk of result.chunks) {
+      markChunkReady(job.manifest, chunk);
+      await MDCache.writeStagedChunk(job.jobId, chunk.index, chunk.markdown);
+    }
     addLineRanges(job.manifest, result.markdown);
-    update(job, { stage: "commit", progress: "Committing converted document", progressPercent: 100 });
+    if (vision) validateConversionContract(result, job.manifest);
+    if (job.details) job.manifest.conversionDetails = JSON.parse(JSON.stringify(job.details));
+    update(job, { stage: "commit", progress: "All pages validated; writing document to cache", progressPercent: 99 });
     await MDCache.finalizeStagedDocument(job.jobId, result.markdown, job.manifest);
+    if (job.controller.signal.aborted) throw Object.assign(new Error("Conversion aborted by user"), { name: "AbortError" });
     await MDCache.commitStagedDocument(job.jobId, job.cacheKey);
     await complete(job, {
       state: "ready", stage: "ready", progress: "Ready", error: "",
-      retryable: false, remoteMayContinue: false, progressPercent: 100,
+      retryable: false, remoteMayContinue: false, progressPercent: 100, currentChunk: result.chunks.length,
     });
   } catch (error: any) {
     if (error?.name === "AbortError") {
@@ -463,7 +603,8 @@ export async function initializeConversions(): Promise<void> {
         Zotero.debug("[ChatPDF] Ignoring invalid conversion registry entry");
         continue;
       }
-      jobs.set(value.jobId, restoreJob(value));
+      try { jobs.set(value.jobId, restoreJob(value)); }
+      catch (error: any) { Zotero.debug(`[ChatPDF] Ignoring invalid conversion job: ${error?.message || error}`); }
     }
     await pruneHistory();
     initialized = true;
@@ -485,8 +626,48 @@ export async function initializeConversions(): Promise<void> {
   return initializing;
 }
 
-export async function startConversion(request: ConversionRequest, owner = "bridge"): Promise<ConversionStatus> {
+function compatibleOptions(previous: ConversionRequest, request: ConversionRequest): boolean {
+  const a = normalizeOptions(previous.options);
+  const b = normalizeOptions(request.options);
+  return a.engine === b.engine && (a.engine !== "vision" || sameVisionConfig(a.vision, b.vision)) && a.modelVersion === b.modelVersion && a.language === b.language && a.isOcr === b.isOcr
+    && a.enableFormula === b.enableFormula && a.enableTable === b.enableTable;
+}
+
+async function findResumableJob(request: ConversionRequest, cacheKey: string, signal?: AbortSignal): Promise<Job | undefined> {
+  const candidates = [...jobs.values()].filter(job => job.cacheKey === cacheKey
+    && TERMINAL.has(job.status.state) && compatibleOptions(job.request, request)
+    && (job.request.options?.engine === "vision"
+      ? job.status.state !== "ready" && (job.completedChunks.length > 0 || !!job.details?.requests.length)
+      : Object.values(job.remoteTasks).some(task => task.state !== "submitted")))
+    .sort((a, b) => b.status.updatedAt.localeCompare(a.status.updatedAt));
+  let pending: Job | undefined;
+  let firstError: unknown;
+  for (const job of candidates) {
+    try {
+      if (job.request.options?.engine === "vision") return job;
+      const tasks = Object.values(job.remoteTasks).filter(task => task.state !== "submitted");
+      const states = await Promise.all(tasks.map(task => getMineruTaskState(task, signal)));
+      if (states.some(state => state === "failed")) continue;
+      // A completed older upload takes priority over a newer queued duplicate.
+      if (states.every(state => state === "done")) return job;
+      pending ||= job;
+    } catch (error: any) {
+      if (error?.name === "AbortError") throw error;
+      firstError ||= error;
+      Zotero.debug(`[ChatPDF] Could not inspect saved MinerU task: ${error?.message || error}`);
+    }
+  }
+  if (pending) return pending;
+  // An unavailable status endpoint must not silently trigger another upload.
+  if (firstError) throw firstError;
+  return undefined;
+}
+
+async function startOrRecoverConversion(
+  request: ConversionRequest, owner: string, resumeOnly: boolean, signal?: AbortSignal,
+): Promise<ConversionStatus | null> {
   await initializeConversions();
+  if (signal?.aborted) throw Object.assign(new Error("Conversion observer aborted"), { name: "AbortError" });
   const cacheKey = sourceCacheKey(request);
   const active = activeByCacheKey.get(cacheKey);
   if (active) {
@@ -494,7 +675,10 @@ export async function startConversion(request: ConversionRequest, owner = "bridg
     return snapshot(active);
   }
   const documentId = makeSourceId(request.key, request.libraryID);
-  if (!request.force && await MDCache.has(cacheKey, request.key)) {
+  const cachedExists = !request.force && await MDCache.has(cacheKey, request.key);
+  const previous = request.force || (resumeOnly && cachedExists) ? undefined : await findResumableJob(request, cacheKey, signal);
+  if (signal?.aborted) throw Object.assign(new Error("Conversion observer aborted"), { name: "AbortError" });
+  if (cachedExists && !previous) {
     const manifest = await MDCache.readManifest(cacheKey, request.key);
     if (manifest) await MDCache.writeManifestForExistingDocument(cacheKey, request.key, {
       ...manifest,
@@ -504,19 +688,66 @@ export async function startConversion(request: ConversionRequest, owner = "bridg
       attachmentKey: request.key,
       parentItemKey: request.parentItemKey || manifest.parentItemKey,
     });
-    const job = createJob(request, cacheKey);
+    // Reading an existing cache must not depend on the current conversion profile.
+    const job = createJob({ ...request, options: { ...request.options, engine: "mineru" } }, cacheKey);
+    job.status.options = { engine: manifest?.converter === "vision" || manifest?.converter === "deepseek-vision" ? "vision" : "mineru",
+      vision: manifest?.conversionConfig };
+    job.manifest = manifest || undefined;
+    job.details = manifest?.conversionDetails || emptyConversionDetails();
+    if (manifest && !job.details.chunks.length && manifest.chunks.length) {
+      applyConversionEvent(job.details, { type: "plan", pageCount: manifest.pageCount, chunks: manifest.chunks });
+      for (const chunk of manifest.chunks) applyConversionEvent(job.details, { type: "chunk", chunk: chunk.index,
+        stage: chunk.status === "ready" ? "ready" : "queued", reused: true, editsApplied: chunk.selfCheck?.editsApplied });
+    }
     jobs.set(job.jobId, job);
     await complete(job, { state: "ready", stage: "ready", progress: "Ready", progressPercent: 100 });
     return snapshot(job);
   }
-  const normalized = { ...request, options: normalizeOptions(request.options) };
-  const job = createJob(normalized, cacheKey);
+  if (!previous && resumeOnly) return null;
+  const normalized = { ...request, force: request.force || previous?.request.force, options: normalizeOptions(request.options) };
+  // Re-arm the same job with a fresh controller and completion promise.
+  const job = createJob(normalized, cacheKey, previous?.jobId);
+  if (previous) {
+    job.remoteTasks = { ...previous.remoteTasks };
+    job.completedChunks = [...previous.completedChunks];
+    job.manifest = previous.manifest;
+    job.details = previous.details ? JSON.parse(JSON.stringify(previous.details)) : emptyConversionDetails();
+    interruptConversionRequests(job.details!);
+    job.sourceDigest = previous.sourceDigest;
+    job.status.createdAt = previous.status.createdAt;
+    job.status.state = "recovering";
+    job.status.remoteMayContinue = previous.status.remoteMayContinue;
+  }
   if (owner) job.owners.add(owner);
   jobs.set(job.jobId, job);
   activeByCacheKey.set(cacheKey, job);
   await persist();
-  void run(job);
+  void run(job, !!previous, resumeOnly);
   return snapshot(job);
+}
+
+async function queueConversionStart(
+  request: ConversionRequest, owner: string, resumeOnly: boolean, signal?: AbortSignal,
+): Promise<ConversionStatus | null> {
+  const key = sourceCacheKey(request);
+  const previous = startingByCacheKey.get(key);
+  const next = (previous || Promise.resolve(null)).catch(() => null)
+    .then(() => startOrRecoverConversion(request, owner, resumeOnly, signal));
+  startingByCacheKey.set(key, next);
+  try {
+    return await next;
+  } finally {
+    if (startingByCacheKey.get(key) === next) startingByCacheKey.delete(key);
+  }
+}
+
+export async function startConversion(request: ConversionRequest, owner = "bridge"): Promise<ConversionStatus> {
+  return (await queueConversionStart(request, owner, false))!;
+}
+
+/** Reattach an owner to cached or uploaded work; never submit a new PDF. */
+export function recoverConversion(request: ConversionRequest, owner: string, signal?: AbortSignal): Promise<ConversionStatus | null> {
+  return queueConversionStart(request, owner, true, signal);
 }
 
 export function getConversion(jobId: string): ConversionStatus {
@@ -538,6 +769,70 @@ export function getConversion(jobId: string): ConversionStatus {
 export function listConversions(state?: ConversionState): ConversionStatus[] {
   return [...jobs.values()].map(snapshot).filter((status) => !state || status.state === state)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** UI inspection is read-only and never starts a conversion or model request. */
+export function latestConversionForDocument(documentId: string): ConversionStatus | undefined {
+  return listConversions().filter(status => status.documentId === documentId)
+    .sort((a, b) => Number(!TERMINAL.has(b.state)) - Number(!TERMINAL.has(a.state)) || b.updatedAt.localeCompare(a.updatedAt))[0];
+}
+
+export function getConversionDetails(jobId: string): ConversionDetails | undefined {
+  const details = jobs.get(jobId)?.details;
+  return details ? JSON.parse(JSON.stringify(details)) : undefined;
+}
+
+export interface ConversionPageView {
+  markdown: string;
+  validated: boolean;
+  image?: string;
+  edits: { page: number; old: string; new: string }[];
+  selfChecked: boolean;
+}
+
+export function getConversionDraft(jobId: string, page: number): string {
+  const job = jobs.get(jobId);
+  const chunk = job?.details?.chunks.find(chunk => page >= chunk.startPage && page <= chunk.endPage);
+  return chunk ? conversionDraftPage(job?.drafts.get(chunk.index)?.markdown || "", page) : "";
+}
+
+export async function readConversionPage(jobId: string, page: number, includeImage = true): Promise<ConversionPageView> {
+  const job = jobs.get(jobId), manifest = job?.manifest;
+  if (!job || !manifest || !Number.isSafeInteger(page) || page < 1 || page > manifest.pageCount) throw new Error("Conversion page is unavailable");
+  const chunk = manifest.chunks.find(chunk => page >= chunk.startPage && page <= chunk.endPage);
+  if (!chunk || !Number.isSafeInteger(chunk.index) || chunk.index < 1) throw new Error("Conversion chunk is unavailable");
+  const stagedDir = MDCache.getConversionStagingDir(jobId);
+  const staged = job.status.state !== "ready" && await IOUtils.exists(stagedDir);
+  if (!staged) {
+    const installed = await MDCache.readManifest(job.cacheKey, job.request.key);
+    if (manifest.conversionJobId && installed?.conversionJobId !== manifest.conversionJobId) {
+      return { markdown: "", validated: false, edits: [], selfChecked: false };
+    }
+  }
+  const dir = staged ? stagedDir : MDCache.getDocDir(job.cacheKey);
+  let markdown = "";
+  if (chunk.status === "ready") {
+    const body = staged ? (await MDCache.readStagedChunks(jobId, [chunk.index])).get(chunk.index)
+      : await MDCache.readChunk(job.cacheKey, chunk.index, job.request.key);
+    if (body) markdown = conversionDraftPage(body, page);
+  }
+  let image: string | undefined;
+  if (includeImage) {
+    const path = PathUtils.join(dir, "attachments", "pages", `page-${String(page).padStart(4, "0")}.jpg`);
+    if (await IOUtils.exists(path)) {
+      const root = PathUtils.parent(PathUtils.parent(MDCache.getConversionRegistryPath())!)!;
+      for (let current = path; current !== root; current = PathUtils.parent(current)!) {
+        if (!current || !current.startsWith(root + (root.includes("\\") ? "\\" : "/"))) throw new Error("Page image is outside the cache");
+        if (Zotero.File.pathToFile(current).isSymlink()) throw new Error("Linked page image paths are not allowed");
+      }
+      const bytes = await readImageFile(path);
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      image = `data:${imageMime(bytes)};base64,${(Zotero.getMainWindow() as any).btoa(binary)}`;
+    }
+  }
+  return { markdown: markdown || getConversionDraft(jobId, page), validated: !!markdown, image,
+    edits: chunk.selfCheck?.edits.filter(edit => edit.page === page) || [], selfChecked: !!chunk.selfCheck && !!markdown };
 }
 
 export function waitForConversion(jobId: string, signal?: AbortSignal): Promise<ConversionStatus> {
