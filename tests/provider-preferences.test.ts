@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MODEL_BUDGET_FIELDS } from "../src/modules/model-profile";
 import { XUL_NS, XULMenuList } from "../src/utils/dom";
+const mocks = vi.hoisted(() => ({ resolve: vi.fn() }));
+vi.mock("../src/modules/model-capabilities", () => ({ resolveModelCapabilities: mocks.resolve }));
 
 let prefs: Record<string, any>;
 function field(key: string): HTMLInputElement | XULMenuList | HTMLTextAreaElement {
@@ -18,6 +20,7 @@ function loadProfile(name: string): void {
 
 beforeEach(async () => {
   vi.resetModules();
+  mocks.resolve.mockReset().mockResolvedValue({ source: "manual", contextWindow: 50000, maxOutput: 10000, generation: { outputTokens: 5000, source: "user" } });
   prefs = { llmApiBase: "https://custom.example/v1", llmApiKey: "custom-key-for-tests", llmModel: "existing-model", llmThinkingMode: "enabled", llmThinkEffort: "high", tokenizerMode: "deepseek-v4-estimate", contextWindowTokens: 50000, maxOutputTokens: 10000, requestedOutputTokens: 5000, activeProfile: "Legacy", modelProfiles: JSON.stringify([{ name: "Legacy", apiBase: "https://legacy.example/v1", apiKey: "legacy-key", model: "legacy-model", contextWindowTokens: 40000, maxOutputTokens: 8000, tokenizerMode: "deepseek-v4-estimate" }]) };
   vi.mocked(Zotero.Prefs.get).mockImplementation(key => prefs[String(key).split(".").at(-1)!]);
   vi.mocked(Zotero.Prefs.set).mockImplementation((key, value) => { prefs[String(key).split(".").at(-1)!] = value; });
@@ -46,6 +49,36 @@ afterEach(() => {
 });
 
 describe("provider selection in preferences", () => {
+  it("shows only the selected conversion engine and preserves hidden settings", () => {
+    change("pdfConversionEngine", "mineru");
+    expect((document.querySelector("#zotero-prefpane-chatpdf-visionSettings") as HTMLElement).hidden).toBe(true);
+    expect((document.querySelector("#zotero-prefpane-chatpdf-mineruSettings") as HTMLElement).hidden).toBe(false);
+    change("pdfConversionEngine", "vision");
+    expect((document.querySelector("#zotero-prefpane-chatpdf-mineruSettings") as HTMLElement).hidden).toBe(true);
+    expect(field("pdfVisionProfile").getAttribute("type")).toBe("hidden");
+    expect(document.querySelectorAll(".chatpdf-preference-section")).toHaveLength(4);
+  });
+  it("protects a conversion profile from deletion until another profile is selected", () => {
+    const option = document.querySelector('#zotero-prefpane-chatpdf-pdfVisionProfiles menuitem[value="Legacy"]');
+    change("pdfVisionProfiles", "Legacy");
+    expect(document.querySelector('#zotero-prefpane-chatpdf-pdfVisionProfiles menuitem[value="Legacy"]')).toBe(option);
+    const row = () => document.querySelector("#zotero-prefpane-chatpdf-profileList > div")!;
+    const remove = () => row().querySelectorAll<HTMLButtonElement>("button")[1];
+    expect(prefs.pdfVisionProfile).toBe("Legacy");
+    expect(remove().disabled).toBe(true); remove().click();
+    expect(JSON.parse(prefs.modelProfiles)).toHaveLength(1);
+    expect(document.querySelector("#zotero-prefpane-chatpdf-modelRoleStatus")!.textContent).toContain("Legacy (legacy-model)");
+    change("pdfVisionProfiles", "");
+    expect(remove().disabled).toBe(false); remove().click();
+    expect(JSON.parse(prefs.modelProfiles)).toHaveLength(0);
+    expect(prefs.pdfVisionProfile).toBe("");
+  });
+  it("refreshes capabilities using all current manual limits, including the generation ceiling", async () => {
+    change("inputTokenLimit", "40000"); change("imageTokenReserve", "2000");
+    (field("refreshModelLimits") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(mocks.resolve).toHaveBeenCalled());
+    expect(mocks.resolve.mock.calls[0][0]).toMatchObject({ contextWindowTokens: 50000, inputTokenLimit: 40000, maxOutputTokens: 10000, requestedOutputTokens: 5000, imageTokenReserve: 2000 });
+  });
   it("uses native Zotero menus for every dropdown and persists command selections", () => {
     expect(document.querySelectorAll("select, datalist")).toHaveLength(0);
     expect(document.querySelectorAll("menulist")).toHaveLength(8);

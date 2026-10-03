@@ -1537,3 +1537,23 @@
   -moz-user-select: none;
   white-space: normal;
 }
+.chatpdf-preference-section { margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--fill-quinary, #ddd); }
+.chatpdf-preference-section h3 { margin: 0 0 10px; font-size: 15px; }
+.chatpdf-preference-section [hidden] { display: none !important; }
+.chatpdf-preference-section hbox { margin: 5px 0; gap: 8px; }
+.chatpdf-preference-advanced > summary { cursor: pointer; font-weight: 600; margin: 8px 0; }
+.chatpdf-preference-summary { padding: 8px; border-radius: 4px; background: var(--fill-quinary, #eee); overflow-wrap: anywhere; }
+.chatpdf-preference-error { color: var(--color-red, #c33); }
+.chatpdf-history-controls { padding: 8px 12px; display: grid; gap: 6px; border-bottom: 1px solid var(--fill-quinary, #ddd); }
+.chatpdf-history-controls[hidden] { display: none; }
+.chatpdf-history-controls input[type="search"] { width: 100%; min-width: 0; box-sizing: border-box; color: var(--fill-primary); background: var(--material-background); }
+.chatpdf-history-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.chatpdf-history-options label { display: inline-flex; align-items: center; gap: 4px; }
+#chatpdf-history-count, .chatpdf-history-paper-titles { font-size: 11px; color: var(--fill-secondary); }
+.chatpdf-history-paper-titles { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; }
+.chatpdf-history-pin { border: none; background: transparent; color: var(--fill-secondary); cursor: pointer; font-size: 18px; }
+.chatpdf-history-pin[aria-pressed="true"] { color: var(--color-accent); }
+.chatpdf-history-more { display: block; margin: 12px auto; }
+.chatpdf-source-conversion-row { align-items: flex-start; }
+.chatpdf-source-conversion-row > span { white-space: pre-line; overflow-wrap: anywhere; }
+.chatpdf-conversion-summary { padding: 8px; border-radius: 4px; background: var(--fill-quinary, #eee); }

@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { applyConversionEvent, conversionCounts, conversionDraftPage, emptyConversionDetails, safeConversionMessage, interruptConversionRequests } from "../src/modules/conversion-details";
+import { applyConversionEvent, conversionCounts, conversionDraftPage, conversionRequestSummary, conversionReportedUsage, emptyConversionDetails, safeConversionMessage, interruptConversionRequests } from "../src/modules/conversion-details";
 
 describe("conversion diagnostics", () => {
+  it("counts split and retry requests without treating each initial chunk as a retry", () => {
+    const details = emptyConversionDetails();
+    for (const [id, chunk, state, error] of [["one", 1, "rejected", "PDF model self-check is missing"], ["two", 2, "accepted", ""], ["three", 1, "accepted", ""], ["four", 1, "accepted", ""]] as const) {
+      details.requests.push({ id, chunk, state, error, pages: [chunk], startedAt: 1, estimatedInputTokens: 20, imageBytes: 10 });
+    }
+    expect(conversionRequestSummary(details)).toEqual({ additionalRequests: 2, rejectedRequests: 1, requestIssue: "self-check" });
+  });
+  it("preserves missing usage as unknown and includes usage from rejected attempts", () => {
+    const details = emptyConversionDetails();
+    expect(conversionReportedUsage(details)).toBeUndefined();
+    details.requests.push({ id: "one", chunk: 1, pages: [1], startedAt: 1, state: "rejected", estimatedInputTokens: 20, imageBytes: 10, usage: { prompt_tokens: 40 } });
+    expect(conversionReportedUsage(details)).toEqual({ prompt_tokens: 40 });
+    details.requests[0].usage = { prompt_tokens: 40, completion_tokens: 10 };
+    expect(conversionReportedUsage(details)).toEqual({ prompt_tokens: 40, completion_tokens: 10, total_tokens: 50 });
+  });
   it("marks restored live requests interrupted without inventing usage or end time", () => {
     const details = emptyConversionDetails();
     applyConversionEvent(details, { type: "request", request: { id: "one", chunk: 1, pages: [1], startedAt: 1, state: "receiving", imageBytes: 10, estimatedInputTokens: 20 } });

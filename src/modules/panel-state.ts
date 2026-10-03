@@ -34,6 +34,11 @@ export interface PanelState {
   currentAbortController: AbortLike | null;
   historyFilterParentKey: string | null;
   historyFilterTitle: string | null;
+  historyQuery: string;
+  historyIncludeEmpty: boolean;
+  historyPinnedOnly: boolean;
+  historyVisibleCount: number;
+  historyLoadVersion: number;
   conversionAbortControllers: Map<string, AbortLike>;
   conversionInspectorCleanup: (() => void) | null;
   backgroundStreams: Map<string, StreamState>;
@@ -65,6 +70,11 @@ export function createPanelState(win: Window): PanelState {
     currentAbortController: null,
     historyFilterParentKey: null,
     historyFilterTitle: null,
+    historyQuery: "",
+    historyIncludeEmpty: false,
+    historyPinnedOnly: false,
+    historyVisibleCount: 50,
+    historyLoadVersion: 0,
     conversionAbortControllers: new Map(),
     conversionInspectorCleanup: null,
     backgroundStreams: new Map(),

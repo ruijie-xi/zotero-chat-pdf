@@ -92,6 +92,16 @@ The full gate passed 40 files and 279 tests, including button identity, focus, r
 
 At 18:40 local time, the verified package was installed into the daily profile after checking for active conversions and closing Zotero normally. The previous package was backed up to ignored `.scaffold/install-backups/chatpdf-before-stable-controls-20261003-184043.xpi`. Installed XPI SHA-256: `a8cd1bf4447d63ea90ce1af5b1532c83911bcd617a71970896e10ea0bc4460e0`. The restarted bridge retained the existing cache directory and conversion records. Installation evidence: ignored `.scaffold/install-vision/stable-controls-installation.json`.
 
+## Preferences, conversion summaries and history
+
+The full gate passed 43 files and 293 tests after adding reference-aware profile deletion, manual-limit refresh, compact conversion summaries, history search and index metadata. Tests cover pin preservation through autosaves, deletion tombstones, one-time enrichment of old indexes without changing session bytes, search/filter composition, overlapping history reads, stable native menu options, extra-request accounting and unknown usage fields.
+
+An isolated native Zotero 9.0.6 test verified Chinese section headings, collapsed advanced settings, trusted conversion-engine and profile-menu clicks, protection/release of a referenced profile, and a manual capability refresh using 100,000 context / 8,000 output tokens. It also verified paper-title history search, hidden/showable empty sessions, an atomically persisted pin, and a completed source summary showing four requests, two additional requests, 720 reported tokens and the forced page-coverage retry reason. The held-mouse conversion-view check and all streaming inspector checks still passed. Evidence: ignored `.scaffold/ui-native-fixed-menu/result.json`. Profiles contained only dummy credentials; all model traffic used a local synthetic SSE endpoint.
+
+The final package passed the same native checks, including clearing the active-profile indication after a direct account-field edit. Evidence: ignored `.scaffold/ui-native-final/result.json`. The history migration test also verifies that titles of papers removed from the current session remain searchable through historical display snapshots, without restoring those papers as session sources.
+
+At 19:47 local time, the final verified XPI was installed into the daily profile after checking that no conversions were active, backing up the previous package and closing Zotero normally. Installed SHA-256: `40263e62d00069928c6a1e9c8c07e591f57deb0fe1683200a64c9e4e807a62d5`. The backup and installation record are ignored `.scaffold/install-backups/chatpdf-before-settings-history-20261003-194720.xpi` and `.scaffold/install-vision/settings-history-installation.json`. Agent search, send behavior and library mutation tools were not changed in this update.
+
 ## Remaining limits
 
 The current DeepSeek conversion model did not pass this paper's mathematical-fidelity review. The new gate catches substantial loss of repeated symbols and complete loss of an accent, but it cannot prove symbol placement, individual coefficients or equation equivalence. Even a v2 accepted chunk can contain a misplaced decoration. Do not describe a successful conversion status as verified scientific correctness.

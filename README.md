@@ -47,7 +47,7 @@ At minimum, configure:
 | Setting | Description |
 | --- | --- |
 | PDF conversion engine | Vision model (default), or MinerU. |
-| Conversion model profile | Optional saved vision model profile; blank uses the current chat model. |
+| Conversion model profile | Choose a saved vision profile or Use current chat model. Select another conversion profile before deleting a referenced profile. |
 | MinerU API Token | Required only when selecting MinerU. |
 | LLM Provider | DeepSeek, OpenCode Go, or Custom (the existing OpenAI-compatible configuration). |
 | LLM API Base URL | Base URL for an OpenAI-compatible API. |
@@ -59,6 +59,10 @@ The default API base and model target DeepSeek; existing settings and profiles r
 **OpenCode Go** uses `https://opencode.ai/zen/go/v1` and a Go API key. Suggested DeepSeek IDs include `deepseek-v4.1-flash`, `deepseek-v4-pro`, and `deepseek-v4-flash`, without the `opencode-go/` prefix. ChatPDF sends its own client identity and a stable conversation header on main and auxiliary requests. Local token counts use the explicit DeepSeek V4 estimate. Known Go DeepSeek models use bundled catalogue capacities when `/models` omits them; endpoint metadata and manual overrides take precedence. Unknown models require explicit limits. [Go is intended for coding agents](https://opencode.ai/docs/go/#where-can-i-use-it); this integration does not guarantee service acceptance for paper-reading traffic.
 
 Optional settings include PDF pages per request, concurrency, render DPI, page-image caching, request timeout, MinerU language and timeout, thinking controls, agent iteration limit, context budget, cache directory, system prompt, debug-log level, and web tools. Brave Search is used when a Brave key is configured; otherwise web search falls back to DuckDuckGo.
+
+Preferences group models, PDF conversion and chat behavior separately, with advanced settings collapsed. Only the selected conversion engine's fields are shown. Current fields take effect immediately; named profiles and the system prompt have explicit save controls. Conversion profiles use their saved fields independently of current chat edits.
+
+History searches chat and associated paper titles, supports durable pins and an empty-chat filter, and shows 50 entries at a time with a Show more control. Source summaries display request counts, additional requests, retry reasons and reported tokens. Retry reuses validated saved work where available; Reconvert starts recognition again and may incur model charges.
 
 ## Quick Start
 

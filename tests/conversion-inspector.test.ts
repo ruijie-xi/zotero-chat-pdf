@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyConversionDetails } from "../src/modules/conversion-details";
 import { ChatSession } from "../src/modules/chat-session";
-import { openConversionInspector } from "../src/modules/conversion-inspector";
+import { openConversionInspector, conversionSummaryText } from "../src/modules/conversion-inspector";
 const mocks = vi.hoisted(() => ({ state: null as any, status: null as any, details: null as any, draft: "", listener: null as any }));
 vi.mock("../src/modules/panel-state", () => ({ getPanelState: () => mocks.state }));
 vi.mock("../src/modules/zotero-items", () => ({ openPdfForSourceKey: vi.fn() }));
@@ -24,6 +24,11 @@ beforeEach(() => {
 afterEach(() => mocks.state.conversionInspectorCleanup?.());
 const button = (label: string) => [...root.querySelectorAll("button")].find(element => element.textContent === label)!;
 describe("conversion process viewer", () => {
+  it("summarizes additional requests and actual reported usage without inventing old request history", () => {
+    expect(conversionSummaryText({ ...mocks.status, requestCount: 9, additionalRequests: 6, reusedPages: 4, requestIssue: "self-check", usage: { prompt_tokens: 200, completion_tokens: 100 } })).toContain("6 additional requests");
+    expect(conversionSummaryText({ ...mocks.status, usage: { prompt_tokens: 200 } })).toContain("200/unknown");
+    expect(conversionSummaryText({ ...mocks.status, state: "ready", requestCount: 0, options: { engine: "vision" } })).toContain("Request history unavailable");
+  });
   it("keeps chunk navigation attached and clickable across frequent progress updates", async () => {
     mocks.details.chunks = [{ index: 1, startPage: 1, endPage: 1, stage: "receiving" }, { index: 2, startPage: 2, endPage: 2, stage: "queued" }];
     openConversionInspector(root, mocks.state.session.addSource("PDF", "Paper", undefined, 1));

@@ -14,7 +14,8 @@ import * as ChatHistory from "./chat-history";
 import { createAbortController, getPanelState, PanelState } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
 import { summarizeSelfChecks } from "./vision-self-check";
-import { openConversionInspector, conversionProgressText } from "./conversion-inspector";
+import { openConversionInspector, conversionProgressText, conversionSummaryText } from "./conversion-inspector";
+import { uiText } from "../utils/ui-text";
 
 /** Convert a source using the configured PDF engine. */
 export async function convertSource(
@@ -153,7 +154,7 @@ function renderSourceChips(root: HTMLElement): void {
       rows.set(source.id, row);
       if (source.kind !== "image") {
         const detailRow = h(doc, "div", { className: "chatpdf-source-conversion-row" });
-        const inspect = h(doc, "button", { type: "button", className: "chatpdf-chip-text-btn" }, "View conversion process");
+        const inspect = h(doc, "button", { type: "button", className: "chatpdf-chip-text-btn", "data-action": "view-conversion" }, uiText("View conversion process", "查看转换过程"));
         // This control stays attached during every streamed progress update.
         inspect.addEventListener("click", () => openConversionInspector(root, source, async () => {
           await convertSource(source, () => refreshSourceChips(root), undefined, getPanelState(root)).catch(() => {});
@@ -165,7 +166,8 @@ function renderSourceChips(root: HTMLElement): void {
     }
     wanted.push(row.element);
     if (row.progress) {
-      const text = source.conversionStatus && source.status === "converting" ? conversionProgressText(source.conversionStatus) : "";
+      const status = source.conversionStatus;
+      const text = status ? [conversionProgressText(status), conversionSummaryText(status)].filter(Boolean).join("\n") : "";
       if (row.progress.textContent !== text) row.progress.textContent = text;
       row.progress.hidden = !text;
     }
@@ -219,7 +221,7 @@ function renderSourceChips(root: HTMLElement): void {
     const actions = h(doc, "span", { className: "chatpdf-chip-actions" });
 
     if ((source.status === "ready" || source.status === "error") && source.kind !== "image") {
-      const reconvert = h(doc, "button", { className: "chatpdf-chip-text-btn", title: "Replace this PDF cache using the selected conversion engine" }, "Reconvert");
+      const reconvert = h(doc, "button", { className: "chatpdf-chip-text-btn", title: uiText("Recognize the PDF again and replace its cache. This may incur model charges.", "重新识别 PDF 并替换缓存，可能产生模型费用。") }, uiText("Reconvert", "重新识别"));
       reconvert.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         void convertSource(source, () => refreshSourceChips(root), undefined, state, state.session, false, true)
@@ -229,8 +231,9 @@ function renderSourceChips(root: HTMLElement): void {
     }
 
     if ((source.status === "pending" || source.status === "error") && source.kind !== "image") {
-      const label = source.status === "error" ? "Retry" : "Convert";
-      const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: label }, label);
+      const label = source.status === "error" ? uiText("Retry", "继续已有工作") : uiText("Convert", "转换");
+      const hint = source.status === "error" ? uiText("Reuse validated saved work where possible; remaining pages may incur model charges.", "优先复用已通过检查的结果；剩余页面可能产生模型费用。") : label;
+      const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: hint }, label);
       convertBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         convertSource(source, () => refreshSourceChips(root), undefined, state).catch(() => refreshSourceChips(root));

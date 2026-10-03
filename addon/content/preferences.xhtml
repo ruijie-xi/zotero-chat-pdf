@@ -1,47 +1,13 @@
 <linkset>
-  <html:link rel="localization" href="__addonRef__-preferences.ftl" />
+  <html:link rel="localization" href="__addonRef__-preferences.ftl"/>
+  <html:link rel="stylesheet" href="chrome://__addonRef__/content/chatpdf.css"/>
 </linkset>
-
 <groupbox>
-  <label><html:h2 data-l10n-id="pref-title"></html:h2></label>
-
-  <hbox align="center">
-    <html:label data-l10n-id="pref-pdf-engine"/>
-    <menulist id="zotero-prefpane-__addonRef__-pdfConversionEngine" preference="pdfConversionEngine" native="true">
-      <menupopup><menuitem value="vision" data-l10n-id="pref-pdf-engine-vision"/><menuitem value="mineru" data-l10n-id="pref-pdf-engine-mineru"/></menupopup>
-    </menulist>
-  </hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-profile"/><html:input type="text" id="zotero-prefpane-__addonRef__-pdfVisionProfile" preference="pdfVisionProfile" placeholder="Current chat model" style="flex: 1;"/><menulist id="zotero-prefpane-__addonRef__-pdfVisionProfiles" native="true"><menupopup/></menulist></hbox>
-  <html:p data-l10n-id="pref-pdf-vision-hint" style="font-size: 11px;"/>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-pages"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionChunkPages" preference="pdfVisionChunkPages" min="1" max="10" style="width: 80px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-concurrency"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionConcurrency" preference="pdfVisionConcurrency" min="1" max="4" style="width: 80px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-dpi"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionDpi" preference="pdfVisionDpi" min="72" max="300" style="width: 80px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-images"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionCachePageImages" preference="pdfVisionCachePageImages"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-timeout"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionTimeoutSeconds" preference="pdfVisionTimeoutSeconds" min="30" max="1800" style="width: 80px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-self-check"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionSelfCheck" preference="pdfVisionSelfCheck"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-stream"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionStream" preference="pdfVisionStream"/></hbox>
-  <description data-l10n-id="pref-pdf-vision-stream-hint"/>
-  <html:p data-l10n-id="pref-pdf-vision-self-check-hint" style="font-size: 11px;"/>
-  <separator class="thin"/>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-mineruToken" data-l10n-id="pref-mineru-token"></html:label>
-    <html:input type="password" id="zotero-prefpane-__addonRef__-mineruToken" preference="mineruToken" style="flex: 1;" />
-  </hbox>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-mineruLanguage" data-l10n-id="pref-mineru-language"></html:label>
-    <html:input type="text" id="zotero-prefpane-__addonRef__-mineruLanguage" preference="mineruLanguage" style="width: 100px;" placeholder="ch" />
-  </hbox>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-mineruTimeoutMinutes" data-l10n-id="pref-mineru-timeout"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-mineruTimeoutMinutes" preference="mineruTimeoutMinutes" style="width: 80px;" min="1" max="120" />
-  </hbox>
-
-  <separator class="thin" />
-
-  <hbox align="center">
+  <label><html:h2 data-l10n-id="pref-title"/></label>
+  <description data-l10n-id="pref-save-hint"/>
+  <html:section class="chatpdf-preference-section">
+    <html:h3 data-l10n-id="pref-section-models"/>
+    <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmProvider" data-l10n-id="pref-llm-provider"></html:label>
     <menulist id="zotero-prefpane-__addonRef__-llmProvider" preference="llmProvider" native="true">
       <menupopup>
@@ -97,7 +63,7 @@
     <hbox align="center" style="margin-bottom: 4px;">
       <html:label data-l10n-id="pref-llm-test" style="font-weight: 600;"></html:label>
       <html:span style="flex: 1;" />
-      <html:button id="zotero-prefpane-__addonRef__-llmTestBtn" style="font-size: 11px; padding: 1px 8px; cursor: pointer;">Test LLM</html:button>
+      <html:button id="zotero-prefpane-__addonRef__-llmTestBtn" data-l10n-id="pref-test-button" style="font-size: 11px; padding: 1px 8px; cursor: pointer;"></html:button>
     </hbox>
     <html:textarea id="zotero-prefpane-__addonRef__-llmTestPrompt"
       style="width: 100%; min-height: 48px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
@@ -105,10 +71,125 @@
     <html:pre id="zotero-prefpane-__addonRef__-llmTestDebug"
       style="display: none; white-space: pre-wrap; max-height: 240px; overflow: auto; margin: 6px 0 0; padding: 8px; border: 1px solid var(--fill-quinary, #ddd); border-radius: 4px; font-size: 11px; background: var(--fill-senary, #f8f8f8);"></html:pre>
   </vbox>
+    <!-- Model Profiles -->
+  <vbox>
+    <hbox align="center" style="margin-bottom: 4px;">
+      <html:label data-l10n-id="pref-model-profiles" style="font-weight: 600;"></html:label>
+      <html:span style="flex: 1;" />
+      <html:button id="zotero-prefpane-__addonRef__-profileSaveBtn" data-l10n-id="pref-profile-save" style="font-size: 11px; padding: 1px 8px; cursor: pointer;"></html:button>
+    </hbox>
+    <html:div id="zotero-prefpane-__addonRef__-profileList" style="min-height: 32px; border: 1px solid var(--fill-quinary, #ddd); border-radius: 4px; margin-bottom: 4px; overflow-y: auto; max-height: 150px;"></html:div>
+    <hbox align="center" style="gap: 4px;">
+      <html:label for="zotero-prefpane-__addonRef__-profileName" data-l10n-id="pref-profile-name"></html:label>
+      <html:input type="text" id="zotero-prefpane-__addonRef__-profileName" data-l10n-id="pref-profile-placeholder" style="flex: 1;" />
+    </hbox>
+    <html:span id="zotero-prefpane-__addonRef__-profileStatus" style="font-size: 11px; color: #34c759; min-height: 16px; display: block; margin-top: 2px;"></html:span>
+  </vbox>
+    <description data-l10n-id="pref-profile-save-hint"/>
+    <html:p id="zotero-prefpane-__addonRef__-modelRoleStatus" class="chatpdf-preference-summary"/>
+  </html:section>
+  <html:section class="chatpdf-preference-section">
+    <html:h3 data-l10n-id="pref-section-pdf"/>
+    <hbox align="center">
+    <html:label data-l10n-id="pref-pdf-engine"/>
+    <menulist id="zotero-prefpane-__addonRef__-pdfConversionEngine" preference="pdfConversionEngine" native="true">
+      <menupopup><menuitem value="vision" data-l10n-id="pref-pdf-engine-vision"/><menuitem value="mineru" data-l10n-id="pref-pdf-engine-mineru"/></menupopup>
+    </menulist>
+  </hbox>
+    <html:div id="zotero-prefpane-__addonRef__-visionSettings">
+      <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-profile"/><html:input type="hidden" id="zotero-prefpane-__addonRef__-pdfVisionProfile" preference="pdfVisionProfile"/><menulist id="zotero-prefpane-__addonRef__-pdfVisionProfiles" native="true"><menupopup/></menulist></hbox>
+  <html:p data-l10n-id="pref-pdf-vision-hint" style="font-size: 11px;"/>
 
-  <separator class="thin" />
+
+
+
+
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-self-check"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionSelfCheck" preference="pdfVisionSelfCheck"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-stream"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionStream" preference="pdfVisionStream"/></hbox>
+  <description data-l10n-id="pref-pdf-vision-stream-hint"/>
+  <html:p data-l10n-id="pref-pdf-vision-self-check-hint" style="font-size: 11px;"/>
+      <html:details class="chatpdf-preference-advanced"><html:summary data-l10n-id="pref-vision-advanced"/>
+          <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-pages"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionChunkPages" preference="pdfVisionChunkPages" min="1" max="10" style="width: 80px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-concurrency"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionConcurrency" preference="pdfVisionConcurrency" min="1" max="4" style="width: 80px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-dpi"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionDpi" preference="pdfVisionDpi" min="72" max="300" style="width: 80px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-images"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionCachePageImages" preference="pdfVisionCachePageImages"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-timeout"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionTimeoutSeconds" preference="pdfVisionTimeoutSeconds" min="30" max="1800" style="width: 80px;"/></hbox>
+      </html:details>
+    </html:div>
+    <html:div id="zotero-prefpane-__addonRef__-mineruSettings" hidden="hidden"><hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-mineruToken" data-l10n-id="pref-mineru-token"></html:label>
+    <html:input type="password" id="zotero-prefpane-__addonRef__-mineruToken" preference="mineruToken" style="flex: 1;" />
+  </hbox>
 
   <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-mineruLanguage" data-l10n-id="pref-mineru-language"></html:label>
+    <html:input type="text" id="zotero-prefpane-__addonRef__-mineruLanguage" preference="mineruLanguage" style="width: 100px;" placeholder="ch" />
+  </hbox>
+
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-mineruTimeoutMinutes" data-l10n-id="pref-mineru-timeout"></html:label>
+    <html:input type="number" id="zotero-prefpane-__addonRef__-mineruTimeoutMinutes" preference="mineruTimeoutMinutes" style="width: 80px;" min="1" max="120" />
+  </hbox></html:div>
+  </html:section>
+  <html:section class="chatpdf-preference-section">
+    <html:h3 data-l10n-id="pref-section-behavior"/>
+    <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-agentMaxIterations" data-l10n-id="pref-agent-max-iterations"></html:label>
+    <html:input type="number" id="zotero-prefpane-__addonRef__-agentMaxIterations" preference="agentMaxIterations" style="width: 80px;" min="1" />
+  </hbox>
+
+  <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-agentAutoContinue" data-l10n-id="pref-agent-auto-continue"></html:label>
+    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-agentAutoContinue" preference="agentAutoContinue" />
+  </hbox>
+    <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-enableWebTools" data-l10n-id="pref-enable-web-tools"></html:label>
+    <html:span style="flex: 1;" />
+    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-enableWebTools" preference="enableWebTools" />
+  </hbox>
+
+  <html:div id="zotero-prefpane-__addonRef__-webSettings"><hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-braveSearchApiKey" data-l10n-id="pref-brave-search-api-key"></html:label>
+    <html:input type="password" id="zotero-prefpane-__addonRef__-braveSearchApiKey" preference="braveSearchApiKey" style="flex: 1;" />
+  </hbox></html:div>
+    <html:details class="chatpdf-preference-advanced"><html:summary data-l10n-id="pref-section-prompt"/><vbox>
+    <hbox align="center" style="margin-bottom: 4px;">
+      <html:label data-l10n-id="pref-system-prompt" style="font-weight: 600;"></html:label>
+      <html:span style="flex: 1;" />
+      <html:button id="zotero-prefpane-__addonRef__-promptResetEN" data-l10n-id="pref-prompt-default-en" style="font-size: 11px; padding: 1px 8px; cursor: pointer;"></html:button>
+      <html:button id="zotero-prefpane-__addonRef__-promptResetCN" data-l10n-id="pref-prompt-default-zh" style="font-size: 11px; margin-left: 4px; padding: 1px 8px; cursor: pointer;"></html:button>
+    </hbox>
+    <html:textarea id="zotero-prefpane-__addonRef__-systemPrompt"
+      style="width: 100%; min-height: 120px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
+      rows="6"></html:textarea>
+    <hbox pack="end" style="margin-top: 4px;">
+      <html:span id="zotero-prefpane-__addonRef__-promptStatus" style="font-size: 11px; color: #34c759; margin-right: 8px; align-self: center;"></html:span>
+      <html:button id="zotero-prefpane-__addonRef__-promptSave" data-l10n-id="pref-prompt-save" style="font-size: 12px; padding: 2px 16px; cursor: pointer; font-weight: 500;"></html:button>
+    </hbox>
+  </vbox></html:details>
+  </html:section>
+  <html:details class="chatpdf-preference-section chatpdf-preference-advanced">
+    <html:summary data-l10n-id="pref-section-advanced"/>
+    <description data-l10n-id="pref-limits-hint"/>
+  <description data-l10n-id="pref-generation-hint"/>
+  <hbox align="center"><html:label data-l10n-id="pref-context-window-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-contextWindowTokens" preference="contextWindowTokens" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-input-token-limit"/><html:input type="number" id="zotero-prefpane-__addonRef__-inputTokenLimit" preference="inputTokenLimit" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-max-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-maxOutputTokens" preference="maxOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-requested-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-requestedOutputTokens" preference="requestedOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-image-token-reserve"/><html:input type="number" id="zotero-prefpane-__addonRef__-imageTokenReserve" preference="imageTokenReserve" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center">
+    <html:label data-l10n-id="pref-tokenizer-mode" />
+    <menulist id="zotero-prefpane-__addonRef__-tokenizerMode" preference="tokenizerMode" native="true">
+      <menupopup>
+        <menuitem value="auto" label="Automatic (supported model only)" />
+        <menuitem value="deepseek-v4-estimate" label="DeepSeek V4 local tokenizer estimate" />
+      </menupopup>
+    </menulist>
+  </hbox>
+  <html:button id="zotero-prefpane-__addonRef__-refreshModelLimits" data-l10n-id="pref-model-limits-refresh"/>
+  <html:span id="zotero-prefpane-__addonRef__-modelLimitsStatus"/>
+    <separator class="thin"/>
+    <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-panelWidth" data-l10n-id="pref-panel-width"></html:label>
     <html:input type="number" id="zotero-prefpane-__addonRef__-panelWidth" preference="panelWidth" style="width: 90px;" min="280" step="10" />
   </hbox>
@@ -133,78 +214,5 @@
     <html:label for="zotero-prefpane-__addonRef__-debugLogRetentionDays" data-l10n-id="pref-debug-log-retention"></html:label>
     <html:input type="number" id="zotero-prefpane-__addonRef__-debugLogRetentionDays" preference="debugLogRetentionDays" style="width: 80px;" min="1" max="365" />
   </hbox>
-
-  <!-- Model Profiles -->
-  <vbox>
-    <hbox align="center" style="margin-bottom: 4px;">
-      <html:label data-l10n-id="pref-model-profiles" style="font-weight: 600;"></html:label>
-      <html:span style="flex: 1;" />
-      <html:button id="zotero-prefpane-__addonRef__-profileSaveBtn" style="font-size: 11px; padding: 1px 8px; cursor: pointer;">Save Current as Profile</html:button>
-    </hbox>
-    <html:div id="zotero-prefpane-__addonRef__-profileList" style="min-height: 32px; border: 1px solid var(--fill-quinary, #ddd); border-radius: 4px; margin-bottom: 4px; overflow-y: auto; max-height: 150px;"></html:div>
-    <hbox align="center" style="gap: 4px;">
-      <html:label for="zotero-prefpane-__addonRef__-profileName" data-l10n-id="pref-profile-name"></html:label>
-      <html:input type="text" id="zotero-prefpane-__addonRef__-profileName" placeholder="Profile name..." style="flex: 1;" />
-    </hbox>
-    <html:span id="zotero-prefpane-__addonRef__-profileStatus" style="font-size: 11px; color: #34c759; min-height: 16px; display: block; margin-top: 2px;"></html:span>
-  </vbox>
-
-  <separator class="thin" />
-
-  <vbox>
-    <hbox align="center" style="margin-bottom: 4px;">
-      <html:label data-l10n-id="pref-system-prompt" style="font-weight: 600;"></html:label>
-      <html:span style="flex: 1;" />
-      <html:button id="zotero-prefpane-__addonRef__-promptResetEN" style="font-size: 11px; padding: 1px 8px; cursor: pointer;">English Default</html:button>
-      <html:button id="zotero-prefpane-__addonRef__-promptResetCN" style="font-size: 11px; margin-left: 4px; padding: 1px 8px; cursor: pointer;">中文默认</html:button>
-    </hbox>
-    <html:textarea id="zotero-prefpane-__addonRef__-systemPrompt"
-      style="width: 100%; min-height: 120px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
-      rows="6"></html:textarea>
-    <hbox pack="end" style="margin-top: 4px;">
-      <html:span id="zotero-prefpane-__addonRef__-promptStatus" style="font-size: 11px; color: #34c759; margin-right: 8px; align-self: center;"></html:span>
-      <html:button id="zotero-prefpane-__addonRef__-promptSave" style="font-size: 12px; padding: 2px 16px; cursor: pointer; font-weight: 500;">Save</html:button>
-    </hbox>
-  </vbox>
-  <separator class="thin" />
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-agentMaxIterations" data-l10n-id="pref-agent-max-iterations"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-agentMaxIterations" preference="agentMaxIterations" style="width: 80px;" min="1" />
-  </hbox>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-agentAutoContinue" data-l10n-id="pref-agent-auto-continue"></html:label>
-    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-agentAutoContinue" preference="agentAutoContinue" />
-  </hbox>
-
-  <description>Model token limits: 0 uses endpoint metadata. Save these settings with each model profile.</description>
-  <description>Automatic generation uses the model's maximum output capacity without an additional plugin limit. A positive value sets your own ceiling for every request and retry. Input space is reserved accordingly; history is compacted when needed.</description>
-  <hbox align="center"><html:label data-l10n-id="pref-context-window-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-contextWindowTokens" preference="contextWindowTokens" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-input-token-limit"/><html:input type="number" id="zotero-prefpane-__addonRef__-inputTokenLimit" preference="inputTokenLimit" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-max-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-maxOutputTokens" preference="maxOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-requested-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-requestedOutputTokens" preference="requestedOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-image-token-reserve"/><html:input type="number" id="zotero-prefpane-__addonRef__-imageTokenReserve" preference="imageTokenReserve" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center">
-    <html:label data-l10n-id="pref-tokenizer-mode" />
-    <menulist id="zotero-prefpane-__addonRef__-tokenizerMode" preference="tokenizerMode" native="true">
-      <menupopup>
-        <menuitem value="auto" label="Automatic (supported model only)" />
-        <menuitem value="deepseek-v4-estimate" label="DeepSeek V4 local tokenizer estimate" />
-      </menupopup>
-    </menulist>
-  </hbox>
-  <html:button id="zotero-prefpane-__addonRef__-refreshModelLimits" data-l10n-id="pref-model-limits-refresh"/>
-  <html:span id="zotero-prefpane-__addonRef__-modelLimitsStatus"/>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-enableWebTools" data-l10n-id="pref-enable-web-tools"></html:label>
-    <html:span style="flex: 1;" />
-    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-enableWebTools" preference="enableWebTools" />
-  </hbox>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-braveSearchApiKey" data-l10n-id="pref-brave-search-api-key"></html:label>
-    <html:input type="password" id="zotero-prefpane-__addonRef__-braveSearchApiKey" preference="braveSearchApiKey" style="flex: 1;" />
-  </hbox>
+  </html:details>
 </groupbox>

@@ -1,0 +1,41 @@
+import { beforeEach, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ sessions: [] as any[], list: vi.fn() }));
+vi.mock("../src/modules/chat-history", () => ({ listSessions: mocks.list, setSessionPinned: vi.fn(async (id: string, pinned: boolean) => { mocks.sessions.find(m => m.id === id).pinned = pinned; }) }));
+vi.mock("../src/modules/message-renderer", () => ({ renderChatHistory: vi.fn(), refreshSourceChips: vi.fn(), renderLiveStreamState: vi.fn(), updateUsageBar: vi.fn() }));
+vi.mock("../src/modules/send-handler", () => ({ autoSaveSession: vi.fn() }));
+vi.mock("../src/modules/source-chips", () => ({ recoverSource: vi.fn() }));
+import { showHistoryView, hideHistoryView } from "../src/modules/history-view";
+import { destroyPanelState } from "../src/modules/panel-state";
+let root: HTMLElement;
+beforeEach(() => {
+  destroyPanelState(window); mocks.list.mockReset();
+  document.body.innerHTML = '<div id="chatpdf-root"><div id="chatpdf-history-header"></div><div id="chatpdf-history-filter-bar"></div><div id="chatpdf-history-list"></div></div>';
+  root = document.querySelector("#chatpdf-root")!;
+  mocks.sessions = [{ id: "one", title: "Questions", sourceTitles: ["Hamiltonian systems"], createdAt: 1, updatedAt: 2, messageCount: 2 }, { id: "two", title: "Other", sourceTitles: [], createdAt: 1, updatedAt: 3, messageCount: 2 }, { id: "empty", title: "Empty", sourceTitles: [], createdAt: 1, updatedAt: 4, messageCount: 0 }];
+  mocks.list.mockImplementation(async () => mocks.sessions);
+});
+const search = () => root.querySelector("#chatpdf-history-search") as HTMLInputElement;
+const entries = () => [...root.querySelectorAll(".chatpdf-history-item")].map(item => item.getAttribute("data-session-id"));
+it("searches paper titles without replacing the input, and supports pins and empty-chat filters", async () => {
+  showHistoryView(root); await vi.waitFor(() => expect(entries()).toEqual(["two", "one"]));
+  const input = search(); input.focus(); input.value = "Hamiltonian"; input.dispatchEvent(new Event("input"));
+  await vi.waitFor(() => expect(entries()).toEqual(["one"]));
+  expect(search()).toBe(input); expect(document.activeElement).toBe(input);
+  (root.querySelector(".chatpdf-history-pin") as HTMLButtonElement).click();
+  await vi.waitFor(() => expect(root.querySelector(".chatpdf-history-pin")!.getAttribute("aria-pressed")).toBe("true"));
+  input.value = ""; input.dispatchEvent(new Event("input"));
+  await vi.waitFor(() => expect(entries()).toEqual(["one", "two"]));
+  const empty = root.querySelector("#chatpdf-history-include-empty") as HTMLInputElement;
+  empty.checked = true; empty.dispatchEvent(new Event("change"));
+  await vi.waitFor(() => expect(entries()).toHaveLength(3));
+});
+it("ignores outdated and closed-view loads when asynchronous history reads overlap", async () => {
+  let finish!: (data: any[]) => void;
+  mocks.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  showHistoryView(root); search().value = "Hamiltonian"; search().dispatchEvent(new Event("input"));
+  await vi.waitFor(() => expect(entries()).toEqual(["one"]));
+  finish([mocks.sessions[1]]); await Promise.resolve(); await Promise.resolve(); expect(entries()).toEqual(["one"]);
+  mocks.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  search().dispatchEvent(new Event("input")); hideHistoryView(root); finish([]);
+  await Promise.resolve(); await Promise.resolve(); expect(entries()).toEqual(["one"]);
+});

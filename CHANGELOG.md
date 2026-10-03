@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Group Preferences into models, PDF conversion, behavior and collapsed advanced settings; add Chinese labels, engine-specific visibility, current model-role summaries and explicit save guidance.
+- Protect PDF conversion profiles from deletion while referenced, preserve native menu options during selection, and include current manual limits in capability refreshes.
+- Show conversion request totals, additional requests, retry reasons, saved-page reuse and provider-reported usage in source summaries without inventing unavailable history or usage fields.
+- Add history search across chat/paper titles, durable pins, empty-chat filtering and visible pagination; enrich old indexes without rewriting session content and preserve pins through background saves.
 - Add a default vision PDF-to-Markdown engine using Zotero PDF.js, independent conversion model profiles, bounded parallel requests, page-image caching, and a Reconvert action; retain MinerU as an optional engine.
 - Gate cache replacement on page coverage, formula syntax and chunk/line consistency; split invalid output, preserve cancellation, back off transient API failures, and resume validated staged chunks without mixing old assets or changed PDFs.
 - Emit chunk markers for single-chunk MinerU conversions and use the automatic image-token estimate for supported Go DeepSeek profiles.

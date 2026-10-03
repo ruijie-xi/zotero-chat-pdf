@@ -5,6 +5,8 @@ import { cancelConversion, getConversionDetails, getConversionDraft, latestConve
 import { getPanelState } from "./panel-state";
 import { renderMarkdown } from "./markdown-renderer";
 import { openPdfForSourceKey } from "./zotero-items";
+import { uiText } from "../utils/ui-text";
+import { conversionRequestSummary, ConversionIssue } from "./conversion-details";
 
 const duration = (ms: number) => `${Math.floor(Math.max(0, ms) / 60000)}:${String(Math.floor(Math.max(0, ms) / 1000) % 60).padStart(2, "0")}`;
 const terminal = (status: ConversionStatus) => ["ready", "error", "cancelled", "interrupted"].includes(status.state);
@@ -13,12 +15,36 @@ const phases: Record<string, string> = { resolve_pdf: "Preparing PDF", render: "
 
 export function conversionProgressText(status: ConversionStatus, now = Date.now()): string {
   const elapsed = duration((terminal(status) ? Date.parse(status.updatedAt) : now) - (status.runStartedAt || Date.parse(status.createdAt)));
-  const pages = status.totalPages ? `${status.completedPages || 0}/${status.totalPages} pages validated · ` : "";
+  const pages = status.totalPages ? uiText(`${status.completedPages || 0}/${status.totalPages} pages validated · `, `${status.completedPages || 0}/${status.totalPages} 页已通过检查 · `) : "";
   let phase = phases[status.stage] || status.progress || status.state;
-  if (status.activeRequests && !terminal(status)) phase = `${status.receivingRequests || 0} receiving / ${status.activeRequests - (status.receivingRequests || 0)} waiting requests`;
-  if (status.state === "cancelled") phase = "Stopped";
-  if (status.state === "error" || status.state === "interrupted") phase = `Failed at: ${phase}`;
+  const translated: Record<string, string> = { resolve_pdf: "准备 PDF", render: "生成页面图片", vision: "等待模型", validate: "检查结果", retry: "等待重试", commit: "保存缓存", ready: "已保存", suspended: "等待重启后恢复" };
+  if (translated[status.stage]) phase = uiText(phase, translated[status.stage]);
+  if (status.activeRequests && !terminal(status)) phase = uiText(`${status.receivingRequests || 0} receiving / ${status.activeRequests - (status.receivingRequests || 0)} waiting requests`, `${status.receivingRequests || 0} 个请求正在接收，${status.activeRequests - (status.receivingRequests || 0)} 个请求正在等待`);
+  if (status.state === "cancelled") phase = uiText("Stopped", "已停止");
+  if (status.state === "error" || status.state === "interrupted") phase = uiText(`Failed at: ${phase}`, `失败阶段：${phase}`);
   return `${pages}${phase} · ${elapsed}`;
+}
+
+export function conversionSummaryText(status: ConversionStatus): string {
+  const parts: string[] = [];
+  if (status.requestCount) parts.push(uiText(`${status.requestCount} requests`, `${status.requestCount} 次请求`));
+  else if (status.state === "ready" && status.options?.engine === "vision") parts.push(uiText("Request history unavailable", "请求历史未记录"));
+  if (status.additionalRequests) parts.push(uiText(`${status.additionalRequests} additional requests`, `其中 ${status.additionalRequests} 次额外请求`));
+  if (status.reusedPages) parts.push(uiText(`${status.reusedPages} saved pages reused`, `复用 ${status.reusedPages} 页已有结果`));
+  const usage = status.usage;
+  if (usage) {
+    const total = usage.total_tokens ?? (usage.prompt_tokens !== undefined && usage.completion_tokens !== undefined ? usage.prompt_tokens + usage.completion_tokens : undefined);
+    parts.push(total !== undefined ? uiText(`${total.toLocaleString()} tokens reported`, `已报告 ${total.toLocaleString()} token`) : uiText(`Reported input/output: ${usage.prompt_tokens ?? "unknown"}/${usage.completion_tokens ?? "unknown"}`, `已报告输入/输出：${usage.prompt_tokens ?? "未知"}/${usage.completion_tokens ?? "未知"}`));
+  }
+  const issueLabels: Record<ConversionIssue, string> = {
+    "page-coverage": uiText("page coverage check failed", "页面内容或页码检查未通过"),
+    "self-check": uiText("model self-check incomplete or uncertain", "模型自查记录不完整或无法确认"),
+    "math-symbols": uiText("formula symbol check failed", "公式符号检查未通过"),
+    busy: uiText("endpoint busy or timed out", "接口繁忙或超时"),
+    "request-failed": uiText("request failed or was interrupted", "请求失败或中断"),
+  };
+  if (status.requestIssue) parts.push(uiText(`Retry reason: ${issueLabels[status.requestIssue]}`, `重试原因：${issueLabels[status.requestIssue]}`));
+  return parts.join(" · ");
 }
 
 /** A local, disposable viewer. Inspecting content never invokes the model. */
@@ -34,10 +60,12 @@ export function openConversionInspector(root: HTMLElement, source: SourceItem, o
   const summary = h(doc, "div", { className: "chatpdf-conversion-overview", "aria-live": "polite" });
   const settings = h(doc, "div", { className: "chatpdf-conversion-muted" });
   const usage = h(doc, "div", { className: "chatpdf-conversion-muted" });
+  const activity = h(doc, "div", { className: "chatpdf-conversion-summary", "aria-live": "polite" });
   const progress = h(doc, "progress", { max: "100", "aria-label": "Conversion and cache progress" });
   const controls = h(doc, "div", { className: "chatpdf-conversion-controls" });
   const stop = h(doc, "button", { type: "button" }, "Stop"), retry = h(doc, "button", { type: "button" }, "Retry saved work");
   const original = h(doc, "button", { type: "button" }, "Open original PDF");
+  retry.title = uiText("Continue using validated saved work. Remaining pages may require paid model requests.", "优先复用已通过检查的结果；剩余页面仍可能产生模型费用。");
   controls.append(stop, retry, original);
   const chunks = h(doc, "div", { className: "chatpdf-conversion-chunks" });
   const chunkButtons = new Map<number, HTMLElement>();
@@ -54,7 +82,7 @@ export function openConversionInspector(root: HTMLElement, source: SourceItem, o
   const requests = h(doc, "div"); requestBox.appendChild(requests);
   const eventBox = h(doc, "details", { className: "chatpdf-conversion-log" }, h(doc, "summary", {}, "Activity timeline"));
   const events = h(doc, "div"); eventBox.appendChild(events);
-  body.append(summary, progress, settings, usage, controls, chunks, nav, preview, requestBox, eventBox);
+  body.append(summary, progress, settings, usage, activity, controls, chunks, nav, preview, requestBox, eventBox);
   panel.append(header, body); root.appendChild(panel);
   let closed = false, unsubscribe = () => {}, jobId = "", page = 1, sourceMode = false;
   const timer = state.win.setInterval(() => refresh(), 1000);
@@ -116,7 +144,9 @@ export function openConversionInspector(root: HTMLElement, source: SourceItem, o
     const config = status.options?.vision;
     settings.textContent = config ? `${config.model} · ${config.dpi} DPI · ${config.chunkPages} pages/request · ${config.concurrency} workers` : `${status.options?.engine || "PDF"} conversion`;
     const u = status.usage;
-    usage.textContent = `${details?.requests.length || 0} model requests recorded · ${u ? `${u.prompt_tokens || 0} input / ${u.completion_tokens || 0} output tokens reported` : "Token usage not reported"} · ${status.reusedPages || 0} pages reused`;
+    usage.textContent = `${details?.requests.length || 0} model requests recorded · ${u ? `${u.prompt_tokens ?? "unknown"} input / ${u.completion_tokens ?? "unknown"} output tokens reported` : "Token usage not reported"} · ${status.reusedPages || 0} pages reused`;
+    const activityText = conversionSummaryText({ ...status, ...(details ? conversionRequestSummary(details) : {}), requestCount: details?.requests.length ?? status.requestCount });
+    if (activity.textContent !== activityText) activity.textContent = activityText;
     stop.hidden = terminal(status); retry.hidden = !status.retryable || !onRetry;
     if (status.error) summary.appendChild(h(doc, "div", { className: "chatpdf-conversion-error" }, status.error));
     for (const chunk of details?.chunks || []) {

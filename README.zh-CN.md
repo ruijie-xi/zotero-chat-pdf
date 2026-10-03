@@ -47,7 +47,7 @@ Windows/Linux 打开 **编辑 → 设置 → ChatPDF**；macOS 打开 **Zotero �
 | 设置 | 说明 |
 | --- | --- |
 | PDF conversion engine | 默认使用视觉模型，也可选择 MinerU。 |
-| Conversion model profile | 可选择单独保存的视觉模型配置；留空使用当前聊天模型。 |
+| 转换模型配置 | 选择已保存的视觉模型配置，或“跟随当前聊天模型”。正在被转换设置引用的配置需要先切换后才能删除。 |
 | MinerU API Token | 只在选择 MinerU 时需要。 |
 | LLM Provider | DeepSeek、OpenCode Go 或 Custom（原有的 OpenAI 兼容配置）。 |
 | LLM API Base URL | 兼容 OpenAI 接口的服务基础地址。 |
@@ -59,6 +59,10 @@ Windows/Linux 打开 **编辑 → 设置 → ChatPDF**；macOS 打开 **Zotero �
 **OpenCode Go** 使用 `https://opencode.ai/zen/go/v1` 和 Go API Key。建议的 DeepSeek 模型包括 `deepseek-v4.1-flash`、`deepseek-v4-pro` 和 `deepseek-v4-flash`，不加 `opencode-go/` 前缀。主对话、压缩和标题请求都会发送 ChatPDF 客户端标识及稳定的会话头；本地 token 计数使用显式的 DeepSeek V4 估算模式。已知 Go DeepSeek 型号在 `/models` 缺少容量时使用内置目录预设，接口元数据和手动覆盖优先；未知型号需要填写容量。[Go 面向编程 Agent](https://opencode.ai/docs/go/#where-can-i-use-it)，接入不代表服务方保证接受论文阅读用途。
 
 其他可选设置包括每次请求页数、并发数、渲染 DPI、页图缓存、请求超时、MinerU 语言和超时、思考控制、Agent 最大迭代次数、上下文预算、缓存目录、系统提示词、调试日志级别和网络工具。配置 Brave Key 时使用 Brave Search；否则网页搜索回退到 DuckDuckGo。
+
+设置页分为模型、PDF 转换、聊天行为和折叠的高级设置，只显示所选转换方式的参数。当前字段即时生效；具名配置需要单独保存，PDF 转换使用其已保存字段。系统提示词使用“保存提示词”按钮。
+
+历史页可按聊天或论文标题搜索、置顶和筛选空会话，每次显示 50 条并可继续加载。来源摘要会显示请求次数、额外请求、重试原因和已报告 token；“继续已有工作”优先复用已有结果，“重新识别”可能产生新的模型费用。
 
 ## 快速开始
 

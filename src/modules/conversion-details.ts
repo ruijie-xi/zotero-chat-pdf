@@ -1,4 +1,4 @@
-import type { TokenUsage } from "./llm-client";
+import { sumTokenUsage, type TokenUsage } from "./llm-client";
 import type { PdfChunkPlanItem } from "./pdf-conversion";
 
 export type ChunkStage = "queued" | "rendering" | "requesting" | "receiving" | "validating" | "retrying" | "ready" | "error" | "cancelled";
@@ -41,6 +41,30 @@ export type ConversionDetailEvent =
   | { type: "message"; message: string; chunk?: number };
 
 export const emptyConversionDetails = (): ConversionDetails => ({ version: 1, pageCount: 0, renderedPages: [], chunks: [], requests: [], events: [] });
+
+export type ConversionIssue = "page-coverage" | "self-check" | "math-symbols" | "busy" | "request-failed";
+export function conversionRequestSummary(details: ConversionDetails): { additionalRequests: number; rejectedRequests: number; requestIssue?: ConversionIssue } {
+  const groups = new Set(details.requests.map(request => request.chunk));
+  const issue = [...details.requests].reverse().find(request => request.error && ["rejected", "error", "interrupted"].includes(request.state))?.error || "";
+  const requestIssue: ConversionIssue | undefined = !issue ? undefined : /self.check/i.test(issue) ? "self-check"
+    : /page markers|coverage|omitted|reordered|duplicated/i.test(issue) ? "page-coverage"
+      : /accent|symbol|math|formula/i.test(issue) ? "math-symbols"
+        : /429|503|busy|timeout|timed out/i.test(issue) ? "busy" : "request-failed";
+  return { additionalRequests: details.requests.length - groups.size,
+    rejectedRequests: details.requests.filter(request => request.state === "rejected" || request.state === "error").length, requestIssue };
+}
+
+/** Keep absent provider fields unknown while aggregating usage received so far. */
+export function conversionReportedUsage(details: ConversionDetails): TokenUsage | undefined {
+  const reported = details.requests.map(request => request.usage).filter((usage): usage is TokenUsage => !!usage);
+  const total = sumTokenUsage(reported);
+  if (!total) return undefined;
+  for (const key of ["prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"] as const) {
+    if (!reported.some(usage => usage[key] !== undefined)) delete total[key];
+  }
+  if (!reported.every(usage => usage.total_tokens !== undefined || usage.prompt_tokens !== undefined && usage.completion_tokens !== undefined)) delete total.total_tokens;
+  return total;
+}
 
 /** A restored request has no live reader; do not invent its completion time or usage. */
 export function interruptConversionRequests(details: ConversionDetails): void {

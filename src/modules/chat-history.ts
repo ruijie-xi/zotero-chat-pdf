@@ -41,6 +41,9 @@ export interface SessionMeta {
   referencedParentKeys?: string[];
   createdAt: number;
   updatedAt: number;
+  messageCount?: number;
+  /** UI pinning belongs to the index, so background session saves cannot reset it. */
+  pinned?: boolean;
 }
 
 /** Prevent a late background save from resurrecting a session deleted in this runtime. */
@@ -64,10 +67,12 @@ function toMeta(session: SavedSession): SessionMeta {
     id: session.id,
     title: session.title,
     titleSource: session.titleSource,
-    sourceTitles: session.sourceTitles || session.sources?.map((source) => source.title) || [],
+    sourceTitles: [...new Set([...(session.sourceTitles || session.sources?.map(source => source.title) || []),
+      ...(session.messages || []).flatMap(message => message.sources?.map(source => source.title) || [])])].filter(Boolean),
     referencedParentKeys: session.referencedParentKeys,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    messageCount: session.messages?.filter(message => message.role === "user" || message.role === "assistant").length || 0,
   };
 }
 
@@ -94,7 +99,7 @@ export async function saveSession(session: SavedSession): Promise<void> {
     const index = await loadIndex();
     const existing = index.findIndex((m) => m.id === session.id);
     const meta = toMeta(session);
-    if (existing >= 0) index[existing] = meta;
+    if (existing >= 0) index[existing] = { ...meta, pinned: index[existing].pinned };
     else index.push(meta);
     await saveIndex(index);
   });
@@ -112,9 +117,31 @@ export async function loadSession(id: string): Promise<SavedSession | null> {
 }
 
 export async function listSessions(): Promise<SessionMeta[]> {
-  const index = await loadIndex();
-  // Sort by updatedAt descending
-  return index.sort((a, b) => b.updatedAt - a.updatedAt);
+  return withStorageLock("chat-history", async () => {
+    const index = await loadIndex();
+    let enriched = false;
+    // Older indexes lack message counts. Read each old file once, without touching its content.
+    for (const meta of index) {
+      if (meta.messageCount !== undefined || deletedSessionIds.has(meta.id)) continue;
+      try {
+        const saved = await loadSession(meta.id);
+        if (saved) { const recovered = toMeta(saved); meta.messageCount = recovered.messageCount; meta.sourceTitles = recovered.sourceTitles; enriched = true; }
+      } catch (error: any) { logError("history", "Could not enrich history metadata", error); }
+    }
+    if (enriched) await saveIndex(index);
+    return index.filter(meta => !deletedSessionIds.has(meta.id)).sort((a, b) => b.updatedAt - a.updatedAt);
+  });
+}
+
+export async function setSessionPinned(id: string, pinned: boolean): Promise<void> {
+  await withStorageLock("chat-history", async () => {
+    if (deletedSessionIds.has(id)) return;
+    const index = await loadIndex();
+    const meta = index.find(meta => meta.id === id);
+    if (!meta) return;
+    meta.pinned = pinned;
+    await saveIndex(index);
+  });
 }
 
 export async function deleteSession(id: string): Promise<void> {

@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { ChatSession } from "../src/modules/chat-session";
 const mocks = vi.hoisted(() => ({ state: null as any }));
 vi.mock("../src/modules/panel-state", () => ({ getPanelState: () => mocks.state }));
-vi.mock("../src/modules/conversion-inspector", () => ({ openConversionInspector: vi.fn(), conversionProgressText: (status: any) => `Receiving ${status.completedPages}/19` }));
+vi.mock("../src/modules/conversion-inspector", () => ({ openConversionInspector: vi.fn(), conversionSummaryText: () => "", conversionProgressText: (status: any) => `Receiving ${status.completedPages}/19` }));
 vi.mock("../src/modules/chat-history", () => ({ saveSession: vi.fn() }));
 import { refreshSourceChips } from "../src/modules/source-chips";
 import { openConversionInspector } from "../src/modules/conversion-inspector";

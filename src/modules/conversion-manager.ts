@@ -7,7 +7,7 @@ import { validateConversionContract, ConvertedPdf, buildChunkPlan } from "./pdf-
 import { VISION_QUALITY_GATE } from "./vision-quality";
 import { parseVisionPages, checkVisionMath } from "./vision-quality";
 import { SELF_CHECK_QUALITY_GATE } from "./vision-self-check";
-import { applyConversionEvent, ConversionDetails, ConversionDetailEvent, conversionCounts, conversionDraftPage, emptyConversionDetails, interruptConversionRequests } from "./conversion-details";
+import { applyConversionEvent, ConversionDetails, ConversionDetailEvent, ConversionIssue, conversionCounts, conversionDraftPage, conversionRequestSummary, conversionReportedUsage, emptyConversionDetails, interruptConversionRequests } from "./conversion-details";
 import { sumTokenUsage, TokenUsage } from "./llm-client";
 import { readImageFile, imageMime } from "./image-input";
 import {
@@ -70,6 +70,9 @@ export interface ConversionStatus {
   requestCount?: number;
   activeRequests?: number;
   receivingRequests?: number;
+  additionalRequests?: number;
+  rejectedRequests?: number;
+  requestIssue?: ConversionIssue;
   usage?: TokenUsage;
   runStartedAt?: number;
 }
@@ -150,8 +153,8 @@ function mineruOptions(options?: ConversionOptions): MineruConversionOptions {
 }
 
 const snapshot = (job: Job) => sanitizeConversionStatus({ ...job.status,
-  ...(job.details?.pageCount ? { ...conversionCounts(job.details), totalPages: job.details.pageCount,
-    requestCount: job.details.requests.length, usage: job.manifest?.conversionUsage,
+  ...(job.details?.pageCount ? { ...conversionCounts(job.details), ...conversionRequestSummary(job.details), totalPages: job.details.pageCount,
+    requestCount: job.details.requests.length, usage: job.manifest?.conversionUsage || conversionReportedUsage(job.details),
     activeRequests: job.details.requests.filter(request => request.state === "waiting" || request.state === "receiving").length,
     receivingRequests: job.details.requests.filter(request => request.state === "receiving").length,
     progressPercent: job.status.state === "ready" ? 100 : job.status.stage === "commit" ? 99
