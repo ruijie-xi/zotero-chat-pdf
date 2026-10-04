@@ -17,6 +17,8 @@ import {
 } from "./panel-state";
 import { appendMessage, createToolBlock, updateUsageBar, renderChatHistory, appendUsageMeta } from "./message-renderer";
 import { refreshSourceChips, convertSource } from "./source-chips";
+import { captureLibraryAccess } from "./library-changes";
+import { requestLibraryApproval } from "./library-approval";
 
 /** Auto-save the current session to disk. */
 export async function autoSaveSession(root: HTMLElement, force = false): Promise<void> {
@@ -153,23 +155,9 @@ export async function handleSend(root: HTMLElement): Promise<void> {
   if (!userText) return;
 
   const turnScope = state.session.resolveTurnScope(sourceKeys);
+  const libraryAccess = captureLibraryAccess(state.win);
 
   Zotero.debug(`[ChatPDF] handleSend: userText="${userText.slice(0, 80)}"`);
-
-  // Block sending when any source is pending or converting
-  const notReady = state.session.getSources().filter((s) => turnScope.has(s.id) && (s.status === "pending" || s.status === "converting"));
-  if (notReady.length > 0) {
-    const existing = root.querySelector(".chatpdf-send-warning");
-    if (existing) existing.remove();
-    const doc = root.ownerDocument!;
-    const warning = h(doc, "div", { className: "chatpdf-send-warning" },
-      `Cannot send: ${notReady.length} source${notReady.length > 1 ? "s" : ""} still pending or converting. Please convert or remove them first.`);
-    const inputArea = root.querySelector("#chatpdf-input-area");
-    if (inputArea) inputArea.insertBefore(warning, inputArea.firstChild);
-    const win = doc.defaultView!;
-    win.setTimeout(() => warning.remove(), 4000);
-    return;
-  }
 
   abortCurrentStream(root);
 
@@ -256,7 +244,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
 
     // Agent mode is the only supported chat path.
       const tools = getToolDefinitions();
-      const messages = streamSession.buildAgentMessages(userText, turnScope, tools);
+      const messages = streamSession.buildAgentMessages(userText, turnScope, tools, libraryAccess);
       streamSession.addUserMessage(userText, msgSources);
 
       await ChatHistory.saveSession(streamSession.toSavedSession());
@@ -477,6 +465,8 @@ export async function handleSend(root: HTMLElement): Promise<void> {
         requestId,
         windowId,
         turnScope,
+        libraryAccess,
+        approveLibraryChanges: (plan, undo) => isActiveSession() ? requestLibraryApproval(root, plan, signal, undo) : Promise.resolve(false),
       });
       fullText = agentResult.content;
       fullReasoning = agentResult.reasoning || "";

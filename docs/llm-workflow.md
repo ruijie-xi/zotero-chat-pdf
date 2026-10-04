@@ -1,6 +1,6 @@
 # ChatPDF LLM and Tool Workflow
 
-This document describes the agent-only workflow in the `0.8.0` working tree after the 2026-07-14 architecture remediation.
+This document describes the agent-only workflow in the `0.9.x` working tree. See [Agent capabilities](agent-capabilities.md) for document representations, library editing guarantees and prefix-cache behavior.
 
 ## Runtime Boundary
 
@@ -29,6 +29,11 @@ Go's public `/models` response currently omits token capacities. For the exact s
 | `agent-loop.ts` | LLM/tool iterations, safe tool scheduling, callbacks, and usage accumulation |
 | `llm-client.ts` | OpenAI-compatible request construction, SSE parsing, tool fragments, and provider thinking fields |
 | `tools.ts` | Tool schemas, risk metadata, validation, dispatch, and result accounting |
+| `research-tools.ts` | Stable PDF discovery/evidence and library-edit tool schemas and dispatch |
+| `pdf-text.ts` | Local PDF text/page caches, index reuse, revision-aware search and continuation |
+| `library-changes.ts` | Captured edit scope, transaction preflight, durable receipts and conflict-safe undo |
+| `library-approval.ts` | Trusted batch review of concrete changes or reversals |
+| `source-citation.ts` | Library-qualified PDF page links and native reader routing |
 | `safe-web-client.ts` | Public HTTP(S) validation, redirect checks, timeout, MIME, and streamed byte limits |
 | `chat-session.ts` | Session library, TurnScope messages, prompt construction, history, and schema-v2 serialization |
 | `chat-history.ts` | Atomic session/index repository, index recovery, and deletion tombstones |
@@ -61,7 +66,7 @@ There are two distinct source sets:
 - **SessionLibrary**: all sources currently attached to the chat session.
 - **TurnScope**: the sources authorized for one user turn.
 
-The editor returns both visible text and mention IDs. If the user includes source mentions, those IDs become the TurnScope. If no mentions are present, TurnScope defaults to the full SessionLibrary. Pending/converting guards apply only to the active TurnScope.
+The editor returns both visible text and mention IDs. If the user includes source mentions, those IDs become the TurnScope. If no mentions are present, TurnScope defaults to the full SessionLibrary. Pending or converting sources do not block sending: raw text, page images, status and conversion waiting remain independently available within TurnScope.
 
 The user message persists a source snapshot for historical display. Reloading a session restores SessionLibrary from the serialized session source list, never from the last message snapshot.
 
@@ -71,12 +76,12 @@ The user message persists a source snapshot for historical display. Reloading a 
 
 1. Resolve the window-owned `PanelState` and extract editor text plus source mentions.
 2. Reject empty input and resolve TurnScope.
-3. Reject only pending/converting sources required by that TurnScope.
+3. Capture the UI-selected library edit mode, library, items and collection subtree for this turn.
 4. Create a request ID and one `AbortController` owned by this send.
 5. Build provider messages before appending the current user message, preventing duplication.
 6. Save the user message with its TurnScope snapshot and persist immediately.
 7. Register a background stream record and switch Send to Stop.
-8. Run the agent loop with `ToolExecutionContext` containing session, TurnScope, signal, request ID, and window ID.
+8. Run the agent loop with `ToolExecutionContext` containing session, TurnScope, signal, request ID, window ID, captured library access and a trusted-review callback.
 9. Stream reasoning, tool iterations, answer text, and usage to the active UI when that session remains visible.
 10. Persist a completed, failed, or cancelled assistant terminal message.
 11. Optionally generate the first-session title in a separate background call.
@@ -96,7 +101,7 @@ current TurnScope metadata + user message
 
 Converted PDFs are not embedded into the system prompt. The model reads them through tools.
 
-The system prompt teaches the document/Zotero/web workflow but does not contain volatile source metadata. Each user message carries its own immutable TurnScope block. Between compactions, complete provider exchanges remain unchanged and new messages append to the same working context, including across follow-up turns and compatible session restores. Legacy sessions without exact replay metadata are reconstructed once from visible messages and tool provenance.
+The system prompt describes capabilities; the agent chooses its tools and order. Volatile source metadata, conversion states and edit access appear only in the current user's immutable scope block. Tool definitions keep fixed schemas and order across permission changes. Between compactions, complete provider exchanges remain unchanged and new messages append to the same working context, including across follow-up turns and compatible session restores. Legacy sessions without exact replay metadata are reconstructed once from visible messages and tool provenance.
 
 Model limits are resolved for the exact endpoint, account and model: explicit profile token overrides take precedence over endpoint `/models` metadata. Metadata is cached for 24 hours in memory and can be refreshed from Preferences. Limits are frozen for each turn. Unknown capacity requires explicit token settings; old character-limit preferences are ignored.
 

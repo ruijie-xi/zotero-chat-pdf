@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Allow scoped, reviewed deletion of empty collections, including move-and-delete batches and conflict-safe restoration; reload local collection trees after collection changes without extra refresh moves.
+- Describe current library authority without unrelated selection allowlists and supersede stale per-turn permission claims without rewriting provider history.
+- Return full stored item metadata on demand, including creator roles, identifiers, collection ancestry, child-note references and attachment availability; keep compact summaries available.
+- Keep source chips compact with an in-chip Process button and context/More actions menus; retain control identity through streamed updates.
+- Move library editing permissions into chat; group approval and receipt views by add/edit/remove/move with readable names and sanitized note comparisons.
+- Search child and standalone Zotero notes with explicit paging/coverage, read complete text or exact HTML with revision tracking, and enumerate empty subcollections by name.
+- Render private PDF frames with PDF.js print scheduling to avoid animation-frame stalls in hidden windows.
+- Search local PDF text before conversion; read page text and page images, inspect document availability, and wait for existing conversions.
+- Add scoped, reviewed and reversible collection/tag/note edits with conflict detection and operation receipts.
+- Provide page citations and keep capability schemas, system instructions and existing provider history stable for prefix-cache reuse.
+
 - Group Preferences into models, PDF conversion, behavior and collapsed advanced settings; add Chinese labels, engine-specific visibility, current model-role summaries and explicit save guidance.
 - Protect PDF conversion profiles from deletion while referenced, preserve native menu options during selection, and include current manual limits in capability refreshes.
 - Show conversion request totals, additional requests, retry reasons, saved-page reuse and provider-reported usage in source summaries without inventing unavailable history or usage fields.

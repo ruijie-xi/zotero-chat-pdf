@@ -65,9 +65,7 @@
 }
 
 /* Conversion inspector stays in the owning panel and uses Zotero theme colors. */
-.chatpdf-source-conversion-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--fill-secondary, #666); padding: 2px 8px 6px; }
 .chatpdf-source-entry { min-width: 0; }
-.chatpdf-source-conversion-row > span { font-variant-numeric: tabular-nums; }
 .chatpdf-conversion-inspector { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column; min-width: 0; background: var(--material-background, #fff); color: var(--fill-primary, #222); }
 .chatpdf-conversion-inspector-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--fill-quinary, #ddd); }
 .chatpdf-conversion-inspector-header strong { min-width: 0; overflow-wrap: anywhere; }
@@ -237,7 +235,7 @@
 }
 
 .chatpdf-msg-row-assistant {
-  align-items: flex-start;
+  align-items: center;
   padding-right: 4px;
 }
 
@@ -708,7 +706,7 @@
 
 .chatpdf-source-chip {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   padding: 4px 6px;
   border-radius: 5px;
@@ -772,9 +770,9 @@
   font-weight: 450;
   color: var(--fill-primary, #333);
   line-height: 1.3;
-  /* Allow wrapping for long titles instead of forcing horizontal expansion */
-  word-break: break-word;
-  overflow-wrap: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Status badge */
@@ -1554,6 +1552,22 @@
 .chatpdf-history-pin { border: none; background: transparent; color: var(--fill-secondary); cursor: pointer; font-size: 18px; }
 .chatpdf-history-pin[aria-pressed="true"] { color: var(--color-accent); }
 .chatpdf-history-more { display: block; margin: 12px auto; }
-.chatpdf-source-conversion-row { align-items: flex-start; }
-.chatpdf-source-conversion-row > span { white-space: pre-line; overflow-wrap: anywhere; }
+.chatpdf-source-menu { position: absolute; z-index: 25; display: flex; flex-direction: column; min-width: 175px; max-width: min(320px, 100%); max-height: 80%; overflow: auto; padding: 5px; border: 1px solid var(--fill-quaternary, #ccc); border-radius: 6px; background: var(--material-background, #fff); color: var(--fill-primary, #222); box-shadow: 0 3px 12px #0002; }
+.chatpdf-source-menu button { border: none; background: transparent; color: inherit; text-align: left; font: inherit; padding: 5px 8px; border-radius: 3px; cursor: pointer; }
+.chatpdf-source-menu button:hover, .chatpdf-source-menu button:focus-visible { background: var(--fill-quinary, #eee); }
+.chatpdf-source-menu-summary { padding: 6px 8px; border-top: 1px solid var(--fill-quinary, #ddd); font-size: 11px; color: var(--fill-secondary, #666); white-space: pre-line; overflow-wrap: anywhere; }
+.chatpdf-library-access { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 3px 0 5px; font-size: 11px; color: var(--fill-secondary, #666); }
+.chatpdf-library-access menulist { margin: 0; min-width: 110px; max-width: 190px; font-size: 11px; }
+.chatpdf-library-access-scope { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
 .chatpdf-conversion-summary { padding: 8px; border-radius: 4px; background: var(--fill-quinary, #eee); }
+.chatpdf-library-approval { margin: 8px; padding: 10px; border: 1px solid var(--fill-secondary); border-radius: 6px; }
+.chatpdf-library-preview { max-height: 420px; overflow: auto; padding-top: 5px; }
+.chatpdf-library-group { margin: 7px 0; padding: 7px; border-radius: 5px; background: var(--fill-senary, #f7f7f7); border-left: 3px solid var(--color-accent, #777); }
+.chatpdf-library-group-add { border-left-color: var(--accent-green, #268b55); }
+.chatpdf-library-group-remove { border-left-color: var(--accent-red, #bf3d3d); }
+.chatpdf-library-change { margin-top: 6px; overflow-wrap: anywhere; }
+.chatpdf-library-change-title { font-weight: 600; }
+.chatpdf-library-change-detail, .chatpdf-library-note-excerpt { font-size: 12px; color: var(--fill-secondary, #666); margin: 2px 0; }
+.chatpdf-library-note-diff summary { cursor: pointer; font-size: 12px; }
+.chatpdf-library-note-content { padding: 5px; margin: 4px 0; border: 1px solid var(--fill-quinary, #ddd); overflow-wrap: anywhere; }
+.chatpdf-library-approval button { margin: 6px 6px 0 0; }

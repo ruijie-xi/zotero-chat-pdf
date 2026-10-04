@@ -14,8 +14,8 @@ import * as ChatHistory from "./chat-history";
 import { createAbortController, getPanelState, PanelState } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
 import { summarizeSelfChecks } from "./vision-self-check";
-import { openConversionInspector, conversionProgressText, conversionSummaryText } from "./conversion-inspector";
-import { uiText } from "../utils/ui-text";
+import { openConversionInspector, conversionProgressText } from "./conversion-inspector";
+import { createSourceChip, SourceChipView } from "./source-chip-ui";
 
 /** Convert a source using the configured PDF engine. */
 export async function convertSource(
@@ -125,9 +125,7 @@ function saveCurrentSession(root: HTMLElement): void {
 interface SourceRow {
   source: SourceItem;
   element: HTMLElement;
-  chip?: HTMLElement;
-  signature: string;
-  progress?: HTMLElement;
+  view: SourceChipView;
 }
 const sourceRows = new WeakMap<Element, Map<string, SourceRow>>();
 
@@ -144,137 +142,36 @@ function renderSourceChips(root: HTMLElement): void {
   const wanted: HTMLElement[] = [];
   const sourceIds = new Set(sources.map(source => source.id));
   for (const [id, row] of rows) {
-    if (!sourceIds.has(id) || session.getSource(id) !== row.source) { row.element.remove(); rows.delete(id); }
+    if (!sourceIds.has(id) || session.getSource(id) !== row.source) { row.view.dismiss(); row.element.remove(); rows.delete(id); }
   }
 
   for (const source of sources) {
     let row = rows.get(source.id);
     if (!row) {
-      row = { source, element: h(doc, "div", { className: "chatpdf-source-entry" }), signature: "" };
-      rows.set(source.id, row);
-      if (source.kind !== "image") {
-        const detailRow = h(doc, "div", { className: "chatpdf-source-conversion-row" });
-        const inspect = h(doc, "button", { type: "button", className: "chatpdf-chip-text-btn", "data-action": "view-conversion" }, uiText("View conversion process", "查看转换过程"));
-        // This control stays attached during every streamed progress update.
-        inspect.addEventListener("click", () => openConversionInspector(root, source, async () => {
-          await convertSource(source, () => refreshSourceChips(root), undefined, getPanelState(root)).catch(() => {});
-          refreshSourceChips(root);
-        }));
-        row.progress = h(doc, "span");
-        detailRow.append(inspect, row.progress); row.element.appendChild(detailRow);
-      }
-    }
-    wanted.push(row.element);
-    if (row.progress) {
-      const status = source.conversionStatus;
-      const text = status ? [conversionProgressText(status), conversionSummaryText(status)].filter(Boolean).join("\n") : "";
-      if (row.progress.textContent !== text) row.progress.textContent = text;
-      row.progress.hidden = !text;
-    }
-    const signature = JSON.stringify([source.kind, source.status, source.title, source.errorMessage, source.markdown?.length,
-      source.selfCheck?.pagesChecked, source.selfCheck?.pagesTotal, source.selfCheck?.editsApplied]);
-    if (row.signature === signature) continue;
-    row.signature = signature;
-    const chipTitle = source.errorMessage || (source.kind === "image" ? "Image source — requires a vision-capable model" : "Open PDF");
-    const chip = h(doc, "div", { className: `chatpdf-source-chip chatpdf-source-chip-${source.status}`, title: chipTitle });
-    chip.addEventListener("click", () => {
-      if (source.kind === "image") {
-        state.chatInput?.insertMention({ key: source.id, title: source.title });
-        return;
-      }
-      openPdfForSourceKey(source.key, source.libraryID).catch((err: any) => {
-        Zotero.debug(`[ChatPDF] open source chip failed for ${source.key}: ${err.message}`);
-      });
-    });
-
-    // Status indicator
-    const statusIndicator = h(doc, "span", { className: `chatpdf-chip-indicator chatpdf-chip-indicator-${source.status}` });
-    chip.appendChild(statusIndicator);
-
-    // Title
-    const titleEl = h(doc, "span", { className: "chatpdf-chip-title" }, source.title);
-    chip.appendChild(titleEl);
-
-    // Size badge for ready sources
-    if (source.kind === "image") {
-      chip.appendChild(h(doc, "span", { className: "chatpdf-chip-badge chatpdf-chip-badge-ready" }, "Image"));
-    } else if (source.status === "ready" && source.markdown) {
-      const charLen = source.markdown.length;
-      const sizeText = formatChars(charLen);
-      const badge = h(doc, "span", { className: "chatpdf-chip-badge chatpdf-chip-badge-ready" }, `${sizeText} chars`);
-      chip.appendChild(badge);
-      if (source.selfCheck) {
-        const check = source.selfCheck;
-        const label = check.pagesChecked ? `Self-check ${check.pagesChecked}/${check.pagesTotal}` : "Not self-checked";
-        chip.appendChild(h(doc, "span", { className: "chatpdf-chip-badge", title: `Same-model self-check; ${check.editsApplied} local edits. This is not independent verification.` }, label));
-      }
-    } else if (source.status !== "pending" && source.status !== "ready") {
-      const statusLabels: Record<string, string> = {
-        converting: "Converting...",
-        error: "Error",
-      };
-      const badge = h(doc, "span", { className: `chatpdf-chip-badge chatpdf-chip-badge-${source.status}` }, statusLabels[source.status] || "");
-      chip.appendChild(badge);
-    }
-
-    // Actions
-    const actions = h(doc, "span", { className: "chatpdf-chip-actions" });
-
-    if ((source.status === "ready" || source.status === "error") && source.kind !== "image") {
-      const reconvert = h(doc, "button", { className: "chatpdf-chip-text-btn", title: uiText("Recognize the PDF again and replace its cache. This may incur model charges.", "重新识别 PDF 并替换缓存，可能产生模型费用。") }, uiText("Reconvert", "重新识别"));
-      reconvert.addEventListener("click", (e: Event) => {
-        e.stopPropagation();
-        void convertSource(source, () => refreshSourceChips(root), undefined, state, state.session, false, true)
+      const convert = (force = false) => {
+        const pending = convertSource(source, () => refreshSourceChips(root), undefined, state, state.session, false, force)
           .catch(() => refreshSourceChips(root));
-      });
-      actions.appendChild(reconvert);
-    }
-
-    if ((source.status === "pending" || source.status === "error") && source.kind !== "image") {
-      const label = source.status === "error" ? uiText("Retry", "继续已有工作") : uiText("Convert", "转换");
-      const hint = source.status === "error" ? uiText("Reuse validated saved work where possible; remaining pages may incur model charges.", "优先复用已通过检查的结果；剩余页面可能产生模型费用。") : label;
-      const convertBtn = h(doc, "button", { className: "chatpdf-chip-text-btn", title: hint }, label);
-      convertBtn.addEventListener("click", (e: Event) => {
-        e.stopPropagation();
-        convertSource(source, () => refreshSourceChips(root), undefined, state).catch(() => refreshSourceChips(root));
         refreshSourceChips(root);
+        return pending;
+      };
+      const view = createSourceChip(root, source, {
+        open: () => {
+          if (source.kind === "image") state.chatInput?.insertMention({ key: source.id, title: source.title });
+          else void openPdfForSourceKey(source.key, source.libraryID).catch(err => Zotero.debug(`[ChatPDF] Open source failed: ${err.message}`));
+        },
+        inspect: () => openConversionInspector(root, source, async () => { await convert(); }),
+        convert,
+        stop: () => { state.conversionAbortControllers.get(source.id)?.abort(); refreshSourceChips(root); },
+        remove: () => {
+          state.conversionAbortControllers.get(source.id)?.abort();
+          state.conversionAbortControllers.delete(source.id);
+          session.removeSource(source.id); saveCurrentSession(root); refreshSourceChips(root);
+        },
       });
-      actions.appendChild(convertBtn);
+      const element = h(doc, "div", { className: "chatpdf-source-entry" }); element.append(view.element);
+      row = { source, element, view }; rows.set(source.id, row);
     }
-
-    if (source.status === "converting") {
-      const stopBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-stop-btn", title: "Stop conversion" }, "Stop");
-      stopBtn.addEventListener("click", (e: Event) => {
-        e.stopPropagation();
-        const controller = state.conversionAbortControllers.get(source.id);
-        if (controller) {
-          Zotero.debug(`[ChatPDF] User stopped conversion for ${source.key}`);
-          controller.abort();
-        }
-        refreshSourceChips(root);
-      });
-      actions.appendChild(stopBtn);
-    }
-
-    const removeBtn = h(doc, "button", { className: "chatpdf-chip-text-btn chatpdf-chip-remove-btn", title: "Remove source" }, "Remove");
-    removeBtn.addEventListener("click", (e: Event) => {
-      e.stopPropagation();
-      const controller = state.conversionAbortControllers.get(source.id);
-      if (controller) {
-        Zotero.debug(`[ChatPDF] Removing source ${source.key}; aborting active conversion`);
-        controller.abort();
-        state.conversionAbortControllers.delete(source.id);
-      }
-      session.removeSource(source.id);
-      saveCurrentSession(root);
-      refreshSourceChips(root);
-    });
-    actions.appendChild(removeBtn);
-
-    chip.appendChild(actions);
-    if (row.chip) row.element.replaceChild(chip, row.chip);
-    else row.element.prepend(chip);
-    row.chip = chip;
+    row.view.update(); wanted.push(row.element);
   }
 
   // Reconcile only additions/removals/reordering; never detach an unchanged row.

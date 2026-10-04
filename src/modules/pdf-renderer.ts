@@ -27,6 +27,7 @@ export interface RenderedPdfPage {
 
 export interface PdfRenderer {
   pageCount: number;
+  text(page: number): Promise<{ page: number; text: string; pageLabel?: string }>;
   render(page: number, dpi: number): Promise<RenderedPdfPage>;
   close(): Promise<void>;
 }
@@ -79,6 +80,10 @@ export async function openPdfRenderer(pdfPath: string, signal?: AbortSignal, pdf
     throwIfConversionAborted(signal);
     return {
       pageCount,
+      text: async page => {
+        throwIfConversionAborted(signal);
+        return bounded(api.text(page), 60_000, signal);
+      },
       render: async (page, dpi) => {
         throwIfConversionAborted(signal);
         try { return await bounded<RenderedPdfPage>(api.render(page, dpi), 60_000, signal); }

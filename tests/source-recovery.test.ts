@@ -57,7 +57,7 @@ describe("source recovery UI", () => {
     const source = mocks.state.session.addSource("PDFCHECK", "Checked paper", undefined, 1);
     await convertSource(source, undefined, undefined, mocks.state, mocks.state.session);
     refreshSourceChips(root);
-    expect(root.textContent).toContain("Self-check 1/1");
+    expect(root.querySelector(".chatpdf-chip-badge")?.textContent).toContain("✓1/1");
     expect(root.querySelector('[title*="not independent verification"]')).not.toBeNull();
     expect(source.selfCheck).toEqual({ pagesChecked: 1, pagesTotal: 1, editsApplied: 0 });
   });

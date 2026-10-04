@@ -24,6 +24,7 @@ pref("activeProfile", "");
 pref("panelWidth", 350);
 pref("agentMaxIterations", 10);
 pref("agentAutoContinue", true);
+pref("agentLibraryEditMode", "ask");
 pref("contextWindowTokens", 0);
 pref("inputTokenLimit", 0);
 pref("maxOutputTokens", 0);

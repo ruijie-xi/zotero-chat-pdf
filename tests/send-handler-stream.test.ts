@@ -24,6 +24,16 @@ beforeEach(() => {
 afterEach(() => { destroyPanelState(window); vi.useRealTimers(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("assistant narration chronology", () => {
+  it("lets the agent handle pending and converting sources instead of blocking send", async () => {
+    const state = createPanelState(window);
+    state.session.addSource("ABC12345", "Pending", undefined, 1);
+    const active = state.session.addSource("BCD12345", "Converting", undefined, 1);
+    active.status = "converting";
+    vi.mocked(runAgentLoop).mockResolvedValue({ content: "Text, conversion and waiting are available.", iterations: [], totalIterations: 1 });
+    await handleSend(root);
+    expect(runAgentLoop).toHaveBeenCalledOnce();
+    expect(root.querySelector(".chatpdf-send-warning")).toBeNull();
+  });
   it("freezes partial answers before automatic continuation and restores them exactly once", async () => {
     const partial: IterationRecord = { content: "Partial answer", toolCalls: [] };
     vi.mocked(runAgentLoop).mockImplementation(async (_messages, _tools, _session, callbacks) => {

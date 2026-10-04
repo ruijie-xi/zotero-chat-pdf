@@ -3,6 +3,11 @@ import { ImageInput, IMAGE_INPUT_HELP, listSourceImages, readSourceImage } from 
 import * as MDCache from "./md-cache";
 import { getPref } from "../utils/prefs";
 import { Tool } from "./llm-client";
+import { executeResearchTool, RESEARCH_TOOLS } from "./research-tools";
+import type { LibraryAccess, LibraryChangeSet } from "./library-changes";
+import { pdfCitation } from "./source-citation";
+import { currentPdfDigest } from "./pdf-text";
+import { inspectZoteroItem } from "./zotero-item-details";
 import { convertSource, refreshSourceChips } from "./source-chips";
 import {
   DEFAULT_WEB_MAX_BYTES,
@@ -59,6 +64,8 @@ export interface ToolExecutionContext {
   windowId: string;
   /** Mutable IDs allowed for this turn. Newly-added sources are appended here. */
   turnScope: Set<string>;
+  libraryAccess?: LibraryAccess;
+  approveLibraryChanges?: (plan: LibraryChangeSet, undo?: boolean) => Promise<boolean>;
 }
 
 export interface ToolMetadata {
@@ -69,6 +76,14 @@ export interface ToolMetadata {
 }
 
 const TOOL_METADATA: Record<string, ToolMetadata> = {
+  search_pdf_text: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  get_document_status: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  read_pdf_text: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  read_pdf_page: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  wait_for_conversion: { readOnly: false, mutatesSession: true, network: false, costly: false },
+  read_zotero_notes: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  search_zotero_notes: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  change_zotero_library: { readOnly: false, mutatesSession: false, network: false, costly: false },
   read_tool_result: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_images: { readOnly: true, mutatesSession: false, network: false, costly: false },
   read_image: { readOnly: true, mutatesSession: false, network: false, costly: false },
@@ -92,6 +107,14 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
 
 export function getToolMetadata(name: string): ToolMetadata {
   return TOOL_METADATA[name] || { readOnly: false, mutatesSession: true, network: true, costly: true };
+}
+
+export function toolResultSourceIds(name: string, args: Record<string, unknown>, context: ToolExecutionContext): string[] {
+  const documentTools = new Set(["read_document", "list_document_chunks", "read_document_chunk", "search_document", "list_images", "read_image", "read_pdf_text", "read_pdf_page", "get_document_status", "wait_for_conversion", "convert_session_source"]);
+  if (name === "list_sources") return [...context.turnScope];
+  if (!documentTools.has(name)) return [];
+  const source = context.session.getSource(String(args.key || args.source_key || ""));
+  return source ? [source.id] : [];
 }
 
 function extractHeadings(markdown: string): { heading: string; line: number }[] {
@@ -300,12 +323,13 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
       function: {
         name: "get_zotero_item",
         description:
-          "Inspect one Zotero item by key. This is read-only and returns metadata, PDF availability, collections, tags, and session status.",
+          "Inspect one Zotero item by key, read-only. Default full details return all stored bibliographic fields (DOI, URL, journal, volume, pages, abstract, Extra), creator roles, tag types, collection keys/ancestry, relations, dates, child-note metadata and attachment availability. A child key also returns its parent. Use detail=summary for compact existing summary. Note bodies and PDF content have dedicated readers. Does not add a session source or grant edit authority.",
         parameters: {
           type: "object",
           properties: {
             key: { type: "string", description: "Zotero item key or PDF attachment key" },
             library_id: { type: "integer", description: "Zotero library ID from search results; required when keys may be ambiguous across libraries" },
+            detail: { type: "string", enum: ["full", "summary"], default: "full" },
           },
           required: ["key"],
         },
@@ -385,6 +409,7 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
           type: "object",
           properties: {
             source_key: { type: "string", description: "Current session source key from list_sources" },
+            force: { type: "boolean", description: "Explicitly replace a stale conversion; default false reuses cached work." },
           },
           required: ["source_key"],
         },
@@ -446,7 +471,7 @@ export function getToolDefinitions(options?: ToolOptions): Tool[] {
     });
   }
 
-  return tools;
+  return [...tools, ...RESEARCH_TOOLS];
 }
 
 export async function executeTool(
@@ -511,7 +536,7 @@ export async function executeTool(
         result = await executeSearchZoteroAnnotations(args);
         break;
       case "get_zotero_item":
-        result = await executeGetZoteroItem(args, session);
+        result = await executeGetZoteroItem(args, session, context.signal);
         break;
       case "list_zotero_collections":
         result = await executeListZoteroCollections(args);
@@ -538,7 +563,7 @@ export async function executeTool(
         result = await executeWebFetch(args, context.signal);
         break;
       default:
-        result = `Unknown tool: ${name}`;
+        result = await executeResearchTool(name, args, context) ?? `Unknown tool: ${name}`;
     }
 
     const durationMs = Date.now() - startTime;
@@ -586,9 +611,15 @@ async function loadDocumentContent(
     }
   }
 
+  const manifest = await MDCache.readManifest(source.cacheKey, source.key);
+  const attachment = getItemByKey(source.key, source.libraryID);
+  if (manifest?.sourceDigest && attachment) {
+    const digest = await currentPdfDigest(attachment).catch(() => null);
+    if (digest && digest !== manifest.sourceDigest) return "Cached Markdown belongs to an older PDF revision. Use convert_session_source with force=true to replace it, or inspect current PDF text/pages.";
+  }
   return {
     markdown,
-    manifest: await MDCache.readManifest(source.cacheKey, source.key),
+    manifest,
     title: source.title,
   };
 }
@@ -640,7 +671,7 @@ async function executeListSources(context: ToolExecutionContext): Promise<string
     } else if (source.status === "error") {
       lines.push(`- error: ${source.errorMessage || "unknown error"}`);
     } else {
-      lines.push(`- note: document is not yet converted, cannot be read`);
+      lines.push(`- note: PDF text and page images can be read without conversion; converted Markdown requires conversion.`);
     }
     lines.push("");
   }
@@ -660,7 +691,7 @@ async function executeReadDocumentSafe(args: Record<string, unknown>, context: T
 
   const loaded = await loadDocumentContent(key, context);
   if (typeof loaded === "string") return loaded;
-  const { markdown, title } = loaded;
+  const { markdown, title, manifest } = loaded;
 
   const allLines = markdown.split("\n");
   const totalLines = allLines.length;
@@ -672,7 +703,11 @@ async function executeReadDocumentSafe(args: Record<string, unknown>, context: T
 
   const selectedLines = allLines.slice(start - 1, end);
   const content = selectedLines.join("\n");
-  const header = `Document: "${title}" (lines ${start}-${end} of ${totalLines})\n${"=".repeat(60)}\n`;
+  const src = context.session.getSource(key)!;
+  const attachment = getItemByKey(src.key, src.libraryID);
+  const locations = manifest?.chunks.filter(chunk => (chunk.lineEnd || 0) >= start && (chunk.lineStart || 1) <= end)
+    .map(chunk => `chunk ${chunk.index}, PDF pages ${chunk.startPage}-${chunk.endPage}; ${attachment ? pdfCitation(attachment, chunk.startPage) : ""}`).join("\n") || "Page mapping unavailable; cite the line range.";
+  const header = `Document: "${title}" [${src.id}] (lines ${start}-${end} of ${totalLines}; representation=converted-markdown; digest=${manifest?.sourceDigest || "unknown"})\n${locations}\n${"=".repeat(60)}\n`;
   const result = header + content;
 
   Zotero.debug(`[ChatPDF] read_document: returning ${result.length} chars`);
@@ -748,7 +783,9 @@ async function executeReadDocumentChunk(args: Record<string, unknown>, context: 
     content = markdown.split("\n").slice(chunk.lineStart - 1, chunk.lineEnd).join("\n");
   }
 
-  const header = `Document: "${title}" chunk ${chunk.index} (pages ${chunk.startPage}-${chunk.endPage})\n${"=".repeat(60)}\n`;
+  const src = context.session.getSource(key)!;
+  const attachment = getItemByKey(src.key, src.libraryID);
+  const header = `Document: "${title}" [${src.id}] chunk ${chunk.index} (PDF pages ${chunk.startPage}-${chunk.endPage}; digest=${manifest.sourceDigest || "unknown"})\nCitation: ${attachment ? pdfCitation(attachment, chunk.startPage) : "unavailable"}\n${"=".repeat(60)}\n`;
   return header + content;
 }
 
@@ -1054,13 +1091,16 @@ async function executeSearchZoteroAnnotations(args: Record<string, unknown>): Pr
   ].join("\n\n");
 }
 
-async function executeGetZoteroItem(args: Record<string, unknown>, session: ChatSession): Promise<string> {
+async function executeGetZoteroItem(args: Record<string, unknown>, session: ChatSession, signal?: AbortSignal): Promise<string> {
   const key = String(args.key || "").trim();
   if (!key) return "Error: key is required.";
   const libraryID = positiveIntegerOrUndefined(args.library_id);
   const item = getItemByKey(key, libraryID);
   if (!item) return `Error: Zotero item "${key}" was not found.`;
-  return formatZoteroItemSummary(summarizeZoteroItem(item), session);
+  if (args.detail === "summary") return formatZoteroItemSummary(summarizeZoteroItem(item), session);
+  if (args.detail !== undefined && args.detail !== "full") return "Error: detail must be full or summary.";
+  if (item.deleted || (item as any).isInTrash?.()) return "Error: Zotero item is in trash.";
+  return JSON.stringify({ ...await inspectZoteroItem(item, signal), session_status: sessionStatusForItem(summarizeZoteroItem(item), session) });
 }
 
 async function executeListZoteroCollections(args: Record<string, unknown>): Promise<string> {
@@ -1169,13 +1209,14 @@ async function executeConvertSessionSource(args: Record<string, unknown>, contex
   if (validationError) return validationError;
   const source = session.getSource(key);
   if (!source) return `Error: source "${key}" not found.`;
-  if (source.status === "ready") {
+  if (source.status === "ready" && args.force !== true) {
     return `Source "${source.title}" is already converted and ready.`;
   }
   if (source.status === "converting") {
     return `Source "${source.title}" is already converting.`;
   }
-  await convertSource(source, refreshOpenSourceChips, context.signal, undefined, session);
+  await convertSource(source, refreshOpenSourceChips, context.signal, undefined, session, false, args.force === true);
+  if (context.signal?.aborted) throw Object.assign(new Error("Conversion aborted"), { name: "AbortError" });
   refreshOpenSourceChips();
   const updated = session.getSource(key);
   if (updated?.status === "ready") {

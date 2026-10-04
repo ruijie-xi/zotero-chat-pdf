@@ -12,6 +12,12 @@ ChatPDF is developed primarily for personal use and is shared as-is. Zotero vers
 
 The source code is available for adaptation. You can use AI coding agents to help inspect errors and fine-tune ChatPDF for your own environment and workflow—for example, provider compatibility, interface behavior, conversion settings, or custom tools. Keep custom changes in version control, back up the cache, and test them with an isolated Zotero profile before using them with your daily library.
 
+## Agent capabilities update
+
+The agent can search local text in unconverted PDFs, read page text or visual evidence, inspect document availability, and wait for an existing conversion. Search responses report inspected coverage and continuation cursors; unextractable or unavailable files remain explicit.
+
+The chat window's library permission menu enables batch collection, subcollection, tag and bibliographic note changes, including deletion of empty collections. Moving all contents out and deleting the empty shell can share one batch; Undo restores the collection and memberships. Batch review is the default; reviews and completed receipts group readable changes with Undo. Child and standalone notes can be searched and read without PDF conversion. Source chips include a compact Process button and a right-click/More actions menu. The agent chooses tools and their order while the harness enforces scope, transactions and conflict detection. Stable system instructions/tool schemas and immutable provider history support context prefix reuse. See [Agent capabilities](docs/agent-capabilities.md).
+
 ## Features
 
 - Chat with one or more Zotero PDFs without leaving Zotero.

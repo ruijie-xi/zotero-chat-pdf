@@ -112,6 +112,7 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 | `modelProfiles` | string | `[]` |
 | `activeProfile` | string | `""` |
 | `agentMaxIterations` | number | `10` |
+| `agentLibraryEditMode` | string | `ask` (review each batch; optional selected/collection/library scope) |
 | `contextWindowTokens` | number | `0` (automatic) |
 | `inputTokenLimit` | number | `0` (automatic) |
 | `maxOutputTokens` | number | `0` (automatic) |

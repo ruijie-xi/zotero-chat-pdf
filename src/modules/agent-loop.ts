@@ -31,7 +31,8 @@ export interface AgentResult {
   totalIterations: number;
   usage?: TokenUsage;
 }
-export interface AgentExecutionContext { requestId: string; windowId: string; turnScope: Set<string>; }
+export interface AgentExecutionContext { requestId: string; windowId: string; turnScope: Set<string>;
+  libraryAccess?: ToolExecutionContext["libraryAccess"]; approveLibraryChanges?: ToolExecutionContext["approveLibraryChanges"]; }
 
 function abortError(message = "The request was cancelled."): Error {
   const error = new Error(message); error.name = "AbortError"; return error;
@@ -72,6 +73,7 @@ export async function runAgentLoop(
     session, signal, requestId: execution?.requestId || `request-${Date.now()}`,
     windowId: execution?.windowId || "unknown-window",
     turnScope: execution?.turnScope || new Set(session.getSources().map(source => source.id)),
+    libraryAccess: execution?.libraryAccess, approveLibraryChanges: execution?.approveLibraryChanges,
   };
   const check = () => {
     if (signal?.aborted) throw abortError();
@@ -191,9 +193,11 @@ export async function runAgentLoop(
         imageBytes += image.byteLength; imageSources.add(image.sourceId); images.push(image);
       } });
       const durationMs = Date.now() - started;
-      const source = typeof args.key === "string" ? session.getSource(args.key) : undefined;
       const original = tc.function.name === "read_tool_result" ? context.data.results.find(item => item.id === args.result_id) : undefined;
-      const sourceIds = original?.sourceIds ?? (source ? [source.id] : [...toolContext.turnScope]);
+      const scoped = ["read_document", "list_document_chunks", "read_document_chunk", "search_document", "list_images", "read_image", "read_pdf_text", "read_pdf_page", "get_document_status", "wait_for_conversion", "convert_session_source"].includes(tc.function.name);
+      const identifier = String(args.key || args.source_key || "");
+      const source = scoped && identifier ? session.getSource(identifier) : undefined;
+      const sourceIds = original?.sourceIds ?? (source ? [source.id] : tc.function.name === "list_sources" ? [...toolContext.turnScope] : []);
       const stored = context.storeResult(text, tc.function.name, sourceIds);
       stored.mutating = !getToolMetadata(tc.function.name).readOnly;
       if (retrievedRange) stored.parentRange = retrievedRange;

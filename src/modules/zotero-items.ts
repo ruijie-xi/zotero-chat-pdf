@@ -95,16 +95,18 @@ export function getItemByKey(key: string, libraryID?: number): Zotero.Item | nul
     } catch (e: any) {
       Zotero.debug(`[ChatPDF] getItemByKey: lookup failed for lib ${libraryID}: ${e.message}`);
     }
+    return null;
   }
+  const matches: Zotero.Item[] = [];
   for (const lib of Zotero.Libraries.getAll()) {
     try {
       const item = Zotero.Items.getByLibraryAndKey(lib.libraryID, normalizedKey);
-      if (item) return item;
+      if (item) matches.push(item);
     } catch {
       continue;
     }
   }
-  return null;
+  return matches.length === 1 ? matches[0] : null;
 }
 
 /** Return the deduplicated pane/reader selection across all open Zotero windows. */
@@ -394,7 +396,10 @@ export async function getAllCollections(): Promise<ZoteroCollectionSummary[]> {
   const collections: any[] = [];
   for (const lib of Zotero.Libraries.getAll()) {
     try {
-      const maybeCollections = (Zotero.Collections as any).getAll?.(lib.libraryID);
+      // getAll is not a collection enumeration API in Zotero. getByLibrary
+      // includes empty subcollections when recursive=true.
+      const maybeCollections = (Zotero.Collections as any).getByLibrary?.(lib.libraryID, true, false)
+        ?? (Zotero.Collections as any).getAll?.(lib.libraryID);
       const items = typeof maybeCollections?.then === "function" ? await maybeCollections : maybeCollections;
       if (Array.isArray(items)) collections.push(...items);
     } catch (e: any) {
@@ -402,7 +407,7 @@ export async function getAllCollections(): Promise<ZoteroCollectionSummary[]> {
     }
   }
 
-  const direct = uniqueByKey(collections, (collection) => `${collection.libraryID || ""}:${collection.key}`)
+  const direct = uniqueByKey(collections.filter(collection => !collection.deleted), (collection) => `${collection.libraryID || ""}:${collection.key}`)
     .map(summarizeCollection);
   if (direct.length > 0) return direct;
 

@@ -1,4 +1,6 @@
 import { MODEL_BUDGET_FIELDS } from "./model-profile";
+import { installCitationLinks } from "./source-citation";
+import { createLibraryAccessControl } from "./library-access-control";
 import { getProviderApiBase, normalizeProvider } from "./llm-provider";
 import { config } from "../../package.json";
 import { ChatSession, SourceItem } from "./chat-session";
@@ -13,6 +15,7 @@ import {
 } from "./panel-state";
 import { showFilteredHistory, showHistoryView, hideHistoryView } from "./history-view";
 import { refreshSourceChips, recoverSource } from "./source-chips";
+import { dismissSourceMenu } from "./source-chip-ui";
 import { renderChatHistory, updateUsageBar } from "./message-renderer";
 import { handleSend, handleConvertAndSend, autoSaveSession } from "./send-handler";
 import {
@@ -154,6 +157,7 @@ export function injectChatPanel(win: Window): void {
 
   const root = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
   root.id = "chatpdf-root";
+  installCitationLinks(root);
   root.dataset.chatpdfWindowId = state.windowId;
   vbox.appendChild(root);
 
@@ -319,6 +323,7 @@ export function injectChatPanel(win: Window): void {
   state.panelCleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
+    dismissSourceMenu(root);
     finishResize();
     win.removeEventListener("resize", onWindowResize);
     win.removeEventListener("blur", finishResize, true);
@@ -488,6 +493,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   toolbar.appendChild(imagePicker);
   toolbar.appendChild(profileSelect);
   inputArea.appendChild(toolbar);
+  inputArea.appendChild(createLibraryAccessControl(root));
 
   const inputWrapper = h(doc, "div", { className: "chatpdf-input-wrapper" });
 

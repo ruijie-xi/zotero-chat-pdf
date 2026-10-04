@@ -44,7 +44,9 @@ window.chatpdfRendererReady = (async () => {
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
       try {
-        rendering = page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "white" });
+        // Off-screen rasterization must not wait for animation frames in a
+        // hidden/minimized Zotero window. PDF.js print intent uses task scheduling.
+        rendering = page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "white", intent: "print" });
         await rendering.promise;
         const text = await page.getTextContent().catch(() => ({ items: [] }));
         return { page: pageNumber, dataUrl: canvas.toDataURL("image/jpeg", 0.85),
@@ -55,6 +57,15 @@ window.chatpdfRendererReady = (async () => {
         canvas.width = canvas.height = 0;
         page.cleanup();
       }
+    },
+    async text(pageNumber) {
+      const page = await pdf.getPage(pageNumber);
+      try {
+        const content = await page.getTextContent();
+        const labels = await pdf.getPageLabels();
+        return { page: pageNumber, pageLabel: labels?.[pageNumber - 1] || undefined,
+          text: content.items.map(item => (item.str || "") + (item.hasEOL ? "\n" : " ")).join("").trim() };
+      } finally { page.cleanup(); }
     },
     async close() {
       rendering?.cancel();

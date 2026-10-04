@@ -6,6 +6,10 @@ import { ToolCallRecord } from "./chat-session";
 import { getPanelState, StreamState } from "./panel-state";
 import { handleSend } from "./send-handler";
 import { openPdfForSourceKey } from "./zotero-items";
+import { applyLibraryChanges, listLibraryChanges } from "./library-changes";
+import { uiText } from "../utils/ui-text";
+import { renderLibraryPreview } from "./library-change-preview";
+import type { LibraryChangeSet } from "./library-changes";
 
 // Re-export for use by other modules
 export { refreshSourceChips } from "./source-chips";
@@ -56,14 +60,50 @@ export function createToolBlock(doc: Document, toolHistory: ToolCallRecord[], to
     const argsStr = JSON.stringify(tr.args);
     const nameRow = h(doc, "div", { className: "chatpdf-tool-name" }, `${i + 1}. ${tr.toolName}`);
     entry.appendChild(nameRow);
+    let receipt: any;
+    if (tr.toolName === "change_zotero_library") {
+      try {
+        const parsed = JSON.parse(tr.result.split("\n\n[Tool result metadata:")[0]);
+        if (parsed.change_id && Array.isArray(parsed.changes)) receipt = parsed;
+      } catch { /* Failed and legacy results retain their original display. */ }
+    }
+    const resultContainer = receipt ? h(doc, "details", { className: "chatpdf-library-technical-details" }) : entry;
+    if (receipt) {
+      const plan: LibraryChangeSet = { id: receipt.change_id, status: receipt.status, changes: receipt.changes.map((change: any) => {
+        const identity = { kind: change.kind, libraryID: change.library_id, key: change.key, title: change.title };
+        return { before: change.before ? { ...identity, data: change.before } : null, after: change.after ? { ...identity, data: change.after } : null };
+      }) };
+      entry.append(h(doc, "div", { className: "chatpdf-library-change-status" }, receipt.status === "applied" ? uiText("Changes applied", "修改已完成")
+        : receipt.status === "undone" ? uiText("Changes undone", "修改已撤销") : uiText("Change preview", "修改预览")), renderLibraryPreview(doc, plan, receipt.status === "undone"));
+      resultContainer.append(h(doc, "summary", {}, uiText("Technical details", "技术详情")));
+    }
     if (argsStr !== "{}") {
-      entry.appendChild(h(doc, "div", { className: "chatpdf-tool-args" }, argsStr));
+      resultContainer.appendChild(h(doc, "div", { className: "chatpdf-tool-args" }, argsStr));
     }
     if ((tr.contextDelivery === "omitted" || tr.contextDelivery === "paged") && tr.contextMessage) {
       entry.appendChild(h(doc, "div", { className: "chatpdf-tool-context-warning" }, tr.contextMessage));
     }
-    entry.appendChild(h(doc, "div", { className: "chatpdf-tool-result" }, tr.result));
+    resultContainer.appendChild(h(doc, "div", { className: "chatpdf-tool-result" }, tr.result));
+    if (receipt) entry.append(resultContainer);
     entry.appendChild(h(doc, "div", { className: "chatpdf-tool-duration" }, `${tr.durationMs}ms`));
+    if (tr.toolName === "change_zotero_library") {
+      try {
+        if (receipt?.status === "applied" && receipt.change_id) {
+          const undo = h(doc, "button", { className: "chatpdf-library-undo" }, uiText("Undo changes", "撤销修改")) as HTMLButtonElement;
+          undo.addEventListener("click", async event => {
+            if (!event.isTrusted) return;
+            undo.disabled = true;
+            try {
+              const plan = (await listLibraryChanges()).find(record => record.id === receipt.change_id);
+              if (!plan) throw new Error("Change receipt unavailable.");
+              await applyLibraryChanges(plan, { mode: "ask", items: [], collections: [] }, async () => true, undefined, true);
+              undo.textContent = uiText("Undone", "已撤销");
+            } catch (error: any) { undo.disabled = false; undo.title = error.message; undo.textContent = uiText("Undo conflict — inspect details", "撤销冲突，请查看详情"); }
+          });
+          entry.append(undo);
+        }
+      } catch { /* Older or failed tool results have no actionable receipt. */ }
+    }
     content.appendChild(entry);
   }
 

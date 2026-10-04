@@ -32,6 +32,7 @@ declare namespace _ZoteroTypes {
       "panelWidth": number;
       "agentMaxIterations": number;
       "agentAutoContinue": boolean;
+      "agentLibraryEditMode": string;
       "contextWindowTokens": number;
       "inputTokenLimit": number;
       "maxOutputTokens": number;
