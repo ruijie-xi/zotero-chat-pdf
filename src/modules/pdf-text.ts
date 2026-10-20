@@ -1,7 +1,7 @@
 import { atomicWriteJson, withStorageLock } from "../utils/atomic-storage";
 import { getCacheDir } from "../utils/cache-dir";
 import { openPdfRenderer, RenderedPdfPage } from "./pdf-renderer";
-import { throwIfConversionAborted } from "./pdf-conversion";
+import { throwIfAborted } from "../utils/abort";
 import { sourceCacheKey } from "./source-identity";
 import { getAllLibraryItems, getItemYear } from "./zotero-items";
 
@@ -11,39 +11,31 @@ export interface PdfTextRecord {
   pageCount: number; indexedPages: number; pages: TextPage[];
 }
 const cachePath = (item: Zotero.Item) => PathUtils.join(getCacheDir(), "pdf-text", `${sourceCacheKey(item)}.json`);
-const digestMemo = new Map<string, string>();
 
-export async function currentPdfDigest(item: Zotero.Item): Promise<string> {
-  const file = await localFile(item);
-  const id = `${item.libraryID}:${item.key}`;
-  const existing = digestMemo.get(`${id}:${file.stamp}`);
-  if (existing) return existing;
-  const bytes = await IOUtils.read(file.path);
-  const digest = Array.from(new Uint8Array(await Zotero.getMainWindow().crypto.subtle.digest("SHA-256", bytes)))
-    .map(byte => byte.toString(16).padStart(2, "0")).join("");
-  if ((await localFile(item)).stamp !== file.stamp) throw new Error("PDF changed while checking its revision. Retry.");
-  for (const key of digestMemo.keys()) if (key.startsWith(`${id}:`)) digestMemo.delete(key);
-  digestMemo.set(`${id}:${file.stamp}`, digest);
-  return digest;
-}
-
-export async function readPdfPage(item: Zotero.Item, page: number, signal?: AbortSignal): Promise<RenderedPdfPage> {
-  const path = PathUtils.join(getCacheDir(), "pdf-text", sourceCacheKey(item), `page-${page}.json`);
+export async function readPdfPage(item: Zotero.Item, page: number, signal?: AbortSignal, dpi = 300): Promise<RenderedPdfPage & { pageCount: number }> {
+  if (!Number.isSafeInteger(page) || page < 1) throw new Error("page must be a positive integer.");
+  if (!Number.isSafeInteger(dpi) || dpi < 72 || dpi > 300) throw new Error("dpi must be an integer between 72 and 300.");
+  const path = PathUtils.join(getCacheDir(), "pdf-pages", sourceCacheKey(item), `page-${page}-${dpi}.json`);
   return withStorageLock(path, async () => {
-    throwIfConversionAborted(signal);
+    throwIfAborted(signal);
     const file = await localFile(item);
     if (await IOUtils.exists(path)) {
       try {
         const cached = JSON.parse(new TextDecoder().decode(await IOUtils.read(path)));
-        if (cached.stamp === file.stamp) return cached.page;
-      } catch { /* Regenerate an incomplete page cache. */ }
+        throwIfAborted(signal);
+        if (cached.version === 1 && cached.stamp === file.stamp && cached.page?.page === page &&
+            cached.page.pageCount >= page && cached.page.width > 0 && cached.page.height > 0 &&
+            /^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/.test(cached.page.dataUrl)) return cached.page;
+      } catch { throwIfAborted(signal); /* Regenerate an incomplete page cache. */ }
     }
     const renderer = await openPdfRenderer(file.path, signal);
     try {
       if (page > renderer.pageCount) throw new Error("Page exceeds PDF page count.");
-      const rendered = await renderer.render(page, 150);
+      const rendered = { ...await renderer.render(page, dpi), pageCount: renderer.pageCount };
+      throwIfAborted(signal);
       if ((await localFile(item)).stamp !== file.stamp) throw new Error("PDF changed during page rendering. Retry.");
-      await atomicWriteJson(path, { stamp: file.stamp, page: rendered });
+      await atomicWriteJson(path, { version: 1, stamp: file.stamp, page: rendered });
+      throwIfAborted(signal);
       return rendered;
     } finally { await renderer.close(); }
   });
@@ -80,40 +72,60 @@ async function zoteroIndex(item: Zotero.Item, file: { path: string; stamp: strin
 /** Local-only extraction. Page reads require page-mapped text; discovery may reuse Zotero's flat index. */
 export async function readPdfText(item: Zotero.Item, signal?: AbortSignal, requirePages = false): Promise<PdfTextRecord> {
   return withStorageLock(cachePath(item), async () => {
-    throwIfConversionAborted(signal);
+    throwIfAborted(signal);
     const file = await localFile(item);
     const existing = await savedText(item, file.stamp);
+    throwIfAborted(signal);
     if (existing && (!requirePages || existing.origin === "pdfjs")) return existing;
     if (!requirePages) {
       const index = await zoteroIndex(item, file).catch(() => null);
-      if (index) { await atomicWriteJson(cachePath(item), index); return index; }
+      throwIfAborted(signal);
+      if (index) {
+        await atomicWriteJson(cachePath(item), index);
+        throwIfAborted(signal);
+        return index;
+      }
     }
     const bytes = await IOUtils.read(file.path);
+    throwIfAborted(signal);
     const digest = Array.from(new Uint8Array(await Zotero.getMainWindow().crypto.subtle.digest("SHA-256", bytes)))
       .map(byte => byte.toString(16).padStart(2, "0")).join("");
     const renderer = await openPdfRenderer(file.path, signal, bytes);
     try {
       const pages: TextPage[] = [];
       for (let page = 1; page <= renderer.pageCount; page++) {
-        throwIfConversionAborted(signal);
+        throwIfAborted(signal);
         pages.push(await renderer.text(page));
       }
       if ((await localFile(item)).stamp !== file.stamp) throw new Error("PDF changed during text extraction. Retry against the updated file.");
       const record: PdfTextRecord = { version: 1, stamp: file.stamp, digest, origin: "pdfjs",
         pageCount: renderer.pageCount, indexedPages: pages.length, pages };
+      throwIfAborted(signal);
       await atomicWriteJson(cachePath(item), record);
+      throwIfAborted(signal);
       return record;
     } finally { await renderer.close(); }
   });
+}
+
+function textCoverage(record: PdfTextRecord) {
+  const empty = record.pages.filter(page => !page.text.trim());
+  return {
+    state: empty.length === record.pages.length ? "no-extractable-text" : empty.length ? "partial-text" : "complete",
+    origin: record.origin, page_count: record.pageCount, indexed_pages: record.indexedPages,
+    page_locations: record.origin === "pdfjs",
+    pages_without_text: record.origin === "pdfjs" ? empty.map(page => page.page) : null,
+  };
 }
 
 export async function pdfTextStatus(item: Zotero.Item): Promise<Record<string, unknown>> {
   try {
     const file = await localFile(item);
     const record = await savedText(item, file.stamp);
-    if (record) return { state: record.pages.some(page => page.text.trim()) ? "indexed" : "no-extractable-text",
-      origin: record.origin, page_count: record.pageCount, indexed_pages: record.indexedPages,
-      page_locations: record.origin === "pdfjs", digest: record.digest };
+    if (record) {
+      const coverage = textCoverage(record);
+      return { ...coverage, state: coverage.state === "complete" ? "indexed" : coverage.state, digest: record.digest };
+    }
     const stats = await (Zotero as any).Fulltext?.getPages?.(item.id);
     return { state: stats?.indexedPages ? "zotero-index-available" : "not-indexed",
       indexed_pages: stats?.indexedPages || 0, page_count: stats?.total || null, page_locations: false };
@@ -176,7 +188,7 @@ export async function searchPdfText(options: PdfSearchOptions, signal?: AbortSig
   let doc = cursor.document, match = cursor.match;
   let resumeStamp: string | undefined;
   while (doc < candidates.length && coverage.length < perCall && hits.length < pageSize) {
-    throwIfConversionAborted(signal);
+    throwIfAborted(signal);
     const item = candidates[doc];
     const id = `${item.libraryID}:${item.key}`;
     if (match > 0 && cursor.stamp !== contextFingerprint((await localFile(item)).stamp)) throw new Error("Search cursor expired after a PDF change. Restart without cursor.");
@@ -188,19 +200,19 @@ export async function searchPdfText(options: PdfSearchOptions, signal?: AbortSig
         title: String((item.parentItem || item).getField("title") || "Untitled"), pdf_page: page.page,
         page_label: page.pageLabel || null, origin: record.origin, revision: resumeStamp, digest: record.digest, ...hit,
       })));
-      coverage.push({ source_id: id, page_count: record.pageCount, indexed_pages: record.indexedPages,
-        matches: all.length, state: record.pages.some(page => page.text.trim()) ? "complete" : "no-extractable-text" });
+      coverage.push({ source_id: id, ...textCoverage(record), matches: all.length });
       while (match < all.length && hits.length < pageSize) hits.push(all[match++]);
       if (match < all.length) break;
     } catch (error: any) {
       if (error.name === "AbortError") throw error;
-      throwIfConversionAborted(signal);
+      throwIfAborted(signal);
       coverage.push({ source_id: id, state: "unavailable", error: error.message });
     }
     doc++; match = 0;
   }
+  throwIfAborted(signal);
   return { representation: "pdf-text-search", query: options.query, total_documents: candidates.length,
     page_size: pageSize, documents_per_call: perCall, snippet_chars: snippet, hits, coverage,
     next_cursor: doc < candidates.length ? JSON.stringify({ fingerprint, document: doc, match, stamp: match > 0 ? resumeStamp : undefined }) : null,
-    note: "Only the reported documents were inspected. Null PDF pages mean Zotero's flat index has no page mapping. Text extraction may lose formulas and layout; page images and converted Markdown are available separately." };
+    note: "Only the reported documents were inspected. Null PDF pages mean Zotero's flat index has no page mapping or per-page text coverage; use read_pdf_text to locate pages. pages_without_text lists pages with no extractable text, not necessarily blank pages. Text extraction may lose formulas and layout. Inspect original pages with read_pdf_page for substantive reading. Scanned pages without text require visual reading or an externally supplied OCR text layer." };
 }

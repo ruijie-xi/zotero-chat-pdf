@@ -2,7 +2,7 @@ import { contextFingerprint } from "./agent-context";
 import { sanitizeHtml } from "./markdown-renderer";
 import { getItemByKey } from "./zotero-items";
 import { textMatches } from "./pdf-text";
-import { throwIfConversionAborted } from "./pdf-conversion";
+import { throwIfAborted } from "../utils/abort";
 
 const cache = new Map<string, { revision: string; text: string }>();
 export function noteText(html: string): string {
@@ -29,7 +29,7 @@ export async function readZoteroNotes(args: Record<string, unknown>, signal?: Ab
   if (!["text", "html"].includes(format)) throw new Error("format must be text or html.");
   const result = [];
   for (const note of notes) {
-    throwIfConversionAborted(signal);
+    throwIfAborted(signal);
     const record = await read(note), content = format === "html" ? record.html : record.text;
     const lines = content.split("\n");
     const start = args.start_line === undefined ? 1 : Number(args.start_line), end = args.end_line === undefined ? lines.length : Number(args.end_line);
@@ -60,7 +60,7 @@ export async function searchZoteroNotes(args: Record<string, unknown>, signal?: 
   const candidates: Zotero.Item[] = [];
   for (const lib of Zotero.Libraries.getAll()) {
     if (libraryID !== undefined && lib.libraryID !== libraryID) continue;
-    throwIfConversionAborted(signal);
+    throwIfAborted(signal);
     const items = await Zotero.Items.getAll(lib.libraryID, false, false);
     for (const note of items) {
       if (!note.isNote() || note.deleted || (note as any).isInTrash?.()) continue;
@@ -79,7 +79,7 @@ export async function searchZoteroNotes(args: Record<string, unknown>, signal?: 
     || !Number.isSafeInteger(cursor.match) || cursor.match < 0) throw new Error("Search cursor expired or invalid. Restart without cursor.");
   const hits = [], coverage = []; let index = cursor.index, match = cursor.match, revision: string | undefined;
   while (index < candidates.length && coverage.length < perCall && hits.length < pageSize) {
-    throwIfConversionAborted(signal);
+    throwIfAborted(signal);
     const note = candidates[index], record = await read(note); revision = record.revision;
     if (match > 0 && cursor.revision !== revision) throw new Error("Search cursor expired after a note change. Restart without cursor.");
     const matches = textMatches(record.text, query, snippet);

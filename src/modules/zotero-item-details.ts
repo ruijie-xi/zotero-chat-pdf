@@ -1,5 +1,5 @@
 import { getItemCollections } from "./zotero-items";
-import { throwIfConversionAborted } from "./pdf-conversion";
+import { throwIfAborted } from "../utils/abort";
 
 async function metadata(item: Zotero.Item) {
   await item.loadAllData();
@@ -25,7 +25,7 @@ function collectionPath(libraryID: number, key: string) {
 
 /** Full public item metadata is fetched on demand, independent of PDF TurnScope. */
 export async function inspectZoteroItem(item: Zotero.Item, signal?: AbortSignal) {
-  throwIfConversionAborted(signal);
+  throwIfAborted(signal);
   const requested = await metadata(item);
   const parent = item.isRegularItem() ? null : item.parentItem;
   const parentData = parent ? await metadata(parent) : null;
@@ -34,18 +34,18 @@ export async function inspectZoteroItem(item: Zotero.Item, signal?: AbortSignal)
   const notes = [], attachments = [];
   if (paper) {
     for (const id of paper.getNotes()) {
-      throwIfConversionAborted(signal);
+      throwIfAborted(signal);
       const child = Zotero.Items.get(id);
       if (child && !child.deleted) notes.push({ ...await metadata(child), title: child.getNoteTitle() });
     }
     for (const id of paper.getAttachments()) {
-      throwIfConversionAborted(signal);
+      throwIfAborted(signal);
       const child = Zotero.Items.get(id);
       if (child && !child.deleted) attachments.push({ ...await metadata(child), is_pdf: child.isPDFAttachment(),
         local_file_available: child.isFileAttachment() ? await child.fileExists() : null });
     }
   }
-  throwIfConversionAborted(signal);
+  throwIfAborted(signal);
   notes.sort((a, b) => String(a.key).localeCompare(String(b.key)));
   attachments.sort((a, b) => String(a.key).localeCompare(String(b.key)));
   return { representation: "zotero-item-details", item: requested, parent_item: parentData,

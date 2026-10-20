@@ -8,6 +8,8 @@ export interface ModelBudgetSettings {
   requestedOutputTokens?: number;
   tokenizerMode?: string;
   imageTokenReserve?: number;
+  /** auto reads endpoint metadata; enabled is an explicit user confirmation. */
+  visionSupport?: string;
 }
 
 export interface ModelProfile extends ModelBudgetSettings {

@@ -2,8 +2,9 @@ import { atomicWriteJson, withStorageLock } from "../utils/atomic-storage";
 import { getCacheDir } from "../utils/cache-dir";
 import { getPref } from "../utils/prefs";
 import { renderMarkdown } from "./markdown-renderer";
-import { throwIfConversionAborted } from "./pdf-conversion";
+import { throwIfAborted } from "../utils/abort";
 import { contextFingerprint } from "./agent-context";
+import { isToolEnabled } from "./tool-settings";
 
 export type LibraryEditMode = "ask" | "readonly" | "selected" | "collection" | "library";
 export interface LibraryAccess { mode: LibraryEditMode; libraryID?: number; items: string[]; collections: string[]; }
@@ -287,7 +288,7 @@ async function refreshCollectionTrees(): Promise<void> {
 /** All authorization comes from the UI/captured access; tool arguments cannot grant permission. */
 export async function applyLibraryChanges(plan: LibraryChangeSet, access: LibraryAccess,
   approve?: (plan: LibraryChangeSet, undo?: boolean) => Promise<boolean>, signal?: AbortSignal, undo = false): Promise<LibraryChangeSet> {
-  throwIfConversionAborted(signal);
+  throwIfAborted(signal);
   if (!plan.changes.length) return { ...plan, status: undo ? "undone" : "applied" };
   const previous = (await journal()).find(record => record.id === plan.id);
   if (!undo && previous?.status === "applied" || undo && previous?.status === "undone") return previous!;
@@ -299,10 +300,11 @@ export async function applyLibraryChanges(plan: LibraryChangeSet, access: Librar
     approved = true;
   }
   const checkPermission = () => {
+    if (!isToolEnabled("change_zotero_library")) throw new Error("The library changes tool was disabled.");
     const mode = getPref("agentLibraryEditMode") || "ask";
     if (mode === "readonly" || !approved && mode !== access.mode) throw new Error("Library edit permission changed or was revoked. Review a new request.");
   };
-  throwIfConversionAborted(signal);
+  throwIfAborted(signal);
   return withStorageLock(journalPath(), async () => {
     const records = await journal();
     const existing = records.find(record => record.id === plan.id);
@@ -325,7 +327,7 @@ export async function applyLibraryChanges(plan: LibraryChangeSet, access: Librar
     let committed = false;
     try {
       await Zotero.DB.executeTransaction(async () => {
-        throwIfConversionAborted(signal);
+        throwIfAborted(signal);
         checkPermission();
         for (const change of plan.changes) {
           editable(targetOf(change).libraryID);
@@ -333,7 +335,7 @@ export async function applyLibraryChanges(plan: LibraryChangeSet, access: Librar
         }
         const ordered = orderedChanges(plan.changes);
         for (const change of undo ? ordered.reverse() : ordered) {
-          throwIfConversionAborted(signal);
+          throwIfAborted(signal);
           await writeSnapshot(undo ? change.before : change.after, targetOf(change));
         }
       });

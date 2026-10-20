@@ -67,9 +67,20 @@ describe("model capability resolution", () => {
     const fetch = vi.fn(async () => ({ ok: false }));
     vi.stubGlobal("fetch", fetch);
     await expect(resolveModelCapabilities(settings)).rejects.toThrow("token limits");
-    const manual = await resolveModelCapabilities({ ...settings, contextWindowTokens: 32768, maxOutputTokens: 4096 });
+    const manual = await resolveModelCapabilities({ ...settings, contextWindowTokens: 32768, maxOutputTokens: 4096, visionSupport: "enabled" });
     expect(manual).toMatchObject({ contextWindow: 32768, maxOutput: 4096, generation: { outputTokens: 4096 }, source: "manual" });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("still discovers vision support when token limits are entered manually", async () => {
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({
+      data: [{ id: settings.model, input_modalities: ["text", "image"] }],
+    }) }));
+    vi.stubGlobal("fetch", fetch);
+    const capabilities = await resolveModelCapabilities({
+      ...settings, contextWindowTokens: 32768, maxOutputTokens: 4096, visionSupport: "auto",
+    });
+    expect(capabilities.supportsVision).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
   });
   it("requires an explicit approximate tokenizer for unknown models", async () => {
     const custom = { ...settings, apiBase: "https://example.com/v1", model: "custom", inputTokenLimit: 4096, maxOutputTokens: 1024 };

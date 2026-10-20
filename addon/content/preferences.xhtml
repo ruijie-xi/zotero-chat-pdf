@@ -38,6 +38,17 @@
   </hbox>
 
   <hbox align="center">
+    <html:label for="zotero-prefpane-__addonRef__-visionSupport" data-l10n-id="pref-vision-inputs"/>
+    <menulist id="zotero-prefpane-__addonRef__-visionSupport" preference="visionSupport" native="true">
+      <menupopup>
+        <menuitem value="auto" data-l10n-id="pref-vision-inputs-auto"/>
+        <menuitem value="enabled" data-l10n-id="pref-vision-inputs-confirmed"/>
+        <menuitem value="disabled" data-l10n-id="pref-vision-inputs-disabled"/>
+      </menupopup>
+    </menulist>
+  </hbox>
+  <description data-l10n-id="pref-vision-inputs-hint"/>
+  <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmThinkingMode" data-l10n-id="pref-llm-thinking-mode"></html:label>
     <menulist id="zotero-prefpane-__addonRef__-llmThinkingMode" preference="llmThinkingMode" native="true" style="width: 130px;">
       <menupopup>
@@ -89,49 +100,6 @@
     <html:p id="zotero-prefpane-__addonRef__-modelRoleStatus" class="chatpdf-preference-summary"/>
   </html:section>
   <html:section class="chatpdf-preference-section">
-    <html:h3 data-l10n-id="pref-section-pdf"/>
-    <hbox align="center">
-    <html:label data-l10n-id="pref-pdf-engine"/>
-    <menulist id="zotero-prefpane-__addonRef__-pdfConversionEngine" preference="pdfConversionEngine" native="true">
-      <menupopup><menuitem value="vision" data-l10n-id="pref-pdf-engine-vision"/><menuitem value="mineru" data-l10n-id="pref-pdf-engine-mineru"/></menupopup>
-    </menulist>
-  </hbox>
-    <html:div id="zotero-prefpane-__addonRef__-visionSettings">
-      <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-profile"/><html:input type="hidden" id="zotero-prefpane-__addonRef__-pdfVisionProfile" preference="pdfVisionProfile"/><menulist id="zotero-prefpane-__addonRef__-pdfVisionProfiles" native="true"><menupopup/></menulist></hbox>
-  <html:p data-l10n-id="pref-pdf-vision-hint" style="font-size: 11px;"/>
-
-
-
-
-
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-self-check"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionSelfCheck" preference="pdfVisionSelfCheck"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-stream"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionStream" preference="pdfVisionStream"/></hbox>
-  <description data-l10n-id="pref-pdf-vision-stream-hint"/>
-  <html:p data-l10n-id="pref-pdf-vision-self-check-hint" style="font-size: 11px;"/>
-      <html:details class="chatpdf-preference-advanced"><html:summary data-l10n-id="pref-vision-advanced"/>
-          <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-pages"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionChunkPages" preference="pdfVisionChunkPages" min="1" max="10" style="width: 80px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-concurrency"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionConcurrency" preference="pdfVisionConcurrency" min="1" max="4" style="width: 80px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-dpi"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionDpi" preference="pdfVisionDpi" min="72" max="300" style="width: 80px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-images"/><html:input type="checkbox" id="zotero-prefpane-__addonRef__-pdfVisionCachePageImages" preference="pdfVisionCachePageImages"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-pdf-vision-timeout"/><html:input type="number" id="zotero-prefpane-__addonRef__-pdfVisionTimeoutSeconds" preference="pdfVisionTimeoutSeconds" min="30" max="1800" style="width: 80px;"/></hbox>
-      </html:details>
-    </html:div>
-    <html:div id="zotero-prefpane-__addonRef__-mineruSettings" hidden="hidden"><hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-mineruToken" data-l10n-id="pref-mineru-token"></html:label>
-    <html:input type="password" id="zotero-prefpane-__addonRef__-mineruToken" preference="mineruToken" style="flex: 1;" />
-  </hbox>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-mineruLanguage" data-l10n-id="pref-mineru-language"></html:label>
-    <html:input type="text" id="zotero-prefpane-__addonRef__-mineruLanguage" preference="mineruLanguage" style="width: 100px;" placeholder="ch" />
-  </hbox>
-
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-mineruTimeoutMinutes" data-l10n-id="pref-mineru-timeout"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-mineruTimeoutMinutes" preference="mineruTimeoutMinutes" style="width: 80px;" min="1" max="120" />
-  </hbox></html:div>
-  </html:section>
-  <html:section class="chatpdf-preference-section">
     <html:h3 data-l10n-id="pref-section-behavior"/>
     <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-agentMaxIterations" data-l10n-id="pref-agent-max-iterations"></html:label>
@@ -142,11 +110,11 @@
     <html:label for="zotero-prefpane-__addonRef__-agentAutoContinue" data-l10n-id="pref-agent-auto-continue"></html:label>
     <html:input type="checkbox" id="zotero-prefpane-__addonRef__-agentAutoContinue" preference="agentAutoContinue" />
   </hbox>
-    <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-enableWebTools" data-l10n-id="pref-enable-web-tools"></html:label>
-    <html:span style="flex: 1;" />
-    <html:input type="checkbox" id="zotero-prefpane-__addonRef__-enableWebTools" preference="enableWebTools" />
-  </hbox>
+  <html:details class="chatpdf-preference-advanced">
+    <html:summary data-l10n-id="pref-tool-switches"/>
+    <html:p data-l10n-id="pref-tool-switches-help"/>
+    <html:div id="zotero-prefpane-__addonRef__-toolSwitches"/>
+  </html:details>
 
 
   <description data-l10n-id="pref-library-edit-hint"/>

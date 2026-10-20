@@ -79,7 +79,7 @@ describe("image sources", () => {
     expect(session.getSources()).toHaveLength(0);
   });
 
-  it("imports a Zotero image without MinerU and preserves library identity", async () => {
+  it("imports a Zotero image without a conversion service and preserves library identity", async () => {
     files.set("/zotero/image.png", png);
     const attachment = { key: "IMAGE", libraryID: 4, parentItem: { key: "PAPER" },
       isAttachment: () => true, attachmentContentType: "image/png", getField: () => "Figure", getFilePathAsync: async () => "/zotero/image.png" };
@@ -89,16 +89,17 @@ describe("image sources", () => {
     expect(session.getSource("4:IMAGE")).toMatchObject({ kind: "image", parentKey: "PAPER", status: "ready" });
   });
 
-  it("lists nested PDF figures and blocks links outside its cache", async () => {
-    const session = new ChatSession();
-    const source = session.addSource("PDF", "Paper", undefined, 2);
-    files.set("/cache/documents/2-PDF/assets/chunk-1/images/fig.png", png);
-    files.set("/cache/documents/2-PDF/document.md", new Uint8Array([1]));
-    expect(await listSourceImages(source)).toEqual(["assets/chunk-1/images/fig.png"]);
-    expect((await readSourceImage(source, "assets/chunk-1/images/fig.png")).byteLength).toBe(png.length);
-    links.add("/cache/documents/2-PDF/assets/chunk-1");
+  it("routes PDFs to original page reading and does not expose retired extracted figures", async () => {
+    const session = new ChatSession(), source = session.addSource("PDF", "Paper", undefined, 2);
+    files.set("/cache/documents/2-PDF/assets/fig.png", png);
     expect(await listSourceImages(source)).toEqual([]);
-    await expect(readSourceImage(source, "assets/chunk-1/images/fig.png")).rejects.toThrow("Linked");
+    await expect(readSourceImage(source, "assets/fig.png")).rejects.toThrow("read_pdf_page");
+    expect(IOUtils.read).not.toHaveBeenCalled();
+  });
+  it("rejects linked standalone image cache directories", async () => {
+    const session = new ChatSession(), source = await importImage(session, png, "Image", { key: "IMAGE", libraryID: 1 });
+    links.add("/cache/documents/1-IMAGE");
+    await expect(readSourceImage(source)).rejects.toThrow("Linked");
   });
 
   it("enforces TurnScope before touching image bytes and handles missing files", async () => {
@@ -146,7 +147,7 @@ describe("agent visual delivery", () => {
         expect(messages.slice(-3).map(m => m.role)).toEqual(["tool", "tool", "user"]);
         const parts = messages.at(-1)!.content as llm.VisionContent;
         expect(parts[0]).toMatchObject({ type: "text", text: expect.stringContaining(source.id) });
-        expect(parts[1]).toMatchObject({ type: "image_url", image_url: { url: expect.stringContaining("data:image/png;base64,"), detail: "auto" } });
+        expect(parts[1]).toMatchObject({ type: "image_url", image_url: { url: expect.stringContaining("data:image/png;base64,"), detail: "high" } });
         const body = llm.buildChatCompletionBody({ model: "vision", thinkingMode: "default", thinkEffort: "default" }, messages, { stream: true });
         expect(JSON.stringify(body)).toContain("image_url");
         return { content: "I can inspect the figure." };

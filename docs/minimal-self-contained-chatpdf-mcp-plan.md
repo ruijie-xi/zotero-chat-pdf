@@ -1,3 +1,5 @@
+> Historical record, superseded by [Shared tools](shared-tools.md) and [Direct PDF reading](direct-pdf-reading.md). The old 18-tool/2-tool split, direct MCP cache reads, read-only-only MCP boundary, protocol v1 and conversion-specific instructions below are no longer current requirements. Historical acceptance results do not validate the new shared tool channel.
+
 # Function-Preserving ChatPDF and Zotero MCP Simplification Plan
 
 Date: 2026-07-27

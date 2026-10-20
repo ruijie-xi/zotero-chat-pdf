@@ -29,16 +29,15 @@ export function formatMsgTime(timestamp: number): string {
 /** Format a tool call name + args into a human-readable status string. */
 export function formatToolStatus(name: string, args: Record<string, unknown>, session: import("../modules/chat-session").ChatSession): string {
   if (name === "list_sources") return "Listing sources...";
-  if (name === "read_document") {
+  if (name === "read_pdf_page" || name === "read_pdf_text") {
     const key = args.key as string | undefined;
     const src = key ? session.getSource(key) : undefined;
     const title = src?.title || key || "document";
-    if (args.start_line) {
-      return `Reading "${title}" (lines ${args.start_line}\u2013${args.end_line || "end"})`;
-    }
+    if (name === "read_pdf_page") return `Reading "${title}" (page ${args.page})`;
+    if (args.start_page) return `Locating text in "${title}" (pages ${args.start_page}\u2013${args.end_page || "end"})`;
     return `Reading "${title}"`;
   }
-  if (name === "web_search") return `Searching: "${args.query}"`;
+  if (name === "web_search" || name === "search_pdf_text") return `Searching: "${args.query}"`;
   if (name === "web_fetch") return `Fetching ${args.url}`;
   return `Calling ${name}...`;
 }

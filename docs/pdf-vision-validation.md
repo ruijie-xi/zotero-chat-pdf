@@ -1,4 +1,12 @@
+> Historical record. The PDF-to-Markdown pipeline has been removed. For the current implementation, see [Direct PDF reading](direct-pdf-reading.md). Conversion-specific instructions below no longer apply.
+
 # PDF vision conversion validation
+
+Current policy (2026-10-06): prompt v4 removes automatic OCR text, symbol, accent and KaTeX rejection and the mandatory structured self-check footer. The model is asked to review before returning final Markdown. Rendering defaults to 300 DPI, JPEG quality 95 and high image detail; explicit saved DPI preferences remain effective. The entries below document earlier versions and their historical gates.
+
+The v4 implementation passed TypeScript, ESLint and all 355 tests in 53 files. The production XPI build passed after redirecting the build tool's notifier cache into the ignored workspace; its initial default cache path was outside the sandbox. The test suite covers accepting low text coverage, alpha-to-Latin-a substitutions, invalid math and missing or malformed legacy self-check JSON without extra content retries, while retaining page-mapping, truncation, cancellation and checkpoint-integrity checks.
+
+An isolated native Zotero run used a local mock API and separate profile/data/cache directories, with no daily-profile credentials. Both pages rendered at 2550 by 3301 pixels using the 300 DPI default (PDF.js rounds the canvas dimensions upward), with high image detail. One request returned incorrect symbols and invalid math without a self-check footer; both pages were saved and committed without further requests. The source badge and inspector reported that model review was requested, and the disposable renderer was cleaned up. Evidence is under ignored `.scaffold/ocr-policy-smoke/result.json`. This verifies native behavior, not a real provider's OCR accuracy. The package has not been installed in the daily Zotero profile.
 
 Validation date: 2026-10-03. The production package is `.scaffold/build/chat-pdf.xpi`. The pipeline validation used isolated profiles; the subsequent user-authorized daily-profile installation is recorded below. No release was published.
 

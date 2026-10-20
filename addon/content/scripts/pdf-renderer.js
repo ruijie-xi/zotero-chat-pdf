@@ -26,9 +26,9 @@ window.chatpdfRendererReady = (async () => {
         cMapUrl: `${base}web/cmaps/`, cMapPacked: true,
         standardFontDataUrl: `${base}web/standard_fonts/`,
         wasmUrl: `${base}web/wasm/`, isEvalSupported: false });
-      // Password prompts belong to the reader, not a background conversion.
+      // Password prompts belong to the reader, not background page access.
       const protectedDocument = new Promise((_resolve, reject) => {
-        task.onPassword = () => reject(new Error("Password-protected PDFs must be unlocked before conversion"));
+        task.onPassword = () => reject(new Error("Password-protected PDFs must be unlocked before reading"));
       });
       pdf = await Promise.race([task.promise, protectedDocument]);
       return pdf.numPages;
@@ -48,9 +48,8 @@ window.chatpdfRendererReady = (async () => {
         // hidden/minimized Zotero window. PDF.js print intent uses task scheduling.
         rendering = page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "white", intent: "print" });
         await rendering.promise;
-        const text = await page.getTextContent().catch(() => ({ items: [] }));
-        return { page: pageNumber, dataUrl: canvas.toDataURL("image/jpeg", 0.85),
-          text: text.items.map(item => item.str || "").join(" "),
+        return { page: pageNumber, dataUrl: canvas.toDataURL("image/jpeg", 0.95),
+          text: "",
           width: canvas.width, height: canvas.height, effectiveDpi: dpi * factor };
       } finally {
         rendering = null;

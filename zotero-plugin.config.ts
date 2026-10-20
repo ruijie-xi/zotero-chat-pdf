@@ -1,5 +1,6 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
+import { writeSourceSnapshot } from "./scripts/build-source-snapshot.mjs";
 
 export default defineConfig({
   source: ["src", "addon"],
@@ -12,6 +13,7 @@ export default defineConfig({
   updateURL: pkg.config.updateURL,
 
   build: {
+    hooks: { "build:bundle": writeSourceSnapshot },
     assets: ["addon/**/*.*"],
     define: {
       ...pkg.config,

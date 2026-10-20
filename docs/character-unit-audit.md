@@ -1,3 +1,5 @@
+> Historical record. The PDF-to-Markdown pipeline has been removed. For the current implementation, see [Direct PDF reading](direct-pdf-reading.md). Conversion-specific instructions below no longer apply.
+
 # Character-unit audit and model-aware context requirements
 
 Audited on 2026-09-28 against commit `f93b4a5f036424b78b34065b6129f69fa811b6dc` (version 0.9.0). This report changes no runtime behavior.

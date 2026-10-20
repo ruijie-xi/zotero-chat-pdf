@@ -11,7 +11,7 @@ const model = vi.mocked(chatWithTools);
 let preferences: Record<string, unknown>;
 beforeEach(() => {
   clearModelCapabilityCache(); model.mockReset();
-  preferences = { llmThinkingMode: "enabled", llmThinkEffort: "max" };
+  preferences = { llmThinkingMode: "enabled", llmThinkEffort: "max", visionSupport: "enabled" };
   vi.mocked(Zotero.Prefs.get).mockImplementation(key => preferences[String(key).split(".").at(-1)!] as never);
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ id: "deepseek-flash", context_window: 1048576, max_output_tokens: 393216 }] }) })));
 });

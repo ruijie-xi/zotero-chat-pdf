@@ -1,5 +1,4 @@
 import { ChatSession } from "./chat-session";
-import * as MDCache from "./md-cache";
 import { importImage, readImageFile } from "./image-input";
 
 export function isImageAttachment(item: Zotero.Item): boolean {
@@ -302,7 +301,7 @@ export async function addZoteroItemToSession(item: Zotero.Item, session: ChatSes
     const source = await importImage(session, await readImageFile(path), String(pdf.getField("title") || getItemTitle(item)), {
       key: pdf.key, libraryID: pdf.libraryID, parentKey: pdf.parentItem?.key,
     });
-    return { sourceKey: source.id, message: `Added image "${source.title}" [${source.id}]. Use read_image; no conversion is needed.` };
+    return { sourceKey: source.id, message: `Added image "${source.title}" [${source.id}]. Use read_image.` };
   }
 
   const key = pdf.key;
@@ -314,16 +313,11 @@ export async function addZoteroItemToSession(item: Zotero.Item, session: ChatSes
   const existing = session.getSource(key, libraryID);
   const source = session.addSource(key, title, parentKey, libraryID);
 
-  if (await MDCache.has(source.cacheKey, key)) {
-    const md = await MDCache.read(source.cacheKey, key);
-    session.setSourceReady(source.id, md);
-  }
-
   return {
     sourceKey: source.id,
     message: existing
-      ? `Already in this chat session: "${source.title}" (source key: ${key}, status: ${source.status}).`
-      : `Added to this chat session: "${source.title}" (source key: ${key}, status: ${source.status}).`,
+      ? `Already in this chat session: "${source.title}" (source key: ${source.id}). Use read_pdf_page for visual reading.`
+      : `Added to this chat session: "${source.title}" (source key: ${source.id}). Use read_pdf_page for visual reading.`,
   };
 }
 

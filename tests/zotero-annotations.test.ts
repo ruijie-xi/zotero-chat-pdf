@@ -121,7 +121,7 @@ describe("Zotero annotation agent tool", () => {
   });
 
   it("registers a read-only tool whose query is optional", () => {
-    const definition = getToolDefinitions({ enableWebTools: false })
+    const definition = getToolDefinitions()
       .find((tool) => tool.function.name === "search_zotero_annotations");
 
     expect(definition).toBeDefined();

@@ -57,6 +57,27 @@ describe("local PDF text and page evidence", () => {
     files.delete("/paper.pdf");
     expect((await searchPdfText({ query: "energy" })).coverage).toMatchObject([{ state: "unavailable" }]);
   });
+  it("reports missing text per page and keeps flat-index coverage explicitly unknown", async () => {
+    expect((await searchPdfText({ query: "energy" })).coverage).toMatchObject([
+      { state: "partial-text", pages_without_text: [3], page_locations: true },
+    ]);
+    modified = 2;
+    files.set("/index", new TextEncoder().encode("Indexed energy"));
+    Object.assign(Zotero, { Fulltext: { isFullyIndexed: async () => true, getItemCacheFile: () => ({ path: "/index" }), getPages: async () => ({ indexedPages: 3, total: 3 }) } });
+    expect((await searchPdfText({ query: "energy" })).coverage).toMatchObject([
+      { origin: "zotero-index", pages_without_text: null, page_locations: false },
+    ]);
+  });
+  it("does not deliver a cached text record after cancellation during cache I/O", async () => {
+    await readPdfText(item);
+    const controller = new AbortController();
+    vi.mocked(IOUtils.read).mockImplementationOnce(async (path: string) => {
+      controller.abort();
+      return files.get(path)!;
+    });
+    await expect(readPdfText(item, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(openPdfRenderer).toHaveBeenCalledOnce();
+  });
   it("closes the renderer and never commits incomplete extraction on cancellation", async () => {
     const controller = new AbortController();
     renderer.text.mockImplementationOnce(async () => { controller.abort(); return { page: 1, text: "partial", pageLabel: "11" }; });
@@ -73,6 +94,25 @@ describe("local PDF text and page evidence", () => {
     expect(textMatches("energy and energy", "energy", 100)).toHaveLength(1);
     await expect(searchPdfText({ query: "energy", page_size: 0 })).rejects.toThrow("positive");
     await expect(searchPdfText({ query: "energy", cursor: '{"document":0}' })).rejects.toThrow("cursor");
+  });
+  it("keys cached pages by resolution and validates ranges before rendering", async () => {
+    await readPdfPage(item, 1, undefined, 150);
+    const high = await readPdfPage(item, 1, undefined, 300);
+    expect(high.pageCount).toBe(3);
+    expect(renderer.render.mock.calls).toEqual([[1, 150], [1, 300]]);
+    await expect(readPdfPage(item, 0)).rejects.toThrow("positive integer");
+    await expect(readPdfPage(item, 1, undefined, 301)).rejects.toThrow("72 and 300");
+    await expect(readPdfPage(item, 4)).rejects.toThrow("page count");
+  });
+  it("never saves or delivers a page when rendering was cancelled", async () => {
+    const controller = new AbortController();
+    renderer.render.mockImplementationOnce(async () => {
+      controller.abort();
+      return { page: 1, dataUrl: "data:image/jpeg;base64,AA==", text: "", width: 1, height: 1, effectiveDpi: 300 };
+    });
+    await expect(readPdfPage(item, 1, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(IOUtils.write).not.toHaveBeenCalled();
+    expect(renderer.close).toHaveBeenCalledOnce();
   });
   it("expires a partial-document cursor when the PDF changes without a metadata update", async () => {
     const first = await searchPdfText({ query: "energy", page_size: 1 });

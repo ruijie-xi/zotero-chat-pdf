@@ -2,7 +2,9 @@
 
 ## Project Summary
 
-ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI-compatible LLM APIs. A vision model (default) or MinerU converts PDFs to Markdown, the plugin caches results locally, and an agent accesses documents and the Zotero library through tools.
+ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI-compatible LLM APIs. A vision-capable chat model reads original PDF page images on demand. Local PDF.js text extraction supports search and navigation. There is no PDF-to-Markdown pipeline or OCR service dependency.
+
+Current scope excludes OCR and a dedicated scanned-document workflow. Keep the findings in `docs/local-ocr-options.md` as deferred research, not an implementation task or dependency. See `docs/project-status.md` for the working-tree status and the external Zotero MCP compatibility boundary.
 
 - GitHub: `ruijie-xi/zotero-chat-pdf`
 - Add-on ID: `chatpdf@zotero-plugin`
@@ -45,19 +47,19 @@ Core modules:
 - `src/modules/send-handler.ts`: TurnScope resolution, send lifecycle, streaming UI, terminal states, autosave, and titles.
 - `src/modules/agent-loop.ts`: LLM/tool iterations, scheduling, callbacks, and accumulated usage.
 - `src/modules/llm-client.ts`: OpenAI-compatible requests, SSE parsing, tool-call accumulation, and provider thinking fields.
-- `src/modules/tools.ts`: tool definitions, risk metadata, validation, and dispatch.
+- `src/modules/tool-registry.ts`: the sole tool schemas, order and risk metadata for native chat and MCP.
+- `src/modules/tool-settings.ts`: individual tool switches, default all enabled.
+- `src/modules/tools.ts`: shared validation, authorization and execution.
+- `src/modules/tool-channel.ts`: isolated MCP sessions, image/result delivery and cancellation.
 - `src/modules/safe-web-client.ts`: public HTTP(S), DNS/redirect validation, timeout, MIME, and response limits.
 - `src/modules/chat-session.ts`: session sources, per-turn source scope, messages, prompt construction, and serialization.
 - `src/modules/chat-history.ts`: atomic session/index persistence, recovery, and deletion tombstones.
 - `src/modules/source-identity.ts`: `libraryID:key` source identity and cache keys.
-- `src/modules/source-chips.ts`: source UI adapter for the shared conversion manager.
-- `src/modules/conversion-manager.ts`: owner-aware deduplication, history/recovery, v3 manifests, and cache commits.
-- `src/modules/chatpdf-bridge.ts`: one exact-protocol loopback endpoint for live selection and conversion control.
+- `src/modules/source-chips.ts`: stable source controls for direct PDF/image reading.
+- `src/modules/chatpdf-bridge.ts`: protocol 2 loopback transport for the shared tool channel.
+- `src/modules/pdf-text.ts`: revision-aware local text search and on-demand page image caches.
+- `src/modules/vision-support.ts`: explicit image-input capability requirements.
 - `src/modules/pdf-renderer.ts`: Zotero PDF.js page rasterization in a disposable XUL browser.
-- `src/modules/vision-client.ts`: model requests, page coverage and KaTeX validation, splitting, bounded retries, cancellation, and page assets.
-- `src/modules/pdf-conversion.ts`: shared chunk planning/merging and cache-contract checks.
-- `src/modules/mineru-client.ts`: upload, polling, ZIP download/extraction, chunking, and stage diagnostics.
-- `src/modules/md-cache.ts`: atomic Markdown/chunk/manifest cache.
 - `src/modules/markdown-renderer.ts`: Markdown/KaTeX to sanitized XHTML-safe HTML.
 - `src/modules/debug-log.ts`: metadata/off/full logging and retention.
 
@@ -67,6 +69,7 @@ See `docs/llm-workflow.md` for details.
 
 Chat is agent-only. `handleSend()` builds provider messages before adding the current user message, so the current message is not duplicated.
 
+- Native chat and external MCP use the same registry and executor. Never add MCP-only schemas or duplicate document/library logic. `disabledTools` filters discovery and is checked again at execution; existing library edit permissions remain enforced. See `docs/shared-tools.md`.
 - One `ToolExecutionContext` carries session, TurnScope, abort signal, request ID, and window ID through a send.
 - Read-only tools may run concurrently. If a batch contains a mutating tool, execute the whole batch serially in model order.
 - Abort errors must terminate the turn; do not convert them into ordinary model-visible tool errors.
@@ -80,7 +83,7 @@ Chat is agent-only. `handleSend()` builds provider messages before adding the cu
 - Editor source mentions define TurnScope. With no mentions, the turn uses all session sources.
 - Message source snapshots are historical display data, not session restoration authority.
 - Document tools must enforce TurnScope.
-- Removing a source must abort any conversion owned by that window.
+- Removing a source must cancel its active turn and revoke delivery of pending page/image reads.
 - Failed and cancelled assistant turns are persisted terminal states.
 - Clear must persist an empty session; deletion must not be undone by late background saves.
 
@@ -90,20 +93,9 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 
 | Key | Type | Default |
 | --- | --- | --- |
-| `pdfConversionEngine` | string | `vision` |
-| `pdfVisionProfile` | string | `""` (current chat profile) |
-| `pdfVisionChunkPages` | number | `4` |
-| `pdfVisionConcurrency` | number | `2` |
-| `pdfVisionDpi` | number | `150` |
-| `pdfVisionCachePageImages` | boolean | `true` |
-| `pdfVisionTimeoutSeconds` | number | `180` |
-| `pdfVisionSelfCheck` | boolean | `true` (same-response model self-check) |
-| `pdfVisionStream` | boolean | `true` (live drafts from the original response) |
-| `mineruToken` | string | `""` |
-| `mineruLanguage` | string | `ch` |
-| `mineruTimeoutMinutes` | number | `15` |
 | `llmApiBase` | string | `https://api.deepseek.com/v1` |
 | `llmApiKey` | string | `""` |
+| `visionSupport` | string | `auto` (endpoint metadata; `enabled` requires user confirmation) |
 | `llmModel` | string | `deepseek-flash` |
 | `llmThinkingMode` | string | `default` |
 | `llmThinkEffort` | string | `default` |
@@ -120,7 +112,7 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 | `imageTokenReserve` | number | `0` (automatic) |
 | `tokenizerMode` | string | `auto` |
 | `modelCapabilitiesRevision` | number | `0` (internal refresh revision) |
-| `enableWebTools` | boolean | `false` |
+| `disabledTools` | string | `[]` (JSON array of disabled names; all tools enabled by default) |
 | `braveSearchApiKey` | string | `""` |
 | `debugLogMode` | string | `metadata` |
 | `debugLogRetentionDays` | number | `7` |

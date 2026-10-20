@@ -9,7 +9,7 @@ const initial: ContextMessage[] = [{ role: "system", content: "policy" }, { role
 describe("durable transcript and working context", () => {
   it("compacts only the working view and retrieves original evidence exactly", () => {
     const context = AgentContext.create(initial, "model", 1);
-    const stored = context.storeResult("0123456789", "read_document", ["1:A"]);
+    const stored = context.storeResult("0123456789", "read_pdf_text", ["1:A"]);
     context.append({ role: "tool", content: stored.content, resultId: stored.id });
     const before = JSON.stringify(context.data.events);
     context.compact("progress and next steps", initial[1]);
@@ -23,7 +23,7 @@ describe("durable transcript and working context", () => {
 
   it("deduplicates result bodies on disk and rehydrates exact message bytes", () => {
     const context = AgentContext.create(initial, "model", 1);
-    const result = context.storeResult("unique-evidence", "read_document", []);
+    const result = context.storeResult("unique-evidence", "read_pdf_text", []);
     context.append({ role: "tool", content: result.content, resultId: result.id, tool_call_id: "call-1" });
     const saved = context.toJSON();
     expect(JSON.stringify(saved).match(/unique-evidence/g)).toHaveLength(1);
@@ -43,11 +43,11 @@ describe("durable transcript and working context", () => {
     const first = session.buildAgentMessages("first");
     session.addUserMessage("first");
     const context = session.getAgentContext()!;
-    context.append({ role: "assistant", content: "looking", tool_calls: [{ id: "unique-id", type: "function", function: { name: "read_document", arguments: '{ "key" : "A" }' } }] });
-    const result = context.storeResult("raw evidence", "read_document", []);
+    context.append({ role: "assistant", content: "looking", tool_calls: [{ id: "unique-id", type: "function", function: { name: "read_pdf_text", arguments: '{ "key" : "A" }' } }] });
+    const result = context.storeResult("raw evidence", "read_pdf_text", []);
     context.append({ role: "tool", content: result.content, tool_call_id: "unique-id", resultId: result.id });
     context.append({ role: "assistant", content: "done" });
-    session.addAssistantMessage("done", undefined, undefined, [{ toolCalls: [{ toolName: "read_document", args: { key: "A" }, result: result.content, resultId: result.id, durationMs: 1 }] }]);
+    session.addAssistantMessage("done", undefined, undefined, [{ toolCalls: [{ toolName: "read_pdf_text", args: { key: "A" }, result: result.content, resultId: result.id, durationMs: 1 }] }]);
     const prefix = context.messages;
     expect(prefix.slice(0, first.length)).toEqual(first);
     const saved = session.toSavedSession();
@@ -92,7 +92,7 @@ describe("durable transcript and working context", () => {
     const session = new ChatSession();
     const source = session.addSource("A", "A", undefined, 1);
     session.buildAgentMessages("read");
-    const result = session.getAgentContext()!.storeResult("secret evidence", "read_document", [source.id]);
+    const result = session.getAgentContext()!.storeResult("secret evidence", "read_pdf_text", [source.id]);
     const context = { session, requestId: "test", windowId: "window", turnScope: new Set([source.id]) };
     expect(await executeTool("read_tool_result", { result_id: result.id, max_chars: 6 }, context)).toContain("next_start=6");
     session.removeSource(source.id);
@@ -108,7 +108,7 @@ describe("durable transcript and working context", () => {
 
   it("keeps unread result IDs outside the generated summary and merges exact coverage", () => {
     const context = AgentContext.create(initial, "model", 1);
-    const result = context.storeResult("0123456789", "read_document", []);
+    const result = context.storeResult("0123456789", "read_pdf_text", []);
     const page = context.storeResult("01234", "read_tool_result", []);
     page.parentRange = { id: result.id, start: 0, end: 5 };
     context.markDelivered(page.id);

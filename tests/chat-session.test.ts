@@ -24,9 +24,9 @@ describe("ChatSession source and persistence semantics", () => {
   it("persists stable source metadata", () => {
     const session = new ChatSession();
     const source = session.addSource("A", "Paper", "PARENT", 4);
-    session.setSourceReady(source.id, "markdown");
+    expect(source.status).toBe("ready");
     const saved = session.toSavedSession();
-    expect(saved.schemaVersion).toBe(4);
+    expect(saved.schemaVersion).toBe(5);
     expect(saved.sources?.[0]).toMatchObject({ id: "4:A", key: "A", libraryID: 4, status: "ready" });
   });
 
@@ -60,7 +60,7 @@ describe("ChatSession source and persistence semantics", () => {
   it("does not replay full historical tool results into a later request", () => {
     const session = new ChatSession();
     const huge = "x".repeat(50_000);
-    session.addAssistantMessage("answer", undefined, undefined, [{ toolCalls: [{ toolName: "read_document", args: { key: "A" }, result: huge, durationMs: 1 }] }]);
+    session.addAssistantMessage("answer", undefined, undefined, [{ toolCalls: [{ toolName: "read_pdf_text", args: { key: "A" }, result: huge, durationMs: 1 }] }]);
     const messages = session.buildAgentMessages("next");
     const combined = messages.map((message) => message.content).join("\n");
     expect(combined).toContain("50000 characters returned");
@@ -70,7 +70,7 @@ describe("ChatSession source and persistence semantics", () => {
   it("keeps the system prefix stable and stores turn scope with the user message", () => {
     const session = new ChatSession();
     const source = session.addSource("A", "Paper A", undefined, 1);
-    session.setSourceReady(source.id, "markdown");
+    expect(source.status).toBe("ready");
     const scope = new Set([source.id]);
 
     const first = session.buildAgentMessages("first question", scope);

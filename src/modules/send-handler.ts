@@ -16,7 +16,7 @@ import {
   setSendButtonToStop, setSendButtonToSend,
 } from "./panel-state";
 import { appendMessage, createToolBlock, updateUsageBar, renderChatHistory, appendUsageMeta } from "./message-renderer";
-import { refreshSourceChips, convertSource } from "./source-chips";
+import { refreshSourceChips } from "./source-chips";
 import { captureLibraryAccess } from "./library-changes";
 import { requestLibraryApproval } from "./library-approval";
 
@@ -119,32 +119,6 @@ async function generateTitle(targetSession: import("./chat-session").ChatSession
   }
 }
 
-/** Convert all pending sources then send -- triggered by Ctrl+Enter. */
-export async function handleConvertAndSend(root: HTMLElement): Promise<void> {
-  const state = getPanelState(root);
-  const { session } = state;
-  const pendingSources = session.getSources().filter(s => s.status === "pending");
-  if (pendingSources.length === 0) {
-    handleSend(root);
-    return;
-  }
-
-  const sendBtn = root.querySelector("#chatpdf-send") as HTMLButtonElement;
-  state.chatInput?.setEditable(false);
-  if (sendBtn) sendBtn.disabled = true;
-
-  try {
-    await Promise.all(
-      pendingSources.map(s => convertSource(s, () => refreshSourceChips(root), undefined, state).catch(() => {}))
-    );
-  } finally {
-    state.chatInput?.setEditable(true);
-    if (sendBtn) sendBtn.disabled = false;
-  }
-
-  handleSend(root);
-}
-
 /** Main send handler -- builds messages, calls LLM, renders streaming response. */
 export async function handleSend(root: HTMLElement): Promise<void> {
   const state = getPanelState(root);
@@ -199,6 +173,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
   let agentIterations: IterationRecord[] | undefined;
   let agentUsage: TokenUsage | undefined;
   let cleanupStreamingUI = () => {};
+  let renderFailure: ((text: string) => void) | undefined;
 
   try {
     Zotero.debug("[ChatPDF] handleSend: building messages...");
@@ -241,6 +216,9 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       thinkingDots.remove();
       segments.update(text);
     }
+    renderFailure = errorText => {
+      if (isActiveSession()) setBubbleHtml([fullText, errorText].filter(Boolean).join("\n\n"));
+    };
 
     // Agent mode is the only supported chat path.
       const tools = getToolDefinitions();
@@ -567,8 +545,11 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     } else {
       const errorText = `Error: ${err.message || "Unknown error"}`;
       if (state.session === streamSession) {
-        appendMessage(root, "assistant", errorText);
+        if (renderFailure) renderFailure(errorText);
+        else appendMessage(root, "assistant", errorText);
       }
+      // The final cleanup must retain the terminal error rendered in this bubble.
+      cleanupStreamingUI = () => {};
       streamState.usage = undefined;
       streamSession.addAssistantMessage([fullText, errorText].filter(Boolean).join("\n\n"), fullReasoning || undefined, undefined, agentIterations, agentUsage, "error", err.message);
       if (state.session === streamSession) updateUsageBar(root, streamSession.getTokenUsage());

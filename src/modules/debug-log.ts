@@ -1,7 +1,7 @@
 import { getCacheDir, ensureDir } from "../utils/cache-dir";
 import { getPref } from "../utils/prefs";
 import { atomicWriteJson } from "../utils/atomic-storage";
-import { ProviderMessage } from "./llm-client";
+import type { ProviderMessage } from "./llm-client";
 import type { ChatResult } from "./llm-client";
 import type { ContextBudget } from "./context-budget";
 
@@ -88,5 +88,20 @@ export async function logGenerationResult(kind: "agent" | "compact" | "title", m
     });
   } catch (error: any) {
     Zotero.debug(`[ChatPDF] Failed to write generation metadata: ${error.message}`);
+  }
+}
+
+/** Transport diagnostics deliberately omit headers, credentials, URLs and response text. */
+export async function logLLMTransportFailure(details: {
+  endpoint: string; model: string; attempt: number; phase: "connect" | "response"; receivedData: boolean; retry: boolean;
+}): Promise<void> {
+  if (mode() === "off") return;
+  try {
+    await prepareLogDir();
+    await atomicWriteJson(PathUtils.join(getLogDir(), `res-transport-${timestamp()}.json`), {
+      timestamp: new Date().toISOString(), mode: "metadata", kind: "transport", ...details,
+    });
+  } catch (error: any) {
+    Zotero.debug(`[ChatPDF] Failed to write transport metadata: ${error.message}`);
   }
 }

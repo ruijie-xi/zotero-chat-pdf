@@ -7,22 +7,11 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
-      "pdfConversionEngine": string;
-      "pdfVisionProfile": string;
-      "pdfVisionChunkPages": number;
-      "pdfVisionConcurrency": number;
-      "pdfVisionDpi": number;
-      "pdfVisionCachePageImages": boolean;
-      "pdfVisionTimeoutSeconds": number;
-      "pdfVisionSelfCheck": boolean;
-      "pdfVisionStream": boolean;
-      "mineruToken": string;
-      "mineruLanguage": string;
-      "mineruTimeoutMinutes": number;
       "llmProvider": string;
       "llmApiBase": string;
       "llmApiKey": string;
       "llmModel": string;
+      "visionSupport": string;
       "llmThinkingMode": string;
       "llmThinkEffort": string;
       "cacheDir": string;
@@ -40,7 +29,7 @@ declare namespace _ZoteroTypes {
       "imageTokenReserve": number;
       "tokenizerMode": string;
       "modelCapabilitiesRevision": number;
-      "enableWebTools": boolean;
+      "disabledTools": string;
       "braveSearchApiKey": string;
       "debugLogMode": string;
       "debugLogRetentionDays": number;

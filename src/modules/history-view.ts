@@ -1,14 +1,12 @@
 import { h } from "../utils/dom";
 import { formatRelativeDate } from "../utils/format";
 import * as ChatHistory from "./chat-history";
-import * as MDCache from "./md-cache";
 import { ChatSession } from "./chat-session";
 import {
   getPanelState, resetStreamingUI, setSendButtonToStop,
 } from "./panel-state";
 import { renderChatHistory, refreshSourceChips, renderLiveStreamState, updateUsageBar } from "./message-renderer";
 import { autoSaveSession } from "./send-handler";
-import { recoverSource } from "./source-chips";
 import { filterHistory } from "./history-search";
 import { uiText } from "../utils/ui-text";
 
@@ -233,17 +231,6 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
           if (sb) setSendButtonToStop(sb);
           state.chatInput?.setEditable(false);
         }
-        // Reload markdown for sources from cache
-        const currentSession = state.session;
-        for (const source of currentSession.getSources()) {
-          if (source.kind === "image") continue;
-          if (!source.markdown) {
-      if (await MDCache.has(source.cacheKey, source.key)) {
-        const md = await MDCache.read(source.cacheKey, source.key);
-        currentSession.setSourceReady(source.id, md);
-            }
-          }
-        }
         hideHistoryView(root);
         // Re-render messages
         const msgs = root.querySelector("#chatpdf-messages");
@@ -251,7 +238,6 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
         renderChatHistory(root);
         refreshSourceChips(root);
 
-        for (const source of currentSession.getSources()) recoverSource(source, root, currentSession);
 
         // If there's an active background stream, render its current state
         if (bgStream && msgs) {

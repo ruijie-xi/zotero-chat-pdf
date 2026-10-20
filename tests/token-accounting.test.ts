@@ -55,7 +55,7 @@ describe("local token accounting", () => {
   });
   it("pages exact Unicode evidence and records only the actual delivered range", () => {
     const memory = AgentContext.create([{ role: "system", content: "policy" }], "model", 0);
-    const original = memory.storeResult("😀中文".repeat(50), "read_document", ["1:A"]);
+    const original = memory.storeResult("😀中文".repeat(50), "read_pdf_text", ["1:A"]);
     const allowed = new Set(["1:A"]);
     let start = 0;
     let reconstructed = "";

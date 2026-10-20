@@ -10,7 +10,7 @@ ChatPDF runs in Zotero's privileged Firefox chrome context, not Node.js.
 - Local I/O uses `IOUtils` and `PathUtils`.
 - Network calls use the runtime `fetch` implementation and Zotero-specific fallbacks already present in the code.
 - Runtime modules must not assume Node globals or packages are available.
-- PDF conversion defaults to a configured vision-capable LLM; MinerU remains an optional independent service.
+- A vision-capable chat model reads original PDF pages; PDF.js text extraction is local and used for retrieval.
 
 ## Main Components
 
@@ -28,28 +28,27 @@ Go's public `/models` response currently omits token capacities. For the exact s
 | `send-handler.ts` | Turn scoping, send lifecycle, streaming UI, terminal states, autosave, and title generation |
 | `agent-loop.ts` | LLM/tool iterations, safe tool scheduling, callbacks, and usage accumulation |
 | `llm-client.ts` | OpenAI-compatible request construction, SSE parsing, tool fragments, and provider thinking fields |
-| `tools.ts` | Tool schemas, risk metadata, validation, dispatch, and result accounting |
-| `research-tools.ts` | Stable PDF discovery/evidence and library-edit tool schemas and dispatch |
+| `llm-transport.ts` | Bounded recovery before response data, cancellation, and transport failure diagnostics |
+| `tool-registry.ts` / `tool-settings.ts` | One ordered schema catalog and individual enable/disable switches, shared with MCP |
+| `tools.ts` / `tool-validation.ts` | Shared validation, authorization, dispatch and result accounting |
+| `research-tools.ts` | PDF discovery/evidence and library-edit dispatch |
 | `pdf-text.ts` | Local PDF text/page caches, index reuse, revision-aware search and continuation |
 | `library-changes.ts` | Captured edit scope, transaction preflight, durable receipts and conflict-safe undo |
 | `library-approval.ts` | Trusted batch review of concrete changes or reversals |
 | `source-citation.ts` | Library-qualified PDF page links and native reader routing |
 | `safe-web-client.ts` | Public HTTP(S) validation, redirect checks, timeout, MIME, and streamed byte limits |
-| `chat-session.ts` | Session library, TurnScope messages, prompt construction, history, and schema-v2 serialization |
+| `chat-session.ts` | Session library, TurnScope messages, prompt construction, history, and schema-v5 serialization |
 | `chat-history.ts` | Atomic session/index repository, index recovery, and deletion tombstones |
 | `source-identity.ts` | Stable library-qualified source IDs and cache keys |
-| `source-chips.ts` | Source UI, user-owned conversion lifecycle, stop, removal, and lazy cache loading |
-| `conversion-manager.ts` | Shared owner-aware jobs, conversion history, cancellation, restart recovery, and cache commits |
-| `chatpdf-bridge.ts` | One exact-protocol loopback endpoint for selection and conversion control |
+| `source-chips.ts` | Stable source UI, opening, removal and cancellation |
+| `chatpdf-bridge.ts` / `tool-channel.ts` | Protocol 2 tool transport, isolated external sessions, images, result memory and cancellation |
 | `pdf-renderer.ts` | Private Zotero PDF.js realm, page rasterization, bounded initialization and disposal |
-| `vision-client.ts` | Vision requests, batching, cancellation, retries, per-page coverage and formula syntax gates |
-| `vision-self-check.ts` | Same-response structured local edits, strict edit validation and checkpoint self-check records |
-| `vision-conversion-config.ts` | Separate saved conversion profile, validated parameters and credential-free job settings |
-| `pdf-conversion.ts` | Shared chunk planning, merge markers and cache-contract validation |
-| `mineru-client.ts` | PDF chunk planning, upload, polling, ZIP download/extraction, progress, and stage errors |
-| `md-cache.ts` | Legacy reads plus private staging, atomic document replacement, and startup swap repair |
 | `markdown-renderer.ts` | Markdown/KaTeX rendering, XHTML conversion, and DOM allowlist sanitization |
 | `debug-log.ts` | Metadata/off/full debug logging and retention cleanup |
+
+## Transport Recovery
+
+Chat completion transport failures before any model data are retried at most twice, after one and two seconds, using the same request body, generation settings and conversation ID. HTTP rejections and unrelated errors are not retried. Once any SSE JSON data has arrived (including reasoning or tool fragments), a network failure terminates the request and preserves partial output instead of replaying it. Cancellation interrupts retry waits and response reads. Metadata logs record the endpoint host, model, attempt, connection/response phase and retry decision without headers or conversation text. Failed turns display their error in the existing assistant bubble and remain persisted terminal states.
 
 ## Source Model
 
@@ -59,14 +58,14 @@ Every source has a stable ID:
 <libraryID>:<attachmentKey>
 ```
 
-Legacy bare attachment keys are accepted only when they resolve uniquely. Cache directories use a filesystem-safe derivative of the stable ID. Old root-level and bare-key caches remain readable.
+Legacy bare attachment keys are accepted only when they resolve uniquely. Cache directories use a filesystem-safe derivative of the stable ID. Standalone image cache paths remain compatible; obsolete converted document caches are not read.
 
 There are two distinct source sets:
 
 - **SessionLibrary**: all sources currently attached to the chat session.
 - **TurnScope**: the sources authorized for one user turn.
 
-The editor returns both visible text and mention IDs. If the user includes source mentions, those IDs become the TurnScope. If no mentions are present, TurnScope defaults to the full SessionLibrary. Pending or converting sources do not block sending: raw text, page images, status and conversion waiting remain independently available within TurnScope.
+The editor returns both visible text and mention IDs. If the user includes source mentions, those IDs become the TurnScope. If no mentions are present, TurnScope defaults to the full SessionLibrary. New sources are ready for direct reading. The agent can inspect availability and request text or page images within TurnScope.
 
 The user message persists a source snapshot for historical display. Reloading a session restores SessionLibrary from the serialized session source list, never from the last message snapshot.
 
@@ -99,9 +98,11 @@ prior user/assistant history
 current TurnScope metadata + user message
 ```
 
-Converted PDFs are not embedded into the system prompt. The model reads them through tools.
+PDFs are not embedded into the system prompt. The model requests original pages through tools.
 
-The system prompt describes capabilities; the agent chooses its tools and order. Volatile source metadata, conversion states and edit access appear only in the current user's immutable scope block. Tool definitions keep fixed schemas and order across permission changes. Between compactions, complete provider exchanges remain unchanged and new messages append to the same working context, including across follow-up turns and compatible session restores. Legacy sessions without exact replay metadata are reconstructed once from visible messages and tool provenance.
+Installed plugin source is also loaded on demand through `list_plugin_source`, `search_plugin_source` and `read_plugin_source`. A build hook packages an allowlisted, versioned source snapshot at `content/source-snapshot.json`; tools expose only its exact entries, with build identity, file hashes, line ranges and explicit search pagination. This local read-only capability is independent of document and edit scope. The debugging instructions require distinguishing source-based hypotheses from reproduced failures and verified repairs; no arbitrary file reader or code modification tool is provided.
+
+The stable system prompt requires original page images for substantive paper reading, with text extraction reserved for retrieval and navigation. There is no transcription stage. Scope and library edit authority appear in the current user message; tool definitions remain stable. Compatible follow-up turns append immutable exchanges; incompatible old tool schemas trigger reconstruction while preserving the visible transcript.
 
 Model limits are resolved for the exact endpoint, account and model: explicit profile token overrides take precedence over endpoint `/models` metadata. Metadata is cached for 24 hours in memory and can be refreshed from Preferences. Limits are frozen for each turn. Unknown capacity requires explicit token settings; old character-limit preferences are ignored.
 
@@ -109,7 +110,7 @@ Model capacity, generation policy, and input planning are separate. `generation-
 
 For a shared window C, resolved generation allowance O, optional input limit I, and safety margin M, the input budget is `min(I, C - O) - M`. The safety margin is 2% of the model window (at least 128 tokens). Separate input/output limits are handled independently. Input pressure never silently shrinks O: compact completed exchanges or deliver paged tool results; if an indivisible exchange cannot fit, preserve history and report the capacity conflict. Automatic compaction starts at 80% of this input budget, or earlier if the checkpoint instruction would not fit. A checkpoint must reduce context and leave the result below 55% of the input budget. Titles and checkpoints retain the selected thinking policy and generation allowance; their short visible-text targets are separate. A truncated title is not committed. The usage bar and Preferences distinguish generation allowance from actual consumption and model maximum.
 
-The bundled official DeepSeek V4 BPE vocabulary runs locally in pure JavaScript. The request counter includes message envelopes, tools, arguments and replay fields; complete-field memoization never changes provider bytes. Request totals are explicitly labeled estimates because server templates are not public. Provider prompt usage calibrates the estimate upward for the same turn; cached input still occupies context. Unsupported models require explicitly selecting the approximate tokenizer mode. Official DeepSeek V4 images reserve the documented 1,024-token upper bound per image; other models require an explicit reserve. Image base64 size is never treated as model tokens. Document/source size badges and exact retrieval cursors still use characters.
+The bundled official DeepSeek V4 BPE vocabulary runs locally in pure JavaScript. The request counter includes message envelopes, tools, arguments and replay fields; complete-field memoization never changes provider bytes. Request totals are explicitly labeled estimates because server templates are not public. Provider prompt usage calibrates the estimate upward for the same turn; cached input still occupies context. Unsupported models require explicitly selecting the approximate tokenizer mode. Official DeepSeek V4 images reserve the documented 1,024-token upper bound per image; other models require an explicit reserve. Image base64 size is never treated as model tokens. Exact text retrieval cursors still use characters.
 
 
 Compaction uses the same model, system prompt, and ordered tool definitions, appending a task-independent checkpoint instruction. Its tools are never dispatched. Generated memory preserves objectives, constraints, outcomes, pending work, evidence references, and uncertainty. Program-maintained unread-result ranges and operation receipts survive independently of summary wording. After compaction, a new stable prefix is built; the first resumed request may miss cache. Recent complete exchanges may remain verbatim when they fit the retained-context target; provider-signed/reasoning replay is not moved across a changed prefix. All tool bodies remain recoverable from the result archive.
@@ -118,7 +119,7 @@ A checkpoint response ending with `finish_reason: length` is retried with the ex
 
 Results too large for immediate delivery are stored completely and represented by an explicit result ID. `read_tool_result` returns exact, zero-based, end-exclusive character pages and the next cursor; page size adapts to working capacity. It checks both current session membership and TurnScope. No fixed 80,000-character result limit or cumulative reading quota remains. Full result bodies are stored once in `agentContext.results`; UI iteration history and exact provider events are hydrated from references when a session is loaded. Compaction changes the active event view, not the full transcript. Binary images are never serialized; restoring a working view containing images requires reconstruction and explicit image rereading.
 
-Sessions write schema v4 and agent context v2. Old tool histories normalize once into iteration records. The first save of an older session atomically backs up its original bytes under the same private cache before replacing it; deleting the session also deletes that migration backup. Historical `inputChars` metadata remains historical data and is never relabeled as tokens.
+Sessions write schema v5 and agent context v2. Old tool histories normalize once into iteration records. The first save of a pre-v4 session atomically backs up its original bytes under the same private cache before replacing it; deleting the session also deletes that migration backup. Historical `inputChars` metadata remains historical data and is never relabeled as tokens.
 
 Provider-reported usage is retained for agent and compaction requests and accumulated for each assistant turn. The footer sums all stored usage in the current session, including terminal cancelled/error turns when the provider returned usage and session-owned auxiliary calls such as title generation. It reports cache hit tokens, miss tokens, and the weighted hit percentage. Individual assistant messages continue to show their own turn totals. Context request records distinguish agent work from compaction and record the context generation, input-size estimate, and provider usage for cache diagnostics.
 
@@ -139,24 +140,22 @@ Provider replay preserves DeepSeek `reasoning_content` and Gemini thought-signat
 
 ## Tool Families
 
-### Document Tools
+### Document tools
 
-- `list_sources`
-- `read_document`
-- `list_document_chunks`
-- `read_document_chunk`
-- `search_document`
-- `list_images`
-- `read_image`
-- `read_tool_result` (session result IDs with current source-scope enforcement)
+- `list_sources`, `get_document_status`
+- `search_pdf_text` (library discovery, explicit coverage and continuation)
+- `read_pdf_text` (session-scoped text and page navigation)
+- `read_pdf_page` (session-scoped original visual evidence)
+- `list_images`, `read_image` (standalone images)
+- `read_tool_result` (exact stored text, with current source-scope enforcement)
 
-These tools accept stable source IDs and refuse sources outside TurnScope. Search output merges overlapping context windows so repeated neighboring matches do not duplicate the same source lines. Caller-specified match limits remain explicit; large document reads remain possible through narrower line ranges or page-based chunks.
+Document reads enforce TurnScope before local I/O and before delivery. Removed/replaced sources cannot deliver stale page results. Original page citations distinguish PDF page numbers from printed labels.
 
 ### Image Inputs
 
-The panel accepts PNG, JPEG and WebP through **Add image**, file drag-and-drop, clipboard image paste, and Zotero image attachments. Standalone images are atomically copied into the source cache and are ready without MinerU. Their image kind and stable source identity survive session restoration; removing a source removes it from the model's available scope.
+The panel accepts PNG, JPEG and WebP through **Add image**, file drag-and-drop, clipboard image paste, and Zotero image attachments. Standalone images are atomically copied into the source cache and are ready after their local write. Their image kind and stable source identity survive session restoration; removing a source removes it from the model's available scope.
 
-`list_images` lists cached PDF figures by relative path. `read_image` accepts only a source in TurnScope and a path inside that source's cache (or no path for a standalone image). Absolute paths, URLs, traversal and symlinked cache entries are rejected. File signatures and byte sizes are checked before delivery. SVG and GIF are not supported. Missing cache files produce explicit errors; PDF figures require an existing conversion cache.
+`list_images` lists a standalone image source; `read_image` reads its bytes with path, symlink, signature and size checks. PDF sources instead use `read_pdf_page`, which renders the original page. Old extracted figures are no longer exposed.
 
 Limits are **10 MiB per image** and **20 MiB of image bytes per turn**, including repeated reads. Oversized inputs are rejected, never silently resized or truncated. Image payloads are separate from the text character budget; visual token usage comes from the provider.
 
@@ -173,14 +172,12 @@ Persistent tool history contains image provenance and byte counts, not base64 pa
 - `list_collection_items`
 - `get_current_zotero_selection`
 - `add_zotero_item_to_session`
-- `convert_session_source`
-- `add_and_convert_zotero_item`
 
 Lookup schemas support `library_id`. `search_zotero_annotations` lists annotations when `query` is omitted, or searches highlighted text, comments, tags, and corresponding paper metadata when a query is provided. It returns annotation, attachment, and bibliographic item keys. List/search tools do not silently impose hidden result caps; optional caller limits remain explicit.
 
 ### Web Tools
 
-When enabled, `web_search` uses Brave if configured and otherwise the DuckDuckGo HTML fallback. `web_fetch` goes through `SafeWebClient`:
+All tools, including both web tools, are enabled by default and individually configurable. `web_search` uses Brave if configured and otherwise the DuckDuckGo HTML fallback. `web_fetch` goes through `SafeWebClient`:
 
 1. only HTTP(S) URLs are accepted;
 2. credentials, localhost, loopback, private, link-local, multicast, reserved, and metadata addresses are rejected;
@@ -216,44 +213,31 @@ The request signal reaches:
 - streaming and non-streaming LLM requests;
 - all agent tool handlers;
 - safe web requests and body reads;
-- MinerU upload URL requests, PDF upload, polling delays, result downloads, and extraction;
+- PDF.js loading, text extraction, rasterization and cache delivery;
 - session mutations and UI callbacks that follow those operations.
 
-A conversion launched from a source chip has an owner scoped to that source and window. Removing the source releases
-that owner and aborts the shared job only when no other panel or bridge owner remains. Explicit bridge cancellation is
-job-wide.
+Removing a source cancels its active session turn and invalidates the source scope. Renderer cleanup disposes its private XUL browser. Other sessions are unaffected.
 
-## PDF Conversion and Cache
+## PDF reading and local cache
 
-Prompt v3 optionally enables the original model's self-check in the same response, after its Markdown, with a compact JSON list of exact page-local edits or an empty list. No review request or replayed image/transcript input is added. Edits are applied only with unique, nonoverlapping anchors; uncertain pages and invalid packets fail. The corrected Markdown passes the normal gates before commitment. Chunk metadata records checked pages, applied edits and a final-Markdown digest, so compatible saved checks require no new API calls. The panel's checked-page badge reports the model's own assertion rather than independent scientific verification. The bridge status advertises this capability as `pdf_self_check: same-response`. Existing v2 caches/jobs retain their original behavior until explicit reconversion.
+The chat model must support OpenAI-compatible image inputs. `visionSupport=auto` reads endpoint metadata; unsupported or unknown input capability blocks the agent before its first chat request. `enabled` records the user's explicit confirmation for endpoints that omit metadata; `disabled` rejects chat. Profile switching carries this setting. Provider failures still report actual image-input errors; metadata is not a recognition-quality test.
 
-Vision is the default engine. A saved conversion profile may differ from the chat model; blank uses the active chat profile. PDF.js renders in a disposable XUL browser using the local Zotero reader assets, with no external rendering binaries. Defaults are four pages per request, two workers, 150 DPI, JPEG quality 85, page-image caching enabled and 180 seconds per API attempt. All images are sent to the selected conversion provider. See [the conversion contract and validation limits](pdf-vision-conversion.md).
+Zotero PDF.js runs in a disposable XUL browser. `read_pdf_page` renders one requested page, default 300 DPI (caller range 72–300), JPEG quality 95, high image detail. Raster limits are 16 megapixels and 8192 pixels per side; effective DPI is returned. Print scheduling supports hidden windows but print-specific PDF content may differ from display intent. Images are delivered after all tool receipts; no transcription model call is made.
 
-Vision jobs pin the model, endpoint, profile, chunk size, image policy and prompt version without persisting keys. SHA-256 detects a changed source before resuming. Per-page markers, tolerant text/symbol coverage guards, KaTeX syntax and the merged/chunk/line-range cache contract gate commits. Repeated Greek symbols and hat/tilde/bar decorations are checked against the text layer; this is an omission guard, not mathematical equivalence verification. Invalid/empty/truncated output is split with validation feedback, with one extra attempt for a single page. 429 and transient server errors respect bounded backoff and Retry-After. Workers are settled before disposal or terminal states. Compatible staged chunks survive errors; explicit Retry can resume a failed forced conversion while retaining an older ready cache. Opening/re-adding sources never starts new vision transcription. Restart recovery of an active job may finish its previously requested work.
-
-**Reconvert** bypasses terminal jobs and starts clean staging, preventing stale assets from another engine from appearing in the replacement. Ready cache reads do not require a current conversion profile. Page images live in `attachments/pages/` and remain available through image tools. Both engines emit chunk markers for single-chunk results as well.
-
-MinerU remains optional. The configurable defaults are language `ch` and timeout 15 minutes. PDFs up to 120 pages use one task; longer PDFs use resumable 25-page chunks. Each successful chunk is stored before the next begins.
-
-Polling timeouts do not cancel the remote MinerU task. Adding a source again or opening a saved session checks compatible saved uploads, preferring a completed older task over a queued duplicate, and recovers results through the usual atomic cache commit. Automatic recovery never uploads new PDF bytes. Error chips offer Retry; explicit conversion retries reuse existing uploads and staged chunks before submitting missing work. A failed recovery status request is reported rather than silently creating another upload. Forced conversion bypasses saved terminal tasks.
+Text extraction uses `getTextContent()`; discovery can reuse a fresh, complete Zotero index, whose unavailable page numbers remain null. Page-mapped reads use PDF.js. Searches report inspected files, missing text and continuation; no OCR worker or OCR API key is required. Scanned pages without text can be read visually.
 
 ```text
 <cacheDir>/
-  documents/<library-qualified-cache-key>/
-    document.md
-    manifest.json
-    chunks/<index>.md
-    attachments/pages/page-<page>.jpg  # vision, when enabled
-    attachments/full/...            # MinerU
-    attachments/chunk-<index>/...
-  conversions/
-    jobs.json
-    staging/<job-id>/...
+  pdf-text/<library-qualified-key>.json
+  pdf-pages/<library-qualified-key>/page-<number>-<dpi>.json
+  documents/<image-source-key>/image.bin
   history/
   debug-logs/
 ```
 
-Document, chunk, manifest, session, and history-index writes use temporary files followed by atomic replacement. Errors retain their stage so upload, polling, ZIP download, and extraction failures remain distinguishable.
+Writes are atomic. PDF caches include file path, byte size and modification time and are regenerated when this stamp changes; resolution is also part of the page cache key. Text extraction includes a SHA-256 digest. Existing converted files are left untouched but never loaded or resumed. Pre-v5 conversion states migrate to ready-to-read source identities; file availability is checked on use.
+
+Native chat and external MCP share the tool registry, argument validator and executor. The exact protocol 2 bridge supports `status`, `tools.list`, `tools.call`, `tools.cancel` and `session.close`; no conversion/cache API remains. MCP only adapts transport and text/image content, with separate sessions and the same Zotero authorization. Settings filter discovery and reject disabled tools again at execution. See [Shared tools](shared-tools.md) for the wire contract and limits.
 
 ## Rendering and Debug Privacy
 
@@ -278,6 +262,6 @@ npm run verify
 npm audit --audit-level=low
 ```
 
-Isolated Zotero smoke tests use separate profile/data/cache directories and temporary add-on installation. Local mocks verify native transport and panel behavior without provider credentials; real provider transcription requires a separately controlled credentialed run. See the [PDF vision validation record](pdf-vision-validation.md) for the current distinction and test coverage.
+Isolated Zotero smoke tests use separate profile/data/cache directories and temporary add-on installation. Local mock endpoints verify page transport, tool ordering and panel behavior without credentials. They do not establish a real provider's scientific reading accuracy. See [Direct PDF reading](direct-pdf-reading.md).
 
 CI runs both dependency auditing and functional verification after a successful locked install. An audit failure still fails the job, but does not hide the typecheck, lint, test, and build results. Installation failure or cancellation prevents functional verification.

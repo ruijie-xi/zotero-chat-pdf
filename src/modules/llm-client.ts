@@ -1,8 +1,9 @@
 import type { ModelBudgetSettings } from "./model-profile";
 import { buildLLMHeaders, getProviderApiBase, normalizeProvider, ProviderSettings } from "./llm-provider";
 import { getPref } from "../utils/prefs";
+import { assertRequestActive, withLLMTransport, TransportAttempt } from "./llm-transport";
 
-export type VisionContent = ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: "auto" } })[];
+export type VisionContent = ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: "auto" | "low" | "high" } })[];
 /** Transport-only messages. Persisted chat messages remain plain text. */
 export type ProviderMessage = Omit<ChatMessage, "content"> & { content: string | VisionContent };
 
@@ -183,6 +184,7 @@ export function getLLMSettings(): LLMSettings {
     requestedOutputTokens: Number(getPref("requestedOutputTokens")) || undefined,
     imageTokenReserve: Number(getPref("imageTokenReserve")) || undefined,
     tokenizerMode: String(getPref("tokenizerMode") || "auto"),
+    visionSupport: String(getPref("visionSupport") || "auto"),
     apiBase: getProviderApiBase({ provider, apiBase: (getPref("llmApiBase") as string) || DEFAULT_API_BASE }),
     apiKey: (getPref("llmApiKey") as string) || "",
     model: (getPref("llmModel") as string) || DEFAULT_MODEL,
@@ -377,7 +379,17 @@ export async function chatWithTools(
     body.extra_body = { google: { thinking_config: { include_thoughts: true } } };
   }
 
-  Zotero.debug(`[ChatPDF] chatWithTools: ${messages.length} messages, ${tools?.length ?? 0} tools, stream=${streaming}, thinking=${settings.thinkingMode}, effort=${settings.thinkEffort}`);
+  return withLLMTransport(url, settings.model, signal, attempt =>
+    requestChatCompletion(url, settings, body, messages, streaming, gemini, attempt, onStream, onThinking, signal));
+}
+
+async function requestChatCompletion(
+  url: string, settings: LLMSettings, body: Record<string, unknown>, messages: ProviderMessage[],
+  streaming: boolean, gemini: boolean, attempt: TransportAttempt,
+  onStream?: StreamCallback, onThinking?: ThinkingCallback, signal?: AbortSignal,
+): Promise<ChatResult> {
+
+  Zotero.debug(`[ChatPDF] chatWithTools: ${messages.length} messages, ${Array.isArray(body.tools) ? body.tools.length : 0} tools, stream=${streaming}, thinking=${settings.thinkingMode}, effort=${settings.thinkEffort}`);
 
   const res = await fetch(url, {
     method: "POST",
@@ -385,8 +397,12 @@ export async function chatWithTools(
     body: JSON.stringify(body),
     signal,
   });
+  attempt.phase = "response";
+  assertRequestActive(signal);
 
   if (!res.ok) {
+    // An HTTP rejection must not be retried even if reading its body fails.
+    attempt.receivedData = true;
     const text = await res.text();
     if ((res.status === 400 || res.status === 413) && /context_length_exceeded|maximum context length|context window|too many tokens|prompt is too long|exceed.{0,40}context/i.test(text)) {
       throw new ProviderContextError(`Provider context limit: ${text}`);
@@ -400,6 +416,8 @@ export async function chatWithTools(
   // ---- Non-streaming path ----
   if (!streaming) {
     const data = await res.json() as any;
+    attempt.receivedData = true;
+    assertRequestActive(signal);
     const msg = data.choices?.[0]?.message;
     if (!msg) {
       return { content: "" };
@@ -480,6 +498,8 @@ export async function chatWithTools(
     : null;
 
   function processChunk(parsed: any) {
+    // Includes reasoning and tool fragments even when no visible text has arrived.
+    attempt.receivedData = true;
     if (parsed.usage) streamUsage2 = parsed.usage;
     if (parsed.choices?.[0]?.finish_reason) finishReason = parsed.choices[0].finish_reason;
 
@@ -575,52 +595,60 @@ export async function chatWithTools(
     return result;
   }
 
-  while (true) {
-    if (signal?.aborted) break;
-    const { done, value } = await (reader as any).read();
-    if (done) break;
+  try {
+    while (true) {
+      assertRequestActive(signal);
+      const { done, value } = await (reader as any).read();
+      assertRequestActive(signal);
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
 
-      const data = trimmed.slice(6);
-      if (data === "[DONE]") {
-        thoughtFilter?.flush();
-        if (!thinkingDone && fullReasoning && onThinking) {
-          onThinking("", true);
+        const data = trimmed.slice(6);
+        if (data === "[DONE]") {
+          attempt.receivedData = true;
+          thoughtFilter?.flush();
+          if (!thinkingDone && fullReasoning && onThinking) {
+            onThinking("", true);
+          }
+          if (onStream) onStream("", true);
+          return buildResult();
         }
-        if (onStream) onStream("", true);
-        return buildResult();
+
+        let parsed;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        processChunk(parsed);
       }
+    }
 
-      let parsed;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        continue;
+    if (buffer.trim()) {
+      const trimmed = buffer.trim();
+      if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
+        try {
+          processChunk(JSON.parse(trimmed.slice(6)));
+        } catch {}
       }
-      processChunk(parsed);
     }
-  }
 
-  if (buffer.trim()) {
-    const trimmed = buffer.trim();
-    if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
-      try {
-        processChunk(JSON.parse(trimmed.slice(6)));
-      } catch {}
+    thoughtFilter?.flush();
+    if (!thinkingDone && fullReasoning && onThinking) {
+      onThinking("", true);
     }
+    if (onStream) onStream("", true);
+    return buildResult();
+  } finally {
+    // Cancel unread data on failure/DONE and release the reader on every terminal path.
+    try { await reader.cancel(); } catch { /* retain the original request outcome */ }
+    reader.releaseLock();
   }
-
-  thoughtFilter?.flush();
-  if (!thinkingDone && fullReasoning && onThinking) {
-    onThinking("", true);
-  }
-  if (onStream) onStream("", true);
-  return buildResult();
 }

@@ -14,10 +14,10 @@ import {
   ModelProfile,
 } from "./panel-state";
 import { showFilteredHistory, showHistoryView, hideHistoryView } from "./history-view";
-import { refreshSourceChips, recoverSource } from "./source-chips";
+import { refreshSourceChips } from "./source-chips";
 import { dismissSourceMenu } from "./source-chip-ui";
 import { renderChatHistory, updateUsageBar } from "./message-renderer";
-import { handleSend, handleConvertAndSend, autoSaveSession } from "./send-handler";
+import { handleSend, autoSaveSession } from "./send-handler";
 import {
   addZoteroItemToSession,
   getItemFromZoteroUri,
@@ -98,10 +98,9 @@ export async function addItemToSession(item: Zotero.Item, target: Window | HTMLE
   const session = state.session;
   const added = await addZoteroItemToSession(item, session);
   if (state.session !== session || !added.sourceKey) return;
-  const source = session.getSource(added.sourceKey);
   const doc = (target as Window).document || (target as HTMLElement).ownerDocument;
   const root = doc?.querySelector("#chatpdf-root") as HTMLElement | null;
-  if (source && root) recoverSource(source, root, session);
+  if (root) { refreshSourceChips(root); await autoSaveSession(root); }
 }
 
 /** Insert an inline mention chip into the TipTap editor. */
@@ -501,7 +500,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
     state.chatInput = createChatInput(
       doc,
       () => { if (!state.isStreaming) handleSend(root); },
-      () => { if (!state.isStreaming) handleConvertAndSend(root); },
+      () => { if (!state.isStreaming) handleSend(root); },
     );
   } catch (err: any) {
     Zotero.debug(`[ChatPDF] TipTap creation FAILED: ${err.message}\n${err.stack}`);
@@ -516,7 +515,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   const usageBar = h(doc, "div", { className: "chatpdf-usage-bar", id: "chatpdf-usage-bar" });
   inputArea.appendChild(usageBar);
 
-  const inputHint = h(doc, "div", { className: "chatpdf-input-hint" }, "Enter to send \u00B7 Ctrl+Enter: convert & send \u00B7 Shift+Enter: new line");
+  const inputHint = h(doc, "div", { className: "chatpdf-input-hint" }, "Enter to send \u00B7 Ctrl+Enter: send \u00B7 Shift+Enter: new line");
   inputArea.appendChild(inputHint);
   inputArea.appendChild(imageStatus);
 
@@ -722,6 +721,7 @@ function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
       setPref("llmThinkEffort", selected.thinkEffort || "default");
       for (const key of MODEL_BUDGET_FIELDS) setPref(key, selected[key] || 0);
       setPref("tokenizerMode", selected.tokenizerMode || "auto");
+      setPref("visionSupport", selected.visionSupport || "auto");
       getPanelState(root).session.contextStats = undefined;
       updateUsageBar(root, getPanelState(root).session.getTokenUsage());
       setPref("activeProfile", selected.name);

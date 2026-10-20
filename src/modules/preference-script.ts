@@ -5,6 +5,8 @@ import { buildLLMHeaders, createProviderSessionId, getProviderApiBase, LLMProvid
 import { config } from "../../package.json";
 import { XUL_NS, XULMenuList } from "../utils/dom";
 import { uiText } from "../utils/ui-text";
+import { getAllToolDefinitions } from "./tool-registry";
+import { isToolEnabled, setToolEnabled } from "./tool-settings";
 import {
   DEFAULT_SYSTEM_PROMPT_EN,
   DEFAULT_SYSTEM_PROMPT_CN,
@@ -76,6 +78,7 @@ function readModelFields(name: string, provider = normalizeProvider(getFieldValu
     thinkingMode: getFieldValue("llmThinkingMode", "default"),
     thinkEffort: getFieldValue("llmThinkEffort", "default"),
     tokenizerMode: getFieldValue("tokenizerMode", "auto"),
+    visionSupport: getFieldValue("visionSupport", "auto"),
   };
   for (const key of MODEL_BUDGET_FIELDS) profile[key] = Number(getFieldValue(key)) || 0;
   return profile;
@@ -88,6 +91,7 @@ function writeModelFields(profile: ModelProfile): void {
     llmApiKey: profile.apiKey, llmModel: profile.model,
     llmThinkingMode: profile.thinkingMode || "default", llmThinkEffort: profile.thinkEffort || "default",
     tokenizerMode: profile.tokenizerMode || "auto",
+    visionSupport: profile.visionSupport || "auto",
   };
   for (const [key, value] of Object.entries(values)) {
     setPrefFull(key, value);
@@ -105,22 +109,17 @@ function writeModelFields(profile: ModelProfile): void {
 function updateSettingsSummary(): void {
   const summary = document.querySelector(`#zotero-prefpane-${ADDON_REF}-modelRoleStatus`);
   if (!summary) return;
-  const name = getFieldValue("pdfVisionProfile");
-  const profile = loadProfiles().find(profile => profile.name === name);
   const current = getFieldValue("llmModel") || uiText("Not configured", "未配置");
   const activeName = getPrefFull("activeProfile"), active = loadProfiles().find(profile => profile.name === activeName);
   let edited = false;
   if (active) {
     const live = readModelFields(activeName);
-    const normalized = { ...active, provider: normalizeProvider(active.provider), apiBase: getProviderApiBase(active), thinkingMode: active.thinkingMode || "default", thinkEffort: active.thinkEffort || "default", tokenizerMode: active.tokenizerMode || "auto" };
-    edited = (["provider", "apiBase", "apiKey", "model", "thinkingMode", "thinkEffort", "tokenizerMode", ...MODEL_BUDGET_FIELDS] as const)
+    const normalized = { ...active, provider: normalizeProvider(active.provider), apiBase: getProviderApiBase(active), thinkingMode: active.thinkingMode || "default", thinkEffort: active.thinkEffort || "default", tokenizerMode: active.tokenizerMode || "auto", visionSupport: active.visionSupport || "auto" };
+    edited = (["provider", "apiBase", "apiKey", "model", "thinkingMode", "thinkEffort", "tokenizerMode", "visionSupport", ...MODEL_BUDGET_FIELDS] as const)
       .some(key => (live[key] ?? 0) !== (normalized[key] ?? 0));
   }
-  const conversion = name ? profile ? `${name} (${profile.model})` : uiText(`Missing profile: ${name}. Choose a saved profile before converting.`, `配置“${name}”不存在，请先选择有效配置。`)
-    : uiText(`Current chat model (${current})`, `跟随聊天模型（${current}）`);
-  summary.textContent = uiText(`Chat: ${current} · PDF conversion: ${conversion}`, `聊天：${current} · PDF 转换：${conversion}`)
+  summary.textContent = uiText(`Chat and PDF reading: ${current}`, `聊天与 PDF 阅读：${current}`)
     + (edited ? uiText(` · Current fields differ from saved profile "${activeName}"`, ` · 当前字段已修改，尚未更新已保存配置“${activeName}”`) : "");
-  summary.classList.toggle("chatpdf-preference-error", !!name && !profile);
 }
 
 function initSettingsLayout(): void {
@@ -129,25 +128,31 @@ function initSettingsLayout(): void {
     if (!element || element.hasAttribute("data-layout-bound")) return;
     element.setAttribute("data-layout-bound", "true"); element.addEventListener(event, listener);
   };
-  const showEngine = () => {
-    const engine = getFieldValue("pdfConversionEngine", "vision");
-    for (const kind of ["vision", "mineru"]) {
-      const group = document.querySelector(`#zotero-prefpane-${ADDON_REF}-${kind}Settings`) as HTMLElement | null;
-      if (group) group.hidden = engine !== kind;
-    }
-  };
-  const showWeb = () => {
-    const enabled = document.querySelector(`#zotero-prefpane-${ADDON_REF}-enableWebTools`) as HTMLInputElement | null;
-    const group = document.querySelector(`#zotero-prefpane-${ADDON_REF}-webSettings`) as HTMLElement | null;
-    if (group) group.hidden = !enabled?.checked;
-  };
-  bind("pdfConversionEngine", "command", showEngine);
-  bind("enableWebTools", "change", showWeb);
-  for (const key of ["llmProvider", "llmModel", "llmApiBase", "llmApiKey", "llmThinkingMode", "llmThinkEffort", "tokenizerMode", ...MODEL_BUDGET_FIELDS]) {
+  for (const key of ["llmProvider", "llmModel", "llmApiBase", "llmApiKey", "llmThinkingMode", "llmThinkEffort", "tokenizerMode", "visionSupport", ...MODEL_BUDGET_FIELDS]) {
     const element = document.querySelector(`#zotero-prefpane-${ADDON_REF}-${key}`);
     bind(key, element?.localName === "menulist" ? "command" : "change", updateSettingsSummary);
   }
-  showEngine(); showWeb(); updateSettingsSummary();
+  initToolSwitches(); updateSettingsSummary();
+}
+
+function initToolSwitches(): void {
+  const container = document.querySelector(`#zotero-prefpane-${ADDON_REF}-toolSwitches`) as HTMLElement | null;
+  if (!container || container.dataset.initialized) return;
+  container.dataset.initialized = "true";
+  const ns = "http://www.w3.org/1999/xhtml";
+  for (const { function: tool } of getAllToolDefinitions()) {
+    const label = document.createElementNS(ns, "label") as HTMLLabelElement;
+    label.style.display = "block";
+    const input = document.createElementNS(ns, "input") as HTMLInputElement;
+    input.type = "checkbox";
+    input.checked = isToolEnabled(tool.name);
+    input.dataset.toolName = tool.name;
+    input.addEventListener("change", () => setToolEnabled(tool.name, input.checked));
+    const text = document.createElementNS(ns, "span");
+    text.setAttribute("data-l10n-id", `pref-tool-${tool.name.replace(/_/g, "-")}`);
+    label.append(input, text);
+    container.append(label);
+  }
 }
 
 function syncProviderUI(): void {
@@ -228,23 +233,6 @@ function initProfileUI() {
     if (!profileList) return;
     profileList.innerHTML = "";
     const profiles = loadProfiles();
-    const suggestions = document.querySelector(`#zotero-prefpane-${ADDON_REF}-pdfVisionProfiles > menupopup`);
-    if (suggestions) {
-      const selected = getFieldValue("pdfVisionProfile");
-      const options = [{ value: "", label: uiText("Use current chat model", "跟随当前聊天模型") }, ...profiles.map(profile => ({ value: profile.name, label: profile.name }))];
-      if (selected && !profiles.some(profile => profile.name === selected)) {
-        options.push({ value: selected, label: uiText(`Missing: ${selected}`, `配置不存在：${selected}`) });
-      }
-      // Keep a clicked native menuitem attached until Gecko closes its popup.
-      const existing = new Map([...suggestions.children].map(option => [option.getAttribute("value") || "", option]));
-      for (const [index, option] of options.entries()) {
-        const item = existing.get(option.value) || document.createElementNS(XUL_NS, "menuitem");
-        item.setAttribute("value", option.value); item.setAttribute("label", option.label);
-        if (suggestions.children[index] !== item) suggestions.insertBefore(item, suggestions.children[index] || null);
-      }
-      for (const [value, item] of existing) if (!options.some(option => option.value === value)) item.remove();
-      (suggestions.parentElement as unknown as XULMenuList).value = selected;
-    }
     const activeProfile = Zotero.Prefs.get(`${PREF_PREFIX}.activeProfile`, true) as string || "";
 
     if (profiles.length === 0) {
@@ -280,12 +268,8 @@ function initProfileUI() {
 
       const deleteBtn = document.createElement("button");
       deleteBtn.textContent = uiText("Delete", "删除");
-      const usedForConversion = getFieldValue("pdfVisionProfile") === p.name;
-      deleteBtn.disabled = usedForConversion;
-      deleteBtn.title = usedForConversion ? uiText("Used for PDF conversion. Select another conversion profile before deleting.", "此配置正在用于 PDF 转换，请先切换转换模型，再删除。") : "";
       deleteBtn.style.cssText = "font-size: 11px; padding: 1px 6px; cursor: pointer;";
       deleteBtn.addEventListener("click", () => {
-        if (getFieldValue("pdfVisionProfile") === p.name) return;
         const updated = loadProfiles().filter(x => x.name !== p.name);
         saveProfiles(updated);
         if (activeProfile === p.name) {
@@ -538,16 +522,6 @@ function tryInit(retries: number) {
   const testOk = initLLMTestUI();
   initProfileUI();
   initSettingsLayout();
-  const visionProfiles = document.querySelector(`#zotero-prefpane-${ADDON_REF}-pdfVisionProfiles`) as XULMenuList | null;
-  if (visionProfiles && !visionProfiles.hasAttribute("data-initialized")) {
-    visionProfiles.setAttribute("data-initialized", "true");
-    visionProfiles.addEventListener("command", () => {
-      setPrefFull("pdfVisionProfile", visionProfiles.value);
-      setFieldValue("pdfVisionProfile", visionProfiles.value);
-      refreshProfiles?.();
-      updateSettingsSummary();
-    });
-  }
   for (const key of ["llmApiBase", "llmModel", "llmApiKey"]) {
     const field = document.querySelector(`#zotero-prefpane-${ADDON_REF}-${key}`) as HTMLInputElement | null;
     if (!field || field.dataset.budgetBound) continue;

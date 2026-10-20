@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/modules/agent-loop", () => ({ runAgentLoop: vi.fn() }));
 vi.mock("../src/modules/chat-history", () => ({ saveSession: vi.fn(async () => {}) }));
 vi.mock("../src/modules/debug-log", () => ({ logLLMRequest: vi.fn(async () => {}), logLLMResponse: vi.fn(async () => {}), logGenerationResult: vi.fn(async () => {}) }));
-vi.mock("../src/modules/source-chips", () => ({ refreshSourceChips: vi.fn(), convertSource: vi.fn() }));
+vi.mock("../src/modules/source-chips", () => ({ refreshSourceChips: vi.fn() }));
 import { handleSend } from "../src/modules/send-handler";
 import { runAgentLoop } from "../src/modules/agent-loop";
 import { createPanelState, destroyPanelState } from "../src/modules/panel-state";
@@ -24,12 +24,11 @@ beforeEach(() => {
 afterEach(() => { destroyPanelState(window); vi.useRealTimers(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("assistant narration chronology", () => {
-  it("lets the agent handle pending and converting sources instead of blocking send", async () => {
+  it("sends newly added PDFs without a preparation step", async () => {
     const state = createPanelState(window);
     state.session.addSource("ABC12345", "Pending", undefined, 1);
-    const active = state.session.addSource("BCD12345", "Converting", undefined, 1);
-    active.status = "converting";
-    vi.mocked(runAgentLoop).mockResolvedValue({ content: "Text, conversion and waiting are available.", iterations: [], totalIterations: 1 });
+    state.session.addSource("BCD12345", "Second PDF", undefined, 1);
+    vi.mocked(runAgentLoop).mockResolvedValue({ content: "PDF pages are available.", iterations: [], totalIterations: 1 });
     await handleSend(root);
     expect(runAgentLoop).toHaveBeenCalledOnce();
     expect(root.querySelector(".chatpdf-send-warning")).toBeNull();
@@ -115,8 +114,22 @@ describe("assistant narration chronology", () => {
     expect(root.querySelector(".chatpdf-reasoning-spinner")).toBeNull();
     expect(root.textContent).toContain("Partial answer");
     expect(root.textContent).toContain("Error: Compaction failed");
+    expect(root.querySelectorAll(".chatpdf-msg-row-assistant")).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(0);
     expect(createPanelState(window).session.getHistory()[1].content).toBe("Partial answer\n\nError: Compaction failed");
+  });
+
+  it("renders an immediate network error in one assistant bubble and restores sending", async () => {
+    vi.mocked(runAgentLoop).mockRejectedValue(new TypeError("NetworkError when attempting to fetch resource."));
+    await handleSend(root);
+    expect(root.querySelectorAll(".chatpdf-msg-row-assistant")).toHaveLength(1);
+    expect(root.querySelector(".chatpdf-message-assistant")!.textContent).toContain("Error: NetworkError");
+    const state = createPanelState(window);
+    expect(state.isStreaming).toBe(false);
+    expect(state.backgroundStreams.size).toBe(0);
+    expect(state.chatInput!.setEditable).toHaveBeenLastCalledWith(true);
+    expect(state.session.getHistory()[1]).toMatchObject({ status: "error", errorMessage: "NetworkError when attempting to fetch resource." });
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("restores chronological blocks when returning to a background stream", async () => {

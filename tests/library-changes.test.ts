@@ -33,13 +33,24 @@ beforeEach(() => {
   Object.assign(Zotero.Libraries, { get: vi.fn(() => ({ editable: edit })) });
   Object.assign(Zotero, { Collections: { getByLibraryAndKey: (_lib: number, key: string) => collections.get(key), get: (id: number) => [...collections.values()].find(c => c.id === id) } });
   vi.mocked(Zotero.Items.getByLibraryAndKey).mockImplementation((_lib, key) => items.get(key));
-  vi.mocked(Zotero.Prefs.get).mockImplementation(key => String(key).endsWith("cacheDir") ? "/cache" as never : mode as never);
+  vi.mocked(Zotero.Prefs.get).mockImplementation(key => (String(key).endsWith("cacheDir") ? "/cache" : String(key).endsWith("agentLibraryEditMode") ? mode : undefined) as never);
   Object.assign(Zotero.Utilities, { generateObjectKey: vi.fn(() => "NEW00001") });
   Object.assign(IOUtils, { exists: vi.fn(async (path: string) => disk.has(path)), read: vi.fn(async (path: string) => disk.get(path)),
     makeDirectory: vi.fn(async () => {}), remove: vi.fn(async () => {}), write: vi.fn(async (path: string, bytes: Uint8Array) => disk.set(path, bytes)) });
 });
 const planTags = () => planLibraryChanges([{ action: "add_tags", library_id: 1, item_keys: ["ITEM0001"], tags: ["read"] }]);
 describe("reversible scoped library changes", () => {
+  it("honors tool revocation while a concrete edit is awaiting approval", async () => {
+    const plan = planTags();
+    let disabled = false;
+    vi.mocked(Zotero.Prefs.get).mockImplementation(key => (String(key).endsWith("disabledTools")
+      ? JSON.stringify(disabled ? ["change_zotero_library"] : [])
+      : String(key).endsWith("agentLibraryEditMode") ? "ask" : "/cache") as never);
+    await expect(applyLibraryChanges(plan, { mode: "ask", items: [], collections: [] },
+      async () => { disabled = true; return true; })).rejects.toThrow("disabled");
+    expect(saved).toBe(0);
+    expect(items.get("ITEM0001").tags).toEqual([{ tag: "automatic", type: 1 }]);
+  });
   const deleteEmpty = (key = "COL00002") => ({ action: "delete_empty_collection" as const, library_id: 1, collection_key: key });
   it("deletes an empty leaf and restores its exact key, name and parent with an idempotent receipt", async () => {
     collections.get("COL00002").parentKey = "COL00001";

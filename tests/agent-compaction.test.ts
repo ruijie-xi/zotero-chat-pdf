@@ -3,7 +3,7 @@ import { TokenCounter } from "../src/modules/token-accounting";
 import { resolveModelCapabilities } from "../src/modules/model-capabilities";
 import { getLLMSettings } from "../src/modules/llm-client";
 function budget(inputLimit = 240000) {
- const capabilities = { inputLimit, maxOutput: 32768, generation: { outputTokens: 32768, retryCeiling: 32768, source: "model-maximum" as const, thinkingMode: "default", thinkEffort: "default" }, tokenizer: "deepseek-v4" as const, source: "manual" as const, fetchedAt: 1 };
+ const capabilities = { inputLimit, supportsVision: true, maxOutput: 32768, generation: { outputTokens: 32768, retryCeiling: 32768, source: "model-maximum" as const, thinkingMode: "default", thinkEffort: "default" }, tokenizer: "deepseek-v4" as const, source: "manual" as const, fetchedAt: 1 };
  return new ContextBudget(capabilities, new TokenCounter({ encode: (text: string) => ({ ids: { length: text.length } }) } as any, getLLMSettings(), capabilities));
 }
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,10 +19,10 @@ import { ChatSession } from "../src/modules/chat-session";
 import { AgentContext, COMPACT_PROMPT } from "../src/modules/agent-context";
 import { compactAgentContext } from "../src/modules/context-compaction";
 
-const tools: Tool[] = [{ type: "function", function: { name: "read_document", description: "Read", parameters: {} } }];
+const tools: Tool[] = [{ type: "function", function: { name: "read_pdf_text", description: "Read", parameters: {} } }];
 const model = vi.mocked(chatWithTools);
 const execute = vi.mocked(executeTool);
-const call = (id: string, name = "read_document", args = {}) => ({ content: "", tool_calls: [{ id, type: "function" as const, function: { name, arguments: JSON.stringify(args) } }], usage: { prompt_tokens: 10, total_tokens: 10 } });
+const call = (id: string, name = "read_pdf_text", args = {}) => ({ content: "", tool_calls: [{ id, type: "function" as const, function: { name, arguments: JSON.stringify(args) } }], usage: { prompt_tokens: 10, total_tokens: 10 } });
 function setup(limit = 240_000) {
   vi.mocked(resolveModelCapabilities).mockResolvedValue(budget(limit).capabilities);
   const session = new ChatSession();
@@ -143,7 +143,7 @@ describe("automatic context compaction", () => {
     const user = { role: "user" as const, content: "Continue the task" };
     const context = AgentContext.create([{ role: "system", content: "policy" }, user,
       { role: "assistant", content: "old details ".repeat(2000) },
-      { role: "assistant", content: "check", tool_calls: [{ id: "signed", type: "function", function: { name: "read_document", arguments: "{}" }, extra_content: { google: { thought_signature: "opaque-signature" } } }] },
+      { role: "assistant", content: "check", tool_calls: [{ id: "signed", type: "function", function: { name: "read_pdf_text", arguments: "{}" }, extra_content: { google: { thought_signature: "opaque-signature" } } }] },
       { role: "tool", tool_call_id: "signed", content: "evidence" },
     ], "model", 1);
     model.mockResolvedValueOnce({ content: "Read completed. Continue the task." });
@@ -190,7 +190,7 @@ describe("automatic context compaction", () => {
       requests.push(args);
       if (String(args[0].at(-1)?.content).startsWith(COMPACT_PROMPT)) return { content: "Completed previous reads; continue remaining work.", usage: { prompt_tokens: 30, total_tokens: 30 } };
       mainCalls++;
-      return mainCalls <= 7 ? call(String(mainCalls), "read_document", { part: mainCalls }) : { content: "All three sources completed", usage: { prompt_tokens: 10, total_tokens: 10 } };
+      return mainCalls <= 7 ? call(String(mainCalls), "read_pdf_text", { part: mainCalls }) : { content: "All three sources completed", usage: { prompt_tokens: 10, total_tokens: 10 } };
     });
     execute.mockImplementation(async (_name, args) => String(args.part).repeat(68_000));
     const result = await runAgentLoop(messages, tools, session);

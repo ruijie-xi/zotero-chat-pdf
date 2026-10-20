@@ -49,29 +49,28 @@ afterEach(() => {
 });
 
 describe("provider selection in preferences", () => {
-  it("shows only the selected conversion engine and preserves hidden settings", () => {
-    change("pdfConversionEngine", "mineru");
-    expect((document.querySelector("#zotero-prefpane-chatpdf-visionSettings") as HTMLElement).hidden).toBe(true);
-    expect((document.querySelector("#zotero-prefpane-chatpdf-mineruSettings") as HTMLElement).hidden).toBe(false);
-    change("pdfConversionEngine", "vision");
-    expect((document.querySelector("#zotero-prefpane-chatpdf-mineruSettings") as HTMLElement).hidden).toBe(true);
-    expect(field("pdfVisionProfile").getAttribute("type")).toBe("hidden");
-    expect(document.querySelectorAll(".chatpdf-preference-section")).toHaveLength(4);
+  it("offers all 23 shared tool switches, enabled by default and persisted individually", () => {
+    const switches = [...document.querySelectorAll<HTMLInputElement>("input[data-tool-name]")];
+    expect(switches).toHaveLength(23);
+    expect(switches.every(input => input.checked)).toBe(true);
+    const web = switches.find(input => input.dataset.toolName === "web_fetch")!;
+    web.checked = false; web.dispatchEvent(new Event("change"));
+    expect(JSON.parse(prefs.disabledTools)).toEqual(["web_fetch"]);
+    expect(switches.filter(input => input.checked)).toHaveLength(22);
+    web.checked = true; web.dispatchEvent(new Event("change"));
+    expect(JSON.parse(prefs.disabledTools)).toEqual([]);
   });
-  it("protects a conversion profile from deletion until another profile is selected", () => {
-    const option = document.querySelector('#zotero-prefpane-chatpdf-pdfVisionProfiles menuitem[value="Legacy"]');
-    change("pdfVisionProfiles", "Legacy");
-    expect(document.querySelector('#zotero-prefpane-chatpdf-pdfVisionProfiles menuitem[value="Legacy"]')).toBe(option);
-    const row = () => document.querySelector("#zotero-prefpane-chatpdf-profileList > div")!;
-    const remove = () => row().querySelectorAll<HTMLButtonElement>("button")[1];
-    expect(prefs.pdfVisionProfile).toBe("Legacy");
-    expect(remove().disabled).toBe(true); remove().click();
-    expect(JSON.parse(prefs.modelProfiles)).toHaveLength(1);
-    expect(document.querySelector("#zotero-prefpane-chatpdf-modelRoleStatus")!.textContent).toContain("Legacy (legacy-model)");
-    change("pdfVisionProfiles", "");
-    expect(remove().disabled).toBe(false); remove().click();
-    expect(JSON.parse(prefs.modelProfiles)).toHaveLength(0);
-    expect(prefs.pdfVisionProfile).toBe("");
+  it("offers vision capability configuration and removes conversion settings", () => {
+    expect(document.querySelector('[preference="pdfConversionEngine"]')).toBeNull();
+    expect(document.querySelector('[preference="mineruToken"]')).toBeNull();
+    expect(document.querySelector('[preference="pdfVisionProfile"]')).toBeNull();
+    change("visionSupport", "enabled");
+    field("profileName").value = "Vision";
+    (field("profileSaveBtn") as HTMLButtonElement).click();
+    expect(JSON.parse(prefs.modelProfiles).find((p: any) => p.name === "Vision").visionSupport).toBe("enabled");
+    change("visionSupport", "disabled"); loadProfile("Vision");
+    expect(prefs.visionSupport).toBe("enabled");
+    loadProfile("Legacy"); expect(prefs.visionSupport).toBe("auto");
   });
   it("refreshes capabilities using all current manual limits, including the generation ceiling", async () => {
     change("inputTokenLimit", "40000"); change("imageTokenReserve", "2000");
@@ -81,8 +80,8 @@ describe("provider selection in preferences", () => {
   });
   it("uses native Zotero menus for every dropdown and persists command selections", () => {
     expect(document.querySelectorAll("select, datalist")).toHaveLength(0);
-    expect(document.querySelectorAll("menulist")).toHaveLength(8);
-    for (const [key, value] of [["pdfConversionEngine", "vision"], ["llmProvider", "deepseek"], ["llmThinkingMode", "disabled"], ["llmThinkEffort", "max"], ["debugLogMode", "off"], ["tokenizerMode", "deepseek-v4-estimate"]]) {
+    expect(document.querySelectorAll("menulist")).toHaveLength(7);
+    for (const [key, value] of [["visionSupport", "enabled"], ["llmProvider", "deepseek"], ["llmThinkingMode", "disabled"], ["llmThinkEffort", "max"], ["debugLogMode", "off"], ["tokenizerMode", "deepseek-v4-estimate"]]) {
       const menu = field(key);
       expect(menu.namespaceURI).toBe(XUL_NS);
       expect(menu.getAttribute("native")).toBe("true");

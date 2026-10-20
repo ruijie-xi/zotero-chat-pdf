@@ -1,5 +1,5 @@
 import type { ChatSession, SourceItem } from "./chat-session";
-import { getDocDir } from "./md-cache";
+import { getCacheDir } from "../utils/cache-dir";
 import { atomicWrite } from "../utils/atomic-storage";
 import { sourceCacheKey } from "./source-identity";
 
@@ -42,7 +42,7 @@ function imageRoot(source: Pick<SourceItem, "cacheKey">): string {
   if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(source.cacheKey) || source.cacheKey.includes("..")) {
     throw new Error("Invalid image source cache key.");
   }
-  return getDocDir(source.cacheKey);
+  return PathUtils.join(getCacheDir(), "documents", source.cacheKey);
 }
 
 /** Never follow links out of a source cache, including intermediate directories. */
@@ -86,33 +86,16 @@ export async function readImageFile(path: string): Promise<Uint8Array> {
 }
 
 export async function listSourceImages(source: SourceItem, signal?: AbortSignal): Promise<string[]> {
-  if (source.kind === "image") return ["image.bin"];
-  const result: string[] = [];
-  const root = imageRoot(source);
-  if (!await IOUtils.exists(root)) return result;
-  const visit = async (relative: string) => {
-    signal?.throwIfAborted();
-    const path = relative ? await checkedPath(source, relative) : root;
-    if (Zotero.File.pathToFile(path).isSymlink()) return;
-    for (const child of await IOUtils.getChildren(path)) {
-      signal?.throwIfAborted();
-      if (Zotero.File.pathToFile(child).isSymlink()) continue;
-      const name = PathUtils.filename(child);
-      const entry = relative ? `${relative}/${name}` : name;
-      const stat = await IOUtils.stat(child);
-      if (stat.type === "directory") await visit(entry);
-      else if (stat.type === "regular" && /\.(png|jpe?g|webp)$/i.test(name)) result.push(entry);
-    }
-  };
-  await visit("");
-  return result.sort();
+  signal?.throwIfAborted();
+  return source.kind === "image" ? ["image.bin"] : [];
+
 }
 
 export async function readSourceImage(source: SourceItem, relative?: string, signal?: AbortSignal): Promise<ImageInput> {
   signal?.throwIfAborted();
-  const path = relative || (source.kind === "image" ? "image.bin" : "");
+  if (source.kind !== "image") throw new Error("Use read_pdf_page for PDF sources.");
+  const path = relative || "image.bin";
   if (source.kind === "image" && path !== "image.bin") throw new Error("This source contains only image.bin.");
-  if (source.kind !== "image" && !/\.(png|jpe?g|webp)$/i.test(path)) throw new Error("Use an image path returned by list_images.");
   const bytes = await readImageFile(await checkedPath(source, path));
   signal?.throwIfAborted();
   const mime = imageMime(bytes);

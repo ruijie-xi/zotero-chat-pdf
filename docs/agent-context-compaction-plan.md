@@ -1,3 +1,5 @@
+> Historical record. The PDF-to-Markdown pipeline has been removed. For the current implementation, see [Direct PDF reading](direct-pdf-reading.md). Conversion-specific instructions below no longer apply.
+
 > Historical implementation plan for 0.9.0. Token capacity policy is superseded by [model-aware-context-plan.md](model-aware-context-plan.md) and the current [LLM workflow](llm-workflow.md). Historical incident evidence below is unchanged.
 
 # Recoverable agent context management
