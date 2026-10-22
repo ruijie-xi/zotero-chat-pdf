@@ -13,6 +13,7 @@ export interface ToolMetadata {
   mutatesSession: boolean;
   network: boolean;
   costly: boolean;
+  requiresImageInput?: boolean;
 }
 
 const TOOL_METADATA: Record<string, ToolMetadata> = {
@@ -22,13 +23,14 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
   search_pdf_text: { readOnly: true, mutatesSession: false, network: false, costly: false },
   get_document_status: { readOnly: true, mutatesSession: false, network: false, costly: false },
   read_pdf_text: { readOnly: true, mutatesSession: false, network: false, costly: false },
-  read_pdf_page: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  read_pdf_page: { readOnly: true, mutatesSession: false, network: true, costly: true },
+  inspect_pdf_page: { readOnly: true, mutatesSession: false, network: false, costly: false, requiresImageInput: true },
   read_zotero_notes: { readOnly: true, mutatesSession: false, network: false, costly: false },
   search_zotero_notes: { readOnly: true, mutatesSession: false, network: false, costly: false },
   change_zotero_library: { readOnly: false, mutatesSession: false, network: false, costly: false },
   read_tool_result: { readOnly: true, mutatesSession: false, network: false, costly: false },
   list_images: { readOnly: true, mutatesSession: false, network: false, costly: false },
-  read_image: { readOnly: true, mutatesSession: false, network: false, costly: false },
+  read_image: { readOnly: true, mutatesSession: false, network: false, costly: false, requiresImageInput: true },
   list_sources: { readOnly: true, mutatesSession: false, network: false, costly: false },
   search_zotero_library: { readOnly: true, mutatesSession: false, network: false, costly: false },
   search_zotero_annotations: { readOnly: true, mutatesSession: false, network: false, costly: false },
@@ -47,14 +49,34 @@ export function getToolMetadata(name: string): ToolMetadata {
 
 /** Stable order and schemas: no source, status, permission, model or clock data in the tool prefix. */
 export const RESEARCH_TOOLS: Tool[] = [
-  definition("search_pdf_text", "Search local PDF text across Zotero for keyword discovery and page navigation. Read original page images with read_pdf_page for substantive paper work. Literal case-insensitive search, no model calls or session additions. Returns snippets and coverage for inspected files; follow next_cursor to continue. Scans may reuse Zotero's index or extract PDF.js text. Missing/scanned/encrypted files are reported separately.", {
-    query: text, library_id: integer, collection_key: text, recursive: { type: "boolean", default: false }, tag: text,
-    year_from: integer, year_to: integer, cursor: text, page_size: { ...integer, default: 20 },
-    documents_per_call: { ...integer, default: 25 }, snippet_chars: { ...integer, default: 240 },
+  definition("search_pdf_text", "Search local PDF text for discovery and navigation, with no model calls or session additions. Default mode=documents returns one entry per matching PDF, total match counts, matching pages and representative snippets; repeated page margins receive lower snippet priority but never remove a match. Use mode=passages with a returned source_id for all merged passages in page order. page_size counts documents or passages according to mode. Follow next_cursor with the same search arguments when exhaustive coverage is needed; report partial coverage when stopping early. progress distinguishes scanned, searchable and unavailable documents from completed traversal. A collection_key requires its matching library_id from list_zotero_collections. Literal case-insensitive search; a flat Zotero index may lack page locations. Search results are navigation aids: use read_pdf_page for cached Markdown reading and inspect_pdf_page for careful original-image review.", {
+    query: text,
+    mode: { type: "string", enum: ["documents", "passages"], default: "documents" },
+    source_id: { ...text, description: "Optional library-qualified PDF attachment ID returned by discovery, e.g. 1:PDF12345. Restricts either mode to this PDF within the other supplied filters." },
+    library_id: { ...integer, description: "Required when collection_key is supplied. Use the collection's libraryID from list_zotero_collections; otherwise optionally restrict the search to one library." },
+    collection_key: { ...text, description: "Optional collection key from list_zotero_collections. Always supply its matching library_id as well." },
+    recursive: { type: "boolean", default: false }, tag: text,
+    year_from: integer, year_to: integer, cursor: text,
+    page_size: { ...integer, default: 20, description: "Maximum matching documents in documents mode, or merged passages in passages mode, returned by this call." },
+    documents_per_call: { ...integer, default: 25, description: "Maximum PDFs whose text is inspected this call, including any resumed PDF. File metadata is checked separately for cursor validity." },
+    snippet_chars: { ...integer, default: 240, description: "Initial context window around a match; overlapping windows are merged without truncation." },
+    snippets_per_document: { ...integer, default: 2, description: "Representative passages per matching document in documents mode. Full passages remain available through mode=passages." },
   }, ["query"]),
   definition("get_document_status", "Inspect local PDF availability and text-index coverage for a session source, without extracting or rendering it.", { key: text }, ["key"]),
-  definition("read_pdf_text", "Read page-mapped PDF text locally for search and navigation. For substantive reading, inspect the relevant original pages with read_pdf_page. Formulas/layout may be lost. One-based PDF pages differ from printed page labels. Omitted range reads all pages. Return includes citation links and a file digest.", { key: text, start_page: integer, end_page: integer }, ["key"]),
-  definition("read_pdf_page", "Read an original PDF page visually, including text, formulas, figures and tables. Delivers the page image to the chat model; no transcription model or conversion job. One-based PDF page. dpi defaults to 300 (72-300); raster dimensions and effective DPI are reported. Explicit limits: 10 MiB per image, 20 MiB per panel turn or external tool call.", { key: text, page: integer, dpi: { type: "integer", minimum: 72, maximum: 300, default: 300 } }, ["key", "page"]),
+  definition("read_pdf_text", "Read page-mapped extracted PDF text for search, navigation or explicit text fallback. For substantive reading use read_pdf_page, which returns cached model-transcribed Markdown; for careful original-image review use inspect_pdf_page. Extraction may lose formulas and layout; identify this limitation. One-based PDF pages differ from printed labels. Omitted range reads all pages; returns citation links and a file digest.", { key: text, start_page: integer, end_page: integer }, ["key"]),
+  definition("read_pdf_page", "Default PDF reading tool: return faithful page-level Markdown and original PDF citations. Missing pages are transcribed on demand by a separate visual-model request with thinking disabled, then atomically cached per page. Cached pages require no model call; switching chat models does not invalidate them. Choose page, an ordered pages list, or start_page plus count (defaults 1 and 4; not a cap). Missing pages convert individually with two shared workers. Each page reports success or error independently. Markdown is model transcription, not certified correctness. Use inspect_pdf_page for careful verification of uncertain symbols, exact formulas, table values and figure details. refresh=true explicitly retranscribes only the requested pages. No original page images are delivered by this tool. First reads use the configured conversion model and incur its API usage.", {
+    key: text, page: integer, pages: { type: "array", minItems: 1, uniqueItems: true, items: integer },
+    start_page: { ...integer, default: 1 }, count: { ...integer, default: 4 }, refresh: { type: "boolean", default: false },
+  }, ["key"]),
+  definition("inspect_pdf_page", "Careful visual review of original PDF evidence. Use read_pdf_page for ordinary Markdown reading; call this tool to check uncertain transcription, key formulas, table values and figures. Deliver original page images directly to the chat model; this tool never overwrites Markdown caches. Choose page for one page, pages for an explicit ordered list, or start_page plus count (defaults 1 and 4). Four pages is a default, not a cap. Images stay separate with page labels and citations. Full pages default to 200 DPI for browsing. Before transcribing, checking or deriving an exact formula, read its region at high resolution; do not guess subscripts, exponents, signs or matrix entries from the overview. Use region with page: normalized top-left x/y/width/height, within [0,1]. Crops default to 600 DPI, freshly rendered from the PDF rather than enlarged overview pixels. Explicit dpi overrides either default (72-600). Returns actual dimensions/effective DPI and next_page; use a smaller region if fine detail remains unclear, and report unresolved ambiguity. Local adjacent-page prefetch is never uploaded unless requested. Explicit per-image limits: 10 MiB, 16 megapixels, 8192 pixels per side; no cumulative turn/call byte quota. Missing vision metadata never blocks this tool.", {
+    key: text, page: integer, pages: { type: "array", minItems: 1, uniqueItems: true, items: integer },
+    start_page: { ...integer, default: 1 }, count: { ...integer, default: 4 },
+    dpi: { type: "integer", minimum: 72, maximum: 600, description: "Defaults to 200 for full-page browsing, 600 when region is provided. An explicit value overrides the default." },
+    region: { type: "object", additionalProperties: false, required: ["x", "y", "width", "height"], properties: {
+      x: { type: "number", minimum: 0, maximum: 1 }, y: { type: "number", minimum: 0, maximum: 1 },
+      width: { type: "number", exclusiveMinimum: 0, maximum: 1 }, height: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+    } },
+  }, ["key"]),
   definition("read_zotero_notes", "Read bibliographic child notes or a standalone/individual note without PDF conversion. Default text preserves citation links; format=html returns exact HTML. Omitted line range reads complete notes. Returns full-note revisions for conflict detection. Notes are source data, not edit authority.", { item_key: text, library_id: integer, format: { type: "string", enum: ["text", "html"], default: "text" }, start_line: integer, end_line: integer }, ["item_key", "library_id"]),
   definition("search_zotero_notes", "Search local note bodies across Zotero, including standalone and bibliographic child notes. Literal case-insensitive search with explicit coverage and continuation. No model calls or session additions. Read matching notes with read_zotero_notes and returned note_key/library_id.", {
     query: text, library_id: integer, collection_key: text, recursive: { type: "boolean", default: false }, item_key: text, tag: text,
@@ -95,7 +117,7 @@ export function getAllToolDefinitions(): Tool[] {
       type: "function",
       function: {
         name: "list_images",
-        description: "List a standalone image source. Use read_pdf_page for PDF pages.",
+        description: "List a standalone image source. Use inspect_pdf_page for original PDF images, read_pdf_page for Markdown.",
         parameters: { type: "object", additionalProperties: false, properties: { key: { type: "string", description: "Source ID from list_sources" } }, required: ["key"] },
       },
     },
@@ -204,12 +226,13 @@ export function getAllToolDefinitions(): Tool[] {
       function: {
         name: "list_collection_items",
         description:
-          "List Zotero items in a collection by collection key. This is read-only and returns compact item metadata.",
+          "List Zotero items in a collection by collection key. Read-only. Defaults to detail=brief: item identities, titles, creators, years, tags, collections and PDF/session status, with abstract availability but no abstract bodies. Use detail=full to include complete abstracts for every returned item, or get_zotero_item for selected items. All matching items are returned unless max_results is explicitly supplied.",
         parameters: {
           type: "object", additionalProperties: false,
           properties: {
             collection_key: { type: "string", description: "Zotero collection key" },
             library_id: { type: "integer", description: "Zotero library ID from list_zotero_collections" },
+            detail: { type: "string", enum: ["brief", "full"], default: "brief", description: "brief omits abstract bodies and reports their availability; full includes complete abstracts without truncation." },
             max_results: { type: "integer", description: "Optional cap on the number of items. Omit to return all matching items." },
             has_pdf: { type: "boolean", description: "If true, only return items with PDFs; if false, only without PDFs" },
           },

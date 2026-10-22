@@ -2,7 +2,7 @@
   <html:link rel="localization" href="__addonRef__-preferences.ftl"/>
   <html:link rel="stylesheet" href="chrome://__addonRef__/content/chatpdf.css"/>
 </linkset>
-<groupbox>
+<groupbox class="chatpdf-preferences">
   <label><html:h2 data-l10n-id="pref-title"/></label>
   <description data-l10n-id="pref-save-hint"/>
   <html:section class="chatpdf-preference-section">
@@ -17,40 +17,30 @@
       </menupopup>
     </menulist>
   </hbox>
-  <html:p id="zotero-prefpane-__addonRef__-providerHint" data-l10n-id="pref-llm-provider-go-hint" hidden="hidden" style="font-size: 11px;" />
+  <html:p id="zotero-prefpane-__addonRef__-providerHint" data-l10n-id="pref-llm-provider-go-hint" hidden="hidden" class="chatpdf-pref-help" />
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmApiBase" data-l10n-id="pref-llm-api-base"></html:label>
-    <html:input type="text" id="zotero-prefpane-__addonRef__-llmApiBase" preference="llmApiBase" style="flex: 1;" />
+    <html:input type="text" id="zotero-prefpane-__addonRef__-llmApiBase" preference="llmApiBase" class="chatpdf-pref-flex" />
   </hbox>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmApiKey" data-l10n-id="pref-llm-api-key"></html:label>
-    <html:input type="password" id="zotero-prefpane-__addonRef__-llmApiKey" preference="llmApiKey" style="flex: 1;" />
+    <html:input type="password" id="zotero-prefpane-__addonRef__-llmApiKey" preference="llmApiKey" class="chatpdf-pref-flex" />
   </hbox>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmModel" data-l10n-id="pref-llm-model"></html:label>
-    <html:input type="text" id="zotero-prefpane-__addonRef__-llmModel" preference="llmModel" style="flex: 1;" />
-    <menulist id="zotero-prefpane-__addonRef__-providerModels" native="true" data-l10n-id="pref-llm-model-suggestions" style="max-width: 180px;">
+    <html:input type="text" id="zotero-prefpane-__addonRef__-llmModel" preference="llmModel" class="chatpdf-pref-flex" />
+    <menulist id="zotero-prefpane-__addonRef__-providerModels" native="true" data-l10n-id="pref-llm-model-suggestions" class="chatpdf-pref-model-suggestions">
       <menupopup />
     </menulist>
   </hbox>
 
-  <hbox align="center">
-    <html:label for="zotero-prefpane-__addonRef__-visionSupport" data-l10n-id="pref-vision-inputs"/>
-    <menulist id="zotero-prefpane-__addonRef__-visionSupport" preference="visionSupport" native="true">
-      <menupopup>
-        <menuitem value="auto" data-l10n-id="pref-vision-inputs-auto"/>
-        <menuitem value="enabled" data-l10n-id="pref-vision-inputs-confirmed"/>
-        <menuitem value="disabled" data-l10n-id="pref-vision-inputs-disabled"/>
-      </menupopup>
-    </menulist>
-  </hbox>
   <description data-l10n-id="pref-vision-inputs-hint"/>
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmThinkingMode" data-l10n-id="pref-llm-thinking-mode"></html:label>
-    <menulist id="zotero-prefpane-__addonRef__-llmThinkingMode" preference="llmThinkingMode" native="true" style="width: 130px;">
+    <menulist id="zotero-prefpane-__addonRef__-llmThinkingMode" preference="llmThinkingMode" native="true" class="chatpdf-pref-select">
       <menupopup>
         <menuitem value="default" label="Default" />
         <menuitem value="enabled" label="Enabled" />
@@ -61,7 +51,7 @@
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-llmThinkEffort" data-l10n-id="pref-llm-think-effort"></html:label>
-    <menulist id="zotero-prefpane-__addonRef__-llmThinkEffort" preference="llmThinkEffort" native="true" style="width: 130px;">
+    <menulist id="zotero-prefpane-__addonRef__-llmThinkEffort" preference="llmThinkEffort" native="true" class="chatpdf-pref-select">
       <menupopup>
         <menuitem value="default" label="Default" />
         <menuitem value="high" label="High" />
@@ -70,40 +60,45 @@
     </menulist>
   </hbox>
 
-  <vbox style="margin-top: 4px;">
-    <hbox align="center" style="margin-bottom: 4px;">
-      <html:label data-l10n-id="pref-llm-test" style="font-weight: 600;"></html:label>
-      <html:span style="flex: 1;" />
-      <html:button id="zotero-prefpane-__addonRef__-llmTestBtn" data-l10n-id="pref-test-button" style="font-size: 11px; padding: 1px 8px; cursor: pointer;"></html:button>
+  <vbox class="chatpdf-pref-spaced">
+    <hbox align="center" class="chatpdf-pref-heading">
+      <html:label data-l10n-id="pref-llm-test" class="chatpdf-pref-label"></html:label>
+      <html:span class="chatpdf-pref-flex" />
+      <html:button id="zotero-prefpane-__addonRef__-llmTestBtn" data-l10n-id="pref-test-button" class="chatpdf-pref-small-button"></html:button>
     </hbox>
     <html:textarea id="zotero-prefpane-__addonRef__-llmTestPrompt"
-      style="width: 100%; min-height: 48px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
+      class="chatpdf-pref-textarea"
       rows="2">Reply with exactly: ChatPDF LLM test OK.</html:textarea>
     <html:pre id="zotero-prefpane-__addonRef__-llmTestDebug"
-      style="display: none; white-space: pre-wrap; max-height: 240px; overflow: auto; margin: 6px 0 0; padding: 8px; border: 1px solid var(--fill-quinary, #ddd); border-radius: 4px; font-size: 11px; background: var(--fill-senary, #f8f8f8);"></html:pre>
+      class="chatpdf-pref-debug" hidden="hidden"></html:pre>
   </vbox>
     <!-- Model Profiles -->
   <vbox>
-    <hbox align="center" style="margin-bottom: 4px;">
-      <html:label data-l10n-id="pref-model-profiles" style="font-weight: 600;"></html:label>
-      <html:span style="flex: 1;" />
-      <html:button id="zotero-prefpane-__addonRef__-profileSaveBtn" data-l10n-id="pref-profile-save" style="font-size: 11px; padding: 1px 8px; cursor: pointer;"></html:button>
+    <hbox align="center" class="chatpdf-pref-heading">
+      <html:label data-l10n-id="pref-model-profiles" class="chatpdf-pref-label"></html:label>
+      <html:span class="chatpdf-pref-flex" />
+      <html:button id="zotero-prefpane-__addonRef__-profileSaveBtn" data-l10n-id="pref-profile-save" class="chatpdf-pref-small-button"></html:button>
     </hbox>
-    <html:div id="zotero-prefpane-__addonRef__-profileList" style="min-height: 32px; border: 1px solid var(--fill-quinary, #ddd); border-radius: 4px; margin-bottom: 4px; overflow-y: auto; max-height: 150px;"></html:div>
-    <hbox align="center" style="gap: 4px;">
+    <html:div id="zotero-prefpane-__addonRef__-profileList" class="chatpdf-profile-list"></html:div>
+    <hbox align="center" class="chatpdf-pref-compact-row">
       <html:label for="zotero-prefpane-__addonRef__-profileName" data-l10n-id="pref-profile-name"></html:label>
-      <html:input type="text" id="zotero-prefpane-__addonRef__-profileName" data-l10n-id="pref-profile-placeholder" style="flex: 1;" />
+      <html:input type="text" id="zotero-prefpane-__addonRef__-profileName" data-l10n-id="pref-profile-placeholder" class="chatpdf-pref-flex" />
     </hbox>
-    <html:span id="zotero-prefpane-__addonRef__-profileStatus" style="font-size: 11px; color: #34c759; min-height: 16px; display: block; margin-top: 2px;"></html:span>
+    <html:span id="zotero-prefpane-__addonRef__-profileStatus" class="chatpdf-pref-status"></html:span>
   </vbox>
     <description data-l10n-id="pref-profile-save-hint"/>
+    <hbox align="center">
+      <html:label for="zotero-prefpane-__addonRef__-pdfTranscriptionProfile" data-l10n-id="pref-pdf-transcription-profile"/>
+      <menulist id="zotero-prefpane-__addonRef__-pdfTranscriptionProfile" preference="pdfTranscriptionProfile" native="true" class="chatpdf-pref-select"><menupopup/></menulist>
+    </hbox>
+    <description data-l10n-id="pref-pdf-transcription-help"/>
     <html:p id="zotero-prefpane-__addonRef__-modelRoleStatus" class="chatpdf-preference-summary"/>
   </html:section>
   <html:section class="chatpdf-preference-section">
     <html:h3 data-l10n-id="pref-section-behavior"/>
     <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-agentMaxIterations" data-l10n-id="pref-agent-max-iterations"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-agentMaxIterations" preference="agentMaxIterations" style="width: 80px;" min="1" />
+    <html:input type="number" id="zotero-prefpane-__addonRef__-agentMaxIterations" preference="agentMaxIterations" class="chatpdf-pref-number" min="1" />
   </hbox>
 
   <hbox align="center">
@@ -120,21 +115,21 @@
   <description data-l10n-id="pref-library-edit-hint"/>
   <html:div id="zotero-prefpane-__addonRef__-webSettings"><hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-braveSearchApiKey" data-l10n-id="pref-brave-search-api-key"></html:label>
-    <html:input type="password" id="zotero-prefpane-__addonRef__-braveSearchApiKey" preference="braveSearchApiKey" style="flex: 1;" />
+    <html:input type="password" id="zotero-prefpane-__addonRef__-braveSearchApiKey" preference="braveSearchApiKey" class="chatpdf-pref-flex" />
   </hbox></html:div>
     <html:details class="chatpdf-preference-advanced"><html:summary data-l10n-id="pref-section-prompt"/><vbox>
-    <hbox align="center" style="margin-bottom: 4px;">
-      <html:label data-l10n-id="pref-system-prompt" style="font-weight: 600;"></html:label>
-      <html:span style="flex: 1;" />
-      <html:button id="zotero-prefpane-__addonRef__-promptResetEN" data-l10n-id="pref-prompt-default-en" style="font-size: 11px; padding: 1px 8px; cursor: pointer;"></html:button>
-      <html:button id="zotero-prefpane-__addonRef__-promptResetCN" data-l10n-id="pref-prompt-default-zh" style="font-size: 11px; margin-left: 4px; padding: 1px 8px; cursor: pointer;"></html:button>
+    <hbox align="center" class="chatpdf-pref-heading">
+      <html:label data-l10n-id="pref-system-prompt" class="chatpdf-pref-label"></html:label>
+      <html:span class="chatpdf-pref-flex" />
+      <html:button id="zotero-prefpane-__addonRef__-promptResetEN" data-l10n-id="pref-prompt-default-en" class="chatpdf-pref-small-button"></html:button>
+      <html:button id="zotero-prefpane-__addonRef__-promptResetCN" data-l10n-id="pref-prompt-default-zh" class="chatpdf-pref-small-button chatpdf-pref-next-button"></html:button>
     </hbox>
     <html:textarea id="zotero-prefpane-__addonRef__-systemPrompt"
-      style="width: 100%; min-height: 120px; font-size: 12px; font-family: inherit; resize: vertical; box-sizing: border-box;"
+      class="chatpdf-pref-textarea chatpdf-pref-prompt"
       rows="6"></html:textarea>
-    <hbox pack="end" style="margin-top: 4px;">
-      <html:span id="zotero-prefpane-__addonRef__-promptStatus" style="font-size: 11px; color: #34c759; margin-right: 8px; align-self: center;"></html:span>
-      <html:button id="zotero-prefpane-__addonRef__-promptSave" data-l10n-id="pref-prompt-save" style="font-size: 12px; padding: 2px 16px; cursor: pointer; font-weight: 500;"></html:button>
+    <hbox pack="end" class="chatpdf-pref-spaced">
+      <html:span id="zotero-prefpane-__addonRef__-promptStatus" class="chatpdf-pref-prompt-status"></html:span>
+      <html:button id="zotero-prefpane-__addonRef__-promptSave" data-l10n-id="pref-prompt-save" class="chatpdf-pref-primary-button"></html:button>
     </hbox>
   </vbox></html:details>
   </html:section>
@@ -142,11 +137,11 @@
     <html:summary data-l10n-id="pref-section-advanced"/>
     <description data-l10n-id="pref-limits-hint"/>
   <description data-l10n-id="pref-generation-hint"/>
-  <hbox align="center"><html:label data-l10n-id="pref-context-window-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-contextWindowTokens" preference="contextWindowTokens" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-input-token-limit"/><html:input type="number" id="zotero-prefpane-__addonRef__-inputTokenLimit" preference="inputTokenLimit" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-max-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-maxOutputTokens" preference="maxOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-requested-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-requestedOutputTokens" preference="requestedOutputTokens" min="0" step="1" style="width: 120px;"/></hbox>
-  <hbox align="center"><html:label data-l10n-id="pref-image-token-reserve"/><html:input type="number" id="zotero-prefpane-__addonRef__-imageTokenReserve" preference="imageTokenReserve" min="0" step="1" style="width: 120px;"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-context-window-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-contextWindowTokens" preference="contextWindowTokens" min="0" step="1" class="chatpdf-pref-limit"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-input-token-limit"/><html:input type="number" id="zotero-prefpane-__addonRef__-inputTokenLimit" preference="inputTokenLimit" min="0" step="1" class="chatpdf-pref-limit"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-max-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-maxOutputTokens" preference="maxOutputTokens" min="0" step="1" class="chatpdf-pref-limit"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-requested-output-tokens"/><html:input type="number" id="zotero-prefpane-__addonRef__-requestedOutputTokens" preference="requestedOutputTokens" min="0" step="1" class="chatpdf-pref-limit"/></hbox>
+  <hbox align="center"><html:label data-l10n-id="pref-image-token-reserve"/><html:input type="number" id="zotero-prefpane-__addonRef__-imageTokenReserve" preference="imageTokenReserve" min="0" step="1" class="chatpdf-pref-limit"/></hbox>
   <hbox align="center">
     <html:label data-l10n-id="pref-tokenizer-mode" />
     <menulist id="zotero-prefpane-__addonRef__-tokenizerMode" preference="tokenizerMode" native="true">
@@ -161,17 +156,17 @@
     <separator class="thin"/>
     <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-panelWidth" data-l10n-id="pref-panel-width"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-panelWidth" preference="panelWidth" style="width: 90px;" min="280" step="10" />
+    <html:input type="number" id="zotero-prefpane-__addonRef__-panelWidth" preference="panelWidth" class="chatpdf-pref-width" min="280" step="10" />
   </hbox>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-cacheDir" data-l10n-id="pref-cache-dir"></html:label>
-    <html:input type="text" id="zotero-prefpane-__addonRef__-cacheDir" preference="cacheDir" style="flex: 1;" />
+    <html:input type="text" id="zotero-prefpane-__addonRef__-cacheDir" preference="cacheDir" class="chatpdf-pref-flex" />
   </hbox>
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-debugLogMode" data-l10n-id="pref-debug-log-mode"></html:label>
-    <menulist id="zotero-prefpane-__addonRef__-debugLogMode" preference="debugLogMode" native="true" style="width: 130px;">
+    <menulist id="zotero-prefpane-__addonRef__-debugLogMode" preference="debugLogMode" native="true" class="chatpdf-pref-select">
       <menupopup>
         <menuitem value="off" label="Off" />
         <menuitem value="metadata" label="Metadata only" />
@@ -182,7 +177,7 @@
 
   <hbox align="center">
     <html:label for="zotero-prefpane-__addonRef__-debugLogRetentionDays" data-l10n-id="pref-debug-log-retention"></html:label>
-    <html:input type="number" id="zotero-prefpane-__addonRef__-debugLogRetentionDays" preference="debugLogRetentionDays" style="width: 80px;" min="1" max="365" />
+    <html:input type="number" id="zotero-prefpane-__addonRef__-debugLogRetentionDays" preference="debugLogRetentionDays" class="chatpdf-pref-number" min="1" max="365" />
   </hbox>
   </html:details>
 </groupbox>

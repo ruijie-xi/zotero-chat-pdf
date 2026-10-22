@@ -1,26 +1,19 @@
-import { MODEL_BUDGET_FIELDS } from "./model-profile";
 import { installCitationLinks } from "./source-citation";
-import { createLibraryAccessControl } from "./library-access-control";
-import { getProviderApiBase, normalizeProvider } from "./llm-provider";
 import { config } from "../../package.json";
-import { ChatSession, SourceItem } from "./chat-session";
-import { createChatInput } from "./tiptap-input";
-import { checkImageSize, IMAGE_INPUT_HELP, importImage } from "./image-input";
 import { getPref, setPref } from "../utils/prefs";
-import { h, XUL_NS, XULMenuList } from "../utils/dom";
+import { XUL_NS, preserveBottomScroll } from "../utils/dom";
+import { uiLabel, uiText } from "../utils/ui-text";
 import {
   createPanelState, getPanelState, destroyPanelState,
-  abortCurrentStream, resetStreamingUI,
-  ModelProfile,
 } from "./panel-state";
-import { showFilteredHistory, showHistoryView, hideHistoryView } from "./history-view";
+import { showFilteredHistory } from "./history-view";
 import { refreshSourceChips } from "./source-chips";
 import { dismissSourceMenu } from "./source-chip-ui";
-import { renderChatHistory, updateUsageBar } from "./message-renderer";
-import { handleSend, autoSaveSession } from "./send-handler";
+import { autoSaveSession } from "./session-persistence";
+import { buildChatUI } from "./chat-view";
+import { addItemToSession, insertInputChip } from "./session-sources";
+export { addItemToSession } from "./session-sources";
 import {
-  addZoteroItemToSession,
-  getItemFromZoteroUri,
   getItemTitle,
   getChatAttachment,
 } from "./zotero-items";
@@ -50,62 +43,6 @@ function getPersistedPanelWidth(): number {
 
 function persistPanelWidth(width: number): void {
   setPref("panelWidth", Math.round(width));
-}
-
-// ---- Model profile helpers ----
-
-function loadModelProfiles(): ModelProfile[] {
-  try {
-    const raw = getPref("modelProfiles") as string;
-    if (!raw) return [];
-    return JSON.parse(raw) as ModelProfile[];
-  } catch (e: any) {
-    Zotero.debug(`[ChatPDF] loadModelProfiles parse error: ${e.message}`);
-    return [];
-  }
-}
-
-function getCurrentProfileName(): string {
-  return (getPref("activeProfile") as string) || "";
-}
-
-function refreshProfileSelect(root: HTMLElement): void {
-  const select = root.querySelector("#chatpdf-profile-select") as XULMenuList | null;
-  if (!select) return;
-  const doc = root.ownerDocument!;
-  const popup = select.querySelector("menupopup")!;
-  popup.replaceChildren();
-  const profiles = loadModelProfiles();
-  const currentProfile = getCurrentProfileName();
-  if (profiles.length === 0) {
-    select.style.display = "none";
-    return;
-  }
-  select.style.display = "";
-  for (const p of profiles) {
-    const opt = doc.createElementNS(XUL_NS, "menuitem");
-    opt.setAttribute("value", p.name);
-    opt.setAttribute("label", p.name);
-    popup.appendChild(opt);
-  }
-  select.value = currentProfile || profiles[0].name;
-}
-
-// ---- Session management ----
-
-export async function addItemToSession(item: Zotero.Item, target: Window | HTMLElement): Promise<void> {
-  const state = getPanelState(target);
-  const session = state.session;
-  const added = await addZoteroItemToSession(item, session);
-  if (state.session !== session || !added.sourceKey) return;
-  const doc = (target as Window).document || (target as HTMLElement).ownerDocument;
-  const root = doc?.querySelector("#chatpdf-root") as HTMLElement | null;
-  if (root) { refreshSourceChips(root); await autoSaveSession(root); }
-}
-
-/** Insert an inline mention chip into the TipTap editor. */
-function insertInputChip(source: SourceItem, _doc: Document, root: HTMLElement): void {
-  getPanelState(root).chatInput?.insertMention({ key: source.id, title: source.title });
 }
 
 // ---- Side panel injection ----
@@ -145,7 +82,7 @@ export function injectChatPanel(win: Window): void {
   splitter.id = "chatpdf-splitter";
   splitter.setAttribute("role", "separator");
   splitter.setAttribute("aria-orientation", "vertical");
-  splitter.setAttribute("aria-label", "Resize ChatPDF panel");
+  splitter.setAttribute("aria-label", uiText("Resize ChatPDF panel", "调整 ChatPDF 面板宽度"));
   splitter.tabIndex = 0;
 
   const vbox = doc.createElementNS(XUL_NS, "vbox") as HTMLElement;
@@ -163,10 +100,13 @@ export function injectChatPanel(win: Window): void {
   // --- Create minimized bar (hidden by default) ---
   const minimizedBar = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
   minimizedBar.id = "chatpdf-minimized-bar";
+  minimizedBar.setAttribute("role", "button");
+  minimizedBar.setAttribute("aria-label", uiLabel("restore"));
+  minimizedBar.tabIndex = 0;
   minimizedBar.style.display = "none";
   const minimizedLabel = doc.createElementNS("http://www.w3.org/1999/xhtml", "span") as HTMLElement;
   minimizedLabel.className = "chatpdf-minimized-label";
-  minimizedLabel.textContent = "Chat";
+  minimizedLabel.textContent = "ChatPDF";
   minimizedBar.appendChild(minimizedLabel);
   vbox.appendChild(minimizedBar);
 
@@ -217,8 +157,10 @@ export function injectChatPanel(win: Window): void {
   }
 
   function setPreferredWidth(width: number, persist = false): void {
-    preferredWidth = clampPanelWidth(width, layoutWidth(), reservedLayoutWidth());
-    renderPanelWidth();
+    preserveBottomScroll(root.querySelector("#chatpdf-messages"), () => {
+      preferredWidth = clampPanelWidth(width, layoutWidth(), reservedLayoutWidth());
+      renderPanelWidth();
+    });
     if (persist) persistPanelWidth(preferredWidth);
   }
 
@@ -279,6 +221,7 @@ export function injectChatPanel(win: Window): void {
     vbox.classList.add("chatpdf-panel-minimized");
     splitter.style.display = "none";
     renderPanelWidth();
+    minimizedBar.focus();
   }
 
   function restorePanel() {
@@ -291,6 +234,12 @@ export function injectChatPanel(win: Window): void {
   }
 
   minimizedBar.addEventListener("click", restorePanel);
+  minimizedBar.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    restorePanel();
+    (root.querySelector(".chatpdf-minimize-btn") as HTMLButtonElement | null)?.focus();
+  });
 
   hostLayout.appendChild(splitter);
   hostLayout.appendChild(vbox);
@@ -367,373 +316,6 @@ export function removeChatPanel(win: Window): void {
   destroyPanelState(win);
 }
 
-// ---- UI Building ----
-
-function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
-  const doc = root.ownerDocument!;
-  const state = getPanelState(root);
-  root.innerHTML = "";
-  state.showingHistory = false;
-
-  // 0. Title bar with minimize button
-  const titleBar = h(doc, "div", { className: "chatpdf-title-bar" });
-  const titleText = h(doc, "span", { className: "chatpdf-title-bar-text" }, "Chat");
-  titleBar.appendChild(titleText);
-  if (onMinimize) {
-    const minimizeBtn = h(doc, "button", { className: "chatpdf-minimize-btn", title: "Minimize" }, "\u2212");
-    minimizeBtn.addEventListener("click", onMinimize);
-    titleBar.appendChild(minimizeBtn);
-  }
-  root.appendChild(titleBar);
-
-  // 1. Messages area
-  const messagesArea = h(doc, "div", { className: "chatpdf-messages", id: "chatpdf-messages" });
-
-  const welcome = h(doc, "div", { className: "chatpdf-welcome" });
-  const welcomeIcon = h(doc, "div", { className: "chatpdf-welcome-icon" }, "\uD83D\uDCAC");
-  const welcomeText = h(doc, "div", { className: "chatpdf-welcome-text" }, "Ask questions about your documents");
-  const welcomeHint = h(doc, "div", { className: "chatpdf-welcome-hint" }, "Drop PDFs into the sources area or use the right-click menu to add papers");
-  welcome.appendChild(welcomeIcon);
-  welcome.appendChild(welcomeText);
-  welcome.appendChild(welcomeHint);
-  messagesArea.appendChild(welcome);
-
-  // Copy handler — stored for cleanup
-  const handler = (e: Event) => {
-    const win = doc.defaultView;
-    const sel = win?.getSelection?.();
-    if (!sel || sel.isCollapsed) return;
-    const text = sel.toString();
-    if (!text) return;
-    const anchor = sel.anchorNode;
-    if (!anchor || !messagesArea.contains(anchor)) return;
-    e.preventDefault();
-    try {
-      const helper = (Components.classes as any)["@mozilla.org/widget/clipboardhelper;1"]
-        .getService((Components.interfaces as any).nsIClipboardHelper);
-      helper.copyString(text);
-    } catch {
-      (e as ClipboardEvent).clipboardData?.setData("text/plain", text);
-    }
-  };
-  doc.addEventListener("copy", handler);
-  state.copyHandler = handler;
-
-  root.appendChild(messagesArea);
-
-  // History view elements (hidden by default)
-  const historyHeader = h(doc, "div", { className: "chatpdf-header-bar", id: "chatpdf-history-header", style: "display:none" });
-  const historyTitle = h(doc, "span", { className: "chatpdf-header-title" }, "Chat History");
-  const newChatBtnHeader = h(doc, "button", { className: "chatpdf-header-btn" }, "+ New Chat");
-  historyHeader.appendChild(historyTitle);
-  historyHeader.appendChild(newChatBtnHeader);
-  root.appendChild(historyHeader);
-
-  const historyFilterBarEl = h(doc, "div", { className: "chatpdf-history-filter-bar", id: "chatpdf-history-filter-bar", style: "display:none" });
-  root.appendChild(historyFilterBarEl);
-
-  const historyList = h(doc, "div", { className: "chatpdf-history-list", id: "chatpdf-history-list", style: "display:none" });
-  root.appendChild(historyList);
-
-  // 2. Resize handle + Source chips area
-  const resizeHandle = h(doc, "div", { className: "chatpdf-resize-handle" });
-  root.appendChild(resizeHandle);
-
-  const sourceArea = h(doc, "div", { className: "chatpdf-sources", id: "chatpdf-sources" });
-  const chipContainer = h(doc, "div", { className: "chatpdf-source-chips", id: "chatpdf-source-chips" });
-  sourceArea.appendChild(chipContainer);
-
-  resizeHandle.addEventListener("mousedown", (e: Event) => {
-    const me = e as MouseEvent;
-    me.preventDefault();
-    const startY = me.clientY;
-    const startHeight = sourceArea.getBoundingClientRect().height;
-    const win = doc.defaultView!;
-
-    function onMouseMove(ev: Event) {
-      const delta = startY - (ev as MouseEvent).clientY;
-      const newHeight = Math.min(300, Math.max(32, startHeight + delta));
-      sourceArea.style.height = newHeight + "px";
-    }
-    function onMouseUp() {
-      win.removeEventListener("mousemove", onMouseMove, true);
-      win.removeEventListener("mouseup", onMouseUp, true);
-    }
-    win.addEventListener("mousemove", onMouseMove, true);
-    win.addEventListener("mouseup", onMouseUp, true);
-  });
-
-  root.appendChild(sourceArea);
-
-  // 3. Input area
-  const inputArea = h(doc, "div", { className: "chatpdf-input-area", id: "chatpdf-input-area" });
-
-  const toolbar = h(doc, "div", { className: "chatpdf-toolbar" });
-  const historyBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{1F4CB} History");
-  const newChatBtn = h(doc, "button", { className: "chatpdf-toolbar-btn" }, "\u{2795} New Chat");
-  const imageButton = h(doc, "button", { className: "chatpdf-toolbar-btn", title: IMAGE_INPUT_HELP }, "Add image");
-  const imagePicker = h(doc, "input", { type: "file", accept: "image/png,image/jpeg,image/webp", multiple: "multiple", style: "display:none" }) as HTMLInputElement;
-  const imageStatus = h(doc, "div", { className: "chatpdf-input-hint", role: "status" });
-  imageButton.addEventListener("click", () => imagePicker.click());
-  imagePicker.addEventListener("change", () => {
-    const files = Array.from(imagePicker.files || []);
-    imagePicker.value = "";
-    void addImageFiles(files);
-  });
-  const profileSelect = doc.createElementNS(XUL_NS, "menulist") as XULMenuList;
-  profileSelect.setAttribute("class", "chatpdf-profile-select");
-  profileSelect.id = "chatpdf-profile-select";
-  profileSelect.setAttribute("native", "true");
-  profileSelect.style.display = "none";
-  profileSelect.appendChild(doc.createElementNS(XUL_NS, "menupopup"));
-  toolbar.appendChild(historyBtn);
-  toolbar.appendChild(newChatBtn);
-  toolbar.appendChild(imageButton);
-  toolbar.appendChild(imagePicker);
-  toolbar.appendChild(profileSelect);
-  inputArea.appendChild(toolbar);
-  inputArea.appendChild(createLibraryAccessControl(root));
-
-  const inputWrapper = h(doc, "div", { className: "chatpdf-input-wrapper" });
-
-  try {
-    state.chatInput = createChatInput(
-      doc,
-      () => { if (!state.isStreaming) handleSend(root); },
-      () => { if (!state.isStreaming) handleSend(root); },
-    );
-  } catch (err: any) {
-    Zotero.debug(`[ChatPDF] TipTap creation FAILED: ${err.message}\n${err.stack}`);
-  }
-
-  const sendBtn = h(doc, "button", { className: "chatpdf-send-btn", id: "chatpdf-send", title: "Send" }, "\u2191");
-
-  if (state.chatInput) inputWrapper.appendChild(state.chatInput.element);
-  inputWrapper.appendChild(sendBtn);
-  inputArea.appendChild(inputWrapper);
-
-  const usageBar = h(doc, "div", { className: "chatpdf-usage-bar", id: "chatpdf-usage-bar" });
-  inputArea.appendChild(usageBar);
-
-  const inputHint = h(doc, "div", { className: "chatpdf-input-hint" }, "Enter to send \u00B7 Ctrl+Enter: send \u00B7 Shift+Enter: new line");
-  inputArea.appendChild(inputHint);
-  inputArea.appendChild(imageStatus);
-
-  async function addImageFiles(files: File[]): Promise<void> {
-    const session = state.session;
-    const errors: string[] = [];
-    imageStatus.textContent = "Adding images…";
-    for (const file of files) {
-      try {
-        checkImageSize(file.size);
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        if (state.session !== session) return;
-        const source = await importImage(session, bytes, file.name || "Pasted image", undefined, () => state.session === session && root.isConnected);
-        if (state.session !== session) return;
-        insertInputChip(source, doc, root);
-      } catch (error: any) {
-        errors.push(`${file.name || "Image"}: ${error.message}`);
-      }
-    }
-    if (state.session !== session) return;
-    refreshSourceChips(root);
-    await autoSaveSession(root);
-    imageStatus.textContent = errors.length ? errors.join("\n") : IMAGE_INPUT_HELP;
-    state.chatInput?.restoreFocusAfterExternalInsert();
-  }
-
-  inputWrapper.addEventListener("paste", (event: Event) => {
-    const files = Array.from((event as ClipboardEvent).clipboardData?.files || []);
-    if (!files.length) return;
-    event.preventDefault();
-    event.stopPropagation();
-    void addImageFiles(files);
-  }, true);
-
-  root.appendChild(inputArea);
-
-  // ---- Drag-and-drop ----
-  inputWrapper.addEventListener("dragover", (e: Event) => {
-    (e as DragEvent).preventDefault();
-    inputWrapper.classList.add("chatpdf-drop-active");
-  });
-  inputWrapper.addEventListener("dragleave", (e: Event) => {
-    const related = (e as MouseEvent).relatedTarget as Node | null;
-    if (!related || !inputWrapper.contains(related)) {
-      inputWrapper.classList.remove("chatpdf-drop-active");
-    }
-  });
-  inputWrapper.addEventListener("drop", async (e: Event) => {
-    const de = e as DragEvent;
-    de.preventDefault();
-    de.stopPropagation();
-    inputWrapper.classList.remove("chatpdf-drop-active");
-    const dt = de.dataTransfer;
-    let handledDrop = false;
-
-    if (dt) {
-      const types = Array.from(dt.types);
-      Zotero.debug(`[ChatPDF] drop on input: dataTransfer.types = ${JSON.stringify(types)}`);
-      for (const type of types) {
-        try { Zotero.debug(`[ChatPDF] drop on input: ${type} = "${dt.getData(type)}"`); } catch {}
-      }
-    }
-
-    async function handleDroppedItem(item: Zotero.Item) {
-      await addItemToSession(item, root);
-      const pdf = getChatAttachment(item);
-      const src = state.session.getSource(pdf?.key || "", Number((pdf as any)?.libraryID) || undefined);
-      if (src) {
-        insertInputChip(src, doc, root);
-        handledDrop = true;
-      }
-      refreshSourceChips(root);
-    }
-
-    try {
-      if (dt?.files?.length && !dt.types.includes("zotero/item")) {
-        await addImageFiles(Array.from(dt.files));
-        return;
-      }
-      // 1. zotero/item
-      const zoteroItemData = dt?.getData("zotero/item");
-      if (zoteroItemData) {
-        for (const id of zoteroItemData.split(",").map((s: string) => parseInt(s, 10))) {
-          const droppedItem = Zotero.Items.get(id);
-          if (droppedItem) await handleDroppedItem(droppedItem);
-        }
-        return;
-      }
-
-      // 2. zotero/tab
-      const tabID = dt?.getData("zotero/tab");
-      if (tabID) {
-        try {
-          const mainWin = Zotero.getMainWindow() as any;
-          const reader = (Zotero as any).Reader?.getByTabID?.(tabID);
-          if (reader?.itemID) {
-            const item = Zotero.Items.get(reader.itemID);
-            if (item) { await handleDroppedItem(item); return; }
-          }
-          const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === tabID);
-          const itemID = tab?.data?.itemID;
-          if (itemID) {
-            const item = Zotero.Items.get(itemID);
-            if (item) { await handleDroppedItem(item); return; }
-          }
-        } catch (err) {
-          Zotero.debug(`[ChatPDF] drop on input: zotero/tab error: ${err}`);
-        }
-      }
-
-      // 3. URI-based fallbacks
-      const uriCandidates: string[] = [];
-      const mozUrl = dt?.getData("text/x-moz-url");
-      if (mozUrl) uriCandidates.push(mozUrl.split("\n")[0].trim());
-      const plainText = dt?.getData("text/plain");
-      if (plainText) uriCandidates.push(plainText.trim());
-      const uriList = dt?.getData("text/uri-list");
-      if (uriList) {
-        for (const line of uriList.split(/\r?\n/)) {
-          const u = line.trim();
-          if (u && !u.startsWith("#")) uriCandidates.push(u);
-        }
-      }
-      for (const uri of uriCandidates) {
-        const item = await getItemFromZoteroUri(uri);
-        if (item) { await handleDroppedItem(item); return; }
-      }
-
-      // 4. Last resort: currently-open tab
-      if (dt && Array.from(dt.types).length > 0) {
-        try {
-          const mainWin = Zotero.getMainWindow() as any;
-          const selectedTabID = mainWin.Zotero_Tabs?.selectedID;
-          if (selectedTabID && selectedTabID !== "zotero-pane") {
-            const reader = (Zotero as any).Reader?.getByTabID?.(selectedTabID);
-            if (reader?.itemID) {
-              const item = Zotero.Items.get(reader.itemID);
-              if (item) { await handleDroppedItem(item); return; }
-            }
-            const tab = mainWin.Zotero_Tabs?._tabs?.find((t: any) => t.id === selectedTabID);
-            const itemID = tab?.data?.itemID;
-            if (itemID) {
-              const item = Zotero.Items.get(itemID);
-              if (item) { await handleDroppedItem(item); return; }
-            }
-          }
-        } catch (err) {
-          Zotero.debug(`[ChatPDF] drop on input: last-resort error: ${err}`);
-        }
-      }
-    } catch (error: any) {
-      imageStatus.textContent = error.message;
-    } finally {
-      if (handledDrop) state.chatInput?.restoreFocusAfterExternalInsert();
-    }
-  }, true);
-
-  // ---- Event handlers ----
-
-  sendBtn.addEventListener("click", () => {
-    if (state.isStreaming) {
-      abortCurrentStream(root);
-    } else {
-      handleSend(root);
-    }
-  });
-
-  historyBtn.addEventListener("click", () => {
-    if (state.showingHistory) {
-      hideHistoryView(root);
-    } else {
-      showHistoryView(root);
-    }
-  });
-
-  const handleNewChat = async () => {
-    abortCurrentStream(root);
-    await autoSaveSession(root);
-    state.session = new ChatSession();
-    imageStatus.textContent = "";
-    resetStreamingUI(root);
-    hideHistoryView(root);
-    const msgs = root.querySelector("#chatpdf-messages");
-    if (msgs) {
-      msgs.innerHTML = "";
-      msgs.appendChild(welcome);
-    }
-    updateUsageBar(root);
-    refreshSourceChips(root);
-  };
-  newChatBtn.addEventListener("click", handleNewChat);
-  newChatBtnHeader.addEventListener("click", handleNewChat);
-
-  profileSelect.addEventListener("command", () => {
-    const profiles = loadModelProfiles();
-    const selected = profiles.find(p => p.name === profileSelect.value);
-    if (selected) {
-      setPref("llmProvider", normalizeProvider(selected.provider));
-      setPref("llmApiBase", getProviderApiBase(selected));
-      setPref("llmApiKey", selected.apiKey);
-      setPref("llmModel", selected.model);
-      setPref("llmThinkingMode", selected.thinkingMode || "default");
-      setPref("llmThinkEffort", selected.thinkEffort || "default");
-      for (const key of MODEL_BUDGET_FIELDS) setPref(key, selected[key] || 0);
-      setPref("tokenizerMode", selected.tokenizerMode || "auto");
-      setPref("visionSupport", selected.visionSupport || "auto");
-      getPanelState(root).session.contextStats = undefined;
-      updateUsageBar(root, getPanelState(root).session.getTokenUsage());
-      setPref("activeProfile", selected.name);
-      Zotero.debug(`[ChatPDF] Switched to profile: ${selected.name}`);
-    }
-  });
-
-  renderChatHistory(root);
-  refreshSourceChips(root);
-  refreshProfileSelect(root);
-}
-
 // ---- Context menu ----
 
 export function registerContextMenu(): void {
@@ -760,7 +342,7 @@ export function registerContextMenu(): void {
             if (!pdf) continue;
             const src = state.session.getSource(pdf.key, Number((pdf as any).libraryID) || undefined);
             if (src) {
-              insertInputChip(src, root.ownerDocument!, root);
+              insertInputChip(src, root);
               insertedSource = true;
             }
           }

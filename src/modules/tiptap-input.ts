@@ -16,6 +16,8 @@ import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
 import Mention from "@tiptap/extension-mention";
+import { uiText } from "../utils/ui-text";
+import { isComposingKey } from "../utils/keyboard";
 import Placeholder from "@tiptap/extension-placeholder";
 import History from "@tiptap/extension-history";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
@@ -88,9 +90,9 @@ function createKeyIsolationPlugin(): Plugin {
       handleDOMEvents: {
         keydown(_view: any, event: Event) {
           const ke = event as KeyboardEvent;
-          Zotero.debug(`[ChatPDF] TipTap keydown: key="${ke.key}" code="${ke.code}" ctrl=${ke.ctrlKey} shift=${ke.shiftKey} alt=${ke.altKey} meta=${ke.metaKey} defaultPrevented=${ke.defaultPrevented}`);
           event.stopPropagation();
-          return false; // let ProseMirror continue processing
+          // Let the IME commit text without running Enter or deletion shortcuts.
+          return isComposingKey(ke);
         },
         keyup(_view: any, event: Event) {
           event.stopPropagation();
@@ -98,17 +100,6 @@ function createKeyIsolationPlugin(): Plugin {
         },
         keypress(_view: any, event: Event) {
           event.stopPropagation();
-          return false;
-        },
-        beforeinput(_view: any, event: Event) {
-          const ie = event as InputEvent;
-          Zotero.debug(`[ChatPDF] TipTap beforeinput: inputType="${ie.inputType}" data="${ie.data}" defaultPrevented=${ie.defaultPrevented}`);
-          // Don't stop propagation for beforeinput — ProseMirror needs it
-          return false;
-        },
-        input(_view: any, event: Event) {
-          const ie = event as InputEvent;
-          Zotero.debug(`[ChatPDF] TipTap input: inputType="${ie.inputType}" data="${ie.data}"`);
           return false;
         },
       },
@@ -354,7 +345,7 @@ export function createChatInput(
         Text,
         History,
         Placeholder.configure({
-          placeholder: "Ask about your sources... (drop Zotero items or images here)",
+          placeholder: uiText("Ask about your sources…", "输入问题，可拖入文献或图片…"),
         }),
         CustomMention,
         KeyHandler,
@@ -367,7 +358,7 @@ export function createChatInput(
         }),
       ],
       editorProps: {
-        attributes: { style: "outline: none;" },
+        attributes: { "aria-label": uiText("Message", "消息"), "aria-multiline": "true", role: "textbox" },
         handlePaste(view, event) {
           event.preventDefault();
           const text = event.clipboardData?.getData("text/plain") || "";

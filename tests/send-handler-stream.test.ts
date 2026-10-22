@@ -3,11 +3,12 @@ vi.mock("../src/modules/agent-loop", () => ({ runAgentLoop: vi.fn() }));
 vi.mock("../src/modules/chat-history", () => ({ saveSession: vi.fn(async () => {}) }));
 vi.mock("../src/modules/debug-log", () => ({ logLLMRequest: vi.fn(async () => {}), logLLMResponse: vi.fn(async () => {}), logGenerationResult: vi.fn(async () => {}) }));
 vi.mock("../src/modules/source-chips", () => ({ refreshSourceChips: vi.fn() }));
-import { handleSend } from "../src/modules/send-handler";
+import { handleSend, resendEditedMessage } from "../src/modules/send-handler";
 import { runAgentLoop } from "../src/modules/agent-loop";
-import { createPanelState, destroyPanelState } from "../src/modules/panel-state";
+import { saveSession } from "../src/modules/chat-history";
+import { createPanelState, destroyPanelState, type StreamState } from "../src/modules/panel-state";
 import { ChatSession } from "../src/modules/chat-session";
-import { appendMessage, renderLiveStreamState } from "../src/modules/message-renderer";
+import { appendMessage, clearChatMessages, renderChatHistory, renderLiveStreamState } from "../src/modules/message-renderer";
 import type { IterationRecord } from "../src/modules/llm-client";
 
 const iteration = (content: string): IterationRecord => ({ content, reasoning: "Reason", toolCalls: [{ toolName: "list_sources", args: {}, result: "source", durationMs: 1 }] });
@@ -24,6 +25,23 @@ beforeEach(() => {
 afterEach(() => { destroyPanelState(window); vi.useRealTimers(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("assistant narration chronology", () => {
+  it("persists and releases a completed turn even when its final view fails", async () => {
+    const state = createPanelState(window);
+    let completed!: Promise<void>;
+    vi.mocked(runAgentLoop).mockImplementation(async () => {
+      const stream = state.backgroundStreams.get(state.session.id)!;
+      completed = stream.completion!;
+      stream.render = () => { throw new Error("Detached view"); };
+      return { content: "Saved answer", iterations: [], totalIterations: 1 };
+    });
+    await handleSend(root);
+    await completed;
+    expect(state.session.getHistory()[1].content).toBe("Saved answer");
+    expect(saveSession).toHaveBeenCalledTimes(2);
+    expect(state.backgroundStreams.size).toBe(0);
+    expect(state.isStreaming).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("sends newly added PDFs without a preparation step", async () => {
     const state = createPanelState(window);
     state.session.addSource("ABC12345", "Pending", undefined, 1);
@@ -91,7 +109,7 @@ describe("assistant narration chronology", () => {
     });
     await handleSend(root);
     const bubble = root.querySelector(".chatpdf-message-assistant")!;
-    expect([...bubble.children].map(el => el.className)).toEqual([
+    expect([...bubble.querySelectorAll(".chatpdf-iteration-content, .chatpdf-tool-block, .chatpdf-live-content")].map(el => el.className)).toEqual([
       "chatpdf-iteration-content", "chatpdf-tool-block", "chatpdf-iteration-content", "chatpdf-tool-block", "chatpdf-live-content",
     ]);
     const saved = ChatSession.fromSavedSession(createPanelState(window).session.toSavedSession()).getHistory()[1];
@@ -111,7 +129,7 @@ describe("assistant narration chronology", () => {
     });
     await handleSend(root);
     expect(root.querySelector(".chatpdf-tool-status")).toBeNull();
-    expect(root.querySelector(".chatpdf-reasoning-spinner")).toBeNull();
+    expect(root.querySelector(".chatpdf-reasoning-spinner:not([hidden])")).toBeNull();
     expect(root.textContent).toContain("Partial answer");
     expect(root.textContent).toContain("Error: Compaction failed");
     expect(root.querySelectorAll(".chatpdf-msg-row-assistant")).toHaveLength(1);
@@ -134,17 +152,98 @@ describe("assistant narration chronology", () => {
 
   it("restores chronological blocks when returning to a background stream", async () => {
     const state = createPanelState(window);
-    const stream = { session: state.session, abortController: new AbortController(), fullText: "Second narration", fullReasoning: "Current reasoning", thinkingDone: true, thinkingElapsed: 0, thinkingStartTime: 0, iterations: [iteration("First narration")] };
+    const stream: StreamState = { session: state.session, abortController: new AbortController(), fullText: "Second narration", fullReasoning: "Current reasoning", thinkingDone: true, thinkingElapsed: 0, thinkingStartTime: 0, iterations: [iteration("First narration")] };
     state.backgroundStreams.set(state.session.id, stream);
     renderLiveStreamState(root, stream);
     const first = root.querySelector(".chatpdf-iteration-content")!;
     stream.iterations.push(iteration("Second narration"));
     stream.fullReasoning = "";
     stream.fullText = "Final answer";
+    stream.render?.();
     await vi.advanceTimersByTimeAsync(100);
     expect(root.querySelector(".chatpdf-iteration-content")).toBe(first);
     expect(root.querySelectorAll(".chatpdf-iteration-content")).toHaveLength(2);
     expect(root.textContent!.match(/Second narration/g)).toHaveLength(1);
     expect(root.textContent!.indexOf("First narration")).toBeLessThan(root.textContent!.indexOf("Second narration"));
+  });
+
+  it("keeps the foreground stop controller when another chat finishes", async () => {
+    const state = createPanelState(window);
+    const firstSession = state.session;
+    const pending: Array<(text: string) => void> = [];
+    vi.mocked(runAgentLoop).mockImplementation((_messages, _tools, _session, callbacks) => new Promise(resolve => {
+      callbacks!.onStream!("Working", false);
+      pending.push(text => resolve({ content: text, iterations: [], totalIterations: 1 }));
+    }));
+    const first = handleSend(root);
+    await vi.advanceTimersByTimeAsync(100);
+    clearChatMessages(root);
+    state.session = new ChatSession(); state.session.titleSource = "user";
+    const secondSession = state.session;
+    const second = handleSend(root);
+    await vi.advanceTimersByTimeAsync(100);
+    const controller = state.currentAbortController;
+    pending[0]("First answer"); await first;
+    expect(firstSession.getHistory()[1].content).toBe("First answer");
+    expect(state.currentAbortController).toBe(controller);
+    expect(state.isStreaming).toBe(true);
+    expect(root.querySelector("#chatpdf-send")!.getAttribute("aria-label")).toBe("Stop");
+    expect(state.backgroundStreams.has(secondSession.id)).toBe(true);
+    expect(root.textContent).not.toContain("First answer");
+    pending[1]("Second answer"); await second;
+    expect(root.textContent).toContain("Second answer");
+    expect(state.isStreaming).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("shows and saves terminal errors after leaving and returning to a running chat", async () => {
+    const state = createPanelState(window), session = state.session;
+    let fail!: (error: Error) => void;
+    vi.mocked(runAgentLoop).mockImplementation((_messages, _tools, _session, callbacks) => new Promise((_resolve, reject) => {
+      callbacks!.onStream!("Partial answer", false); fail = reject;
+    }));
+    const sending = handleSend(root); await vi.advanceTimersByTimeAsync(100);
+    clearChatMessages(root); state.session = new ChatSession();
+    state.session = session; renderChatHistory(root);
+    renderLiveStreamState(root, state.backgroundStreams.get(session.id)!);
+    fail(new Error("Connection closed")); await sending;
+    expect(root.querySelectorAll(".chatpdf-msg-row-assistant")).toHaveLength(1);
+    expect(root.textContent).toContain("Partial answer");
+    expect(root.textContent).toContain("Error: Connection closed");
+    expect(session.getHistory()[1].status).toBe("error");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("waits for a cancelled turn before truncating edited history", async () => {
+    const state = createPanelState(window), session = state.session;
+    let stop!: () => void;
+    vi.mocked(runAgentLoop).mockImplementationOnce((_messages, _tools, _session, callbacks) => new Promise((_resolve, reject) => {
+      callbacks!.onStream!("Partial", false);
+      stop = () => reject(new DOMException("Stopped", "AbortError"));
+    }));
+    const sending = handleSend(root); await vi.advanceTimersByTimeAsync(100);
+    state.chatInput!.setText = vi.fn();
+    vi.mocked(runAgentLoop).mockResolvedValueOnce({ content: "Replacement", iterations: [], totalIterations: 1 });
+    const editing = resendEditedMessage(root, { sessionId: session.id, index: 0, text: "Edited" });
+    await Promise.resolve();
+    expect(runAgentLoop).toHaveBeenCalledTimes(1);
+    expect(state.currentAbortController!.signal.aborted).toBe(true);
+    stop(); await sending; await editing;
+    expect(state.chatInput!.setText).toHaveBeenCalledWith("Edited");
+    expect(session.getHistory()).toHaveLength(2);
+    expect(root.querySelectorAll(".chatpdf-msg-row-assistant")).toHaveLength(1);
+    expect(root.textContent).toContain("Replacement");
+  });
+
+  it("retains the stopped marker and partial content when reopening history", async () => {
+    vi.mocked(runAgentLoop).mockImplementation(async (_messages, _tools, _session, callbacks) => {
+      callbacks!.onStream!("Partial answer", false);
+      throw new DOMException("Stopped", "AbortError");
+    });
+    await handleSend(root);
+    clearChatMessages(root); renderChatHistory(root);
+    expect(root.querySelector(".chatpdf-stopped-marker")!.textContent).toBe("Generation stopped");
+    expect(root.textContent).toContain("Partial answer");
+    expect(createPanelState(window).session.getHistory()[1].status).toBe("cancelled");
   });
 });

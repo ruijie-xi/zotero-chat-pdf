@@ -27,7 +27,7 @@ describe("capability context and prefix reuse", () => {
     expect(next[0]).toEqual(first[0]);
     expect(String(next.at(-1)!.content)).toContain('"mode":"selected"');
     expect(String(next[0].content)).not.toContain("ABC12345");
-    expect(String(next[0].content)).toContain("Mandatory paper workflow:");
+    expect(String(next[0].content)).toContain("Use read_pdf_page for ordinary PDF reading");
   });
   it("keeps library evidence readable after unrelated session sources are removed", () => {
     const session = new ChatSession(), src = session.addSource("ABC12345", "Paper", undefined, 1);

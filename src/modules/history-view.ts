@@ -5,10 +5,11 @@ import { ChatSession } from "./chat-session";
 import {
   getPanelState, resetStreamingUI, setSendButtonToStop,
 } from "./panel-state";
-import { renderChatHistory, refreshSourceChips, renderLiveStreamState, updateUsageBar } from "./message-renderer";
-import { autoSaveSession } from "./send-handler";
+import { clearChatMessages, renderChatHistory, refreshSourceChips, renderLiveStreamState, updateUsageBar } from "./message-renderer";
+import { autoSaveSession } from "./session-persistence";
 import { filterHistory } from "./history-search";
 import { uiText } from "../utils/ui-text";
+import { isComposingKey } from "../utils/keyboard";
 
 function initHistoryControls(root: HTMLElement): void {
   if (root.querySelector("#chatpdf-history-controls")) return;
@@ -44,6 +45,7 @@ export function showFilteredHistory(parentKey: string, title: string): void {
 
 export function showHistoryView(root: HTMLElement): void {
   getPanelState(root).showingHistory = true;
+  root.querySelector('[data-action="history"]')?.setAttribute("aria-expanded", "true");
   initHistoryControls(root);
   (root.querySelector("#chatpdf-history-controls") as HTMLElement).hidden = false;
   const messagesEl = root.querySelector("#chatpdf-messages") as HTMLElement;
@@ -66,6 +68,7 @@ export function showHistoryView(root: HTMLElement): void {
 export function hideHistoryView(root: HTMLElement): void {
   const state = getPanelState(root);
   state.showingHistory = false;
+  root.querySelector('[data-action="history"]')?.setAttribute("aria-expanded", "false");
   state.historyLoadVersion++;
   const controls = root.querySelector("#chatpdf-history-controls") as HTMLElement | null;
   if (controls) controls.hidden = true;
@@ -103,7 +106,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
       filterBarEl.style.display = "";
       filterBarEl.appendChild(h(doc, "span", { className: "chatpdf-history-filter-label" },
         `Sessions for: ${state.historyFilterTitle || state.historyFilterParentKey}`));
-      const clearBtn = h(doc, "button", { className: "chatpdf-history-filter-clear" }, "\u00D7 Clear filter");
+      const clearBtn = h(doc, "button", { className: "chatpdf-history-filter-clear" }, uiText("Clear filter", "清除筛选"));
       clearBtn.addEventListener("click", () => {
         state.historyFilterParentKey = null;
         state.historyFilterTitle = null;
@@ -128,7 +131,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
     if (sessions.length === 0) {
       const msg = state.historyQuery || state.historyPinnedOnly || !state.historyIncludeEmpty && allSessions.length
         ? uiText("No matching chats. Change the search or filters; empty chats can be shown above.", "没有匹配的会话，请调整搜索或筛选；上方可选择显示空会话。") : state.historyFilterParentKey
-        ? `No sessions found for "${state.historyFilterTitle || state.historyFilterParentKey}"`
+        ? uiText(`No sessions found for "${state.historyFilterTitle || state.historyFilterParentKey}"`, `未找到“${state.historyFilterTitle || state.historyFilterParentKey}”的会话`)
         : uiText("No chat history yet", "暂无聊天记录");
       const empty = h(doc, "div", { className: "chatpdf-history-empty" }, msg);
       listEl.appendChild(empty);
@@ -138,16 +141,16 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
     for (const meta of visible) {
       const item = h(doc, "div", { className: "chatpdf-history-item", "data-session-id": meta.id });
 
-      const info = h(doc, "div", { className: "chatpdf-history-item-info" });
+      const info = h(doc, "div", { className: "chatpdf-history-item-info", role: "button", tabindex: "0" });
       const titleRow = h(doc, "div", { className: "chatpdf-history-item-title-row" });
-      const titleEl = h(doc, "span", { className: "chatpdf-history-item-title" }, meta.title || "Untitled chat");
-      const editTitleBtn = h(doc, "button", { className: "chatpdf-history-edit-title-btn", title: "Edit title" }, "\u270E");
+      const titleEl = h(doc, "span", { className: "chatpdf-history-item-title" }, meta.title || uiText("Untitled chat", "未命名会话"));
+      const editTitleBtn = h(doc, "button", { className: "chatpdf-history-edit-title-btn", type: "button", title: uiText("Edit title", "编辑标题"), "aria-label": uiText("Edit title", "编辑标题") }, "\u270E");
       titleRow.appendChild(titleEl);
       titleRow.appendChild(editTitleBtn);
       info.appendChild(titleRow);
       const details = h(doc, "div", { className: "chatpdf-history-item-details" });
       const dateEl = h(doc, "span", {}, formatRelativeDate(meta.updatedAt));
-      const sourceCount = h(doc, "span", {}, `${meta.sourceTitles.length} source${meta.sourceTitles.length !== 1 ? "s" : ""}`);
+      const sourceCount = h(doc, "span", {}, uiText(`${meta.sourceTitles.length} source${meta.sourceTitles.length !== 1 ? "s" : ""}`, `${meta.sourceTitles.length} 个来源`));
       details.appendChild(dateEl);
       details.appendChild(doc.createTextNode(" \u00B7 "));
       details.appendChild(sourceCount);
@@ -164,6 +167,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
       editTitleBtn.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         const input = h(doc, "input", { className: "chatpdf-history-title-input" }) as HTMLInputElement;
+        input.addEventListener("click", event => event.stopPropagation());
         input.value = meta.title || "";
         titleRow.replaceChild(input, titleEl);
         editTitleBtn.style.display = "none";
@@ -172,7 +176,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
 
         const saveTitle = async () => {
           input.removeEventListener("blur", saveTitle);
-          const newTitle = input.value.trim() || meta.title || "Untitled chat";
+          const newTitle = input.value.trim() || meta.title || uiText("Untitled chat", "未命名会话");
           if (newTitle !== meta.title) {
             meta.title = newTitle;
             await ChatHistory.updateSessionTitle(meta.id, newTitle, "user");
@@ -194,13 +198,15 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
 
         input.addEventListener("keydown", (ke: Event) => {
           const k = ke as KeyboardEvent;
+          k.stopPropagation();
+          if (isComposingKey(k)) return;
           if (k.key === "Enter") { k.preventDefault(); saveTitle(); }
           if (k.key === "Escape") { k.preventDefault(); cancelTitle(); }
         });
         input.addEventListener("blur", saveTitle);
       });
 
-      const deleteBtn = h(doc, "button", { className: "chatpdf-history-delete-btn", title: "Delete" }, "\u00D7");
+      const deleteBtn = h(doc, "button", { className: "chatpdf-history-delete-btn", type: "button", title: uiText("Delete", "删除"), "aria-label": uiText("Delete", "删除") }, "\u00D7");
 
       item.appendChild(info);
       item.appendChild(pin);
@@ -208,7 +214,9 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
 
       // Click to load session
       info.addEventListener("click", async () => {
+        const version = ++state.sessionLoadVersion;
         await autoSaveSession(root);
+        if (state.sessionLoadVersion !== version || !root.isConnected) return;
 
         // Check if there's a background stream for this session
         const bgStream = state.backgroundStreams.get(meta.id);
@@ -217,7 +225,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
           state.session = bgStream.session;
         } else {
           const saved = await ChatHistory.loadSession(meta.id);
-          if (!saved) return;
+          if (!saved || state.sessionLoadVersion !== version || !root.isConnected) return;
           state.session = ChatSession.fromSavedSession(saved);
         }
 
@@ -234,7 +242,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
         hideHistoryView(root);
         // Re-render messages
         const msgs = root.querySelector("#chatpdf-messages");
-        if (msgs) msgs.innerHTML = "";
+        clearChatMessages(root);
         renderChatHistory(root);
         refreshSourceChips(root);
 
@@ -245,6 +253,12 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
         }
       });
 
+      info.addEventListener("keydown", (event: KeyboardEvent) => {
+        if (event.target === info && !isComposingKey(event) && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault(); info.click();
+        }
+      });
+
       // Delete button
       deleteBtn.addEventListener("click", async (e: Event) => {
         e.stopPropagation();
@@ -252,7 +266,11 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
         activeStream?.abortController.abort();
         state.backgroundStreams.delete(meta.id);
         if (state.session.id === meta.id) {
+          state.sessionLoadVersion++;
           state.session = new ChatSession();
+          clearChatMessages(root);
+          resetStreamingUI(root);
+          refreshSourceChips(root);
           updateUsageBar(root);
         }
         await ChatHistory.deleteSession(meta.id);
@@ -270,7 +288,7 @@ export async function loadHistoryList(root: HTMLElement): Promise<void> {
   } catch (err: any) {
     if (state.historyLoadVersion !== version || !root.isConnected) return;
     Zotero.debug(`[ChatPDF] loadHistoryList error: ${err.message}`);
-    const errEl = h(doc, "div", { className: "chatpdf-history-empty" }, "Failed to load history");
+    const errEl = h(doc, "div", { className: "chatpdf-history-empty" }, uiText("Failed to load history", "无法加载聊天记录"));
     listEl.appendChild(errEl);
   }
 }

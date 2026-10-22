@@ -4,6 +4,7 @@ import * as ChatHistory from "./chat-history";
 import { getPanelState } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
 import { createSourceChip, SourceChipView } from "./source-chip-ui";
+import { uiText } from "../utils/ui-text";
 
 function saveCurrentSession(root: HTMLElement): void {
   const { session } = getPanelState(root);
@@ -27,6 +28,9 @@ function renderSourceChips(root: HTMLElement): void {
   if (!container) return;
   const doc = root.ownerDocument!;
   const sources = session.getSources();
+  root.dataset.hasSources = String(sources.length > 0);
+  const heading = root.querySelector("#chatpdf-sources-heading");
+  if (heading) heading.textContent = uiText(`Sources · ${sources.length}`, `来源 · ${sources.length}`);
   const rows = sourceRows.get(container) || new Map<string, SourceRow>();
   sourceRows.set(container, rows);
   const wanted: HTMLElement[] = [];

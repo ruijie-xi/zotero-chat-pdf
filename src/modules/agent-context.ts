@@ -1,4 +1,5 @@
 import type { ProviderMessage, TokenUsage } from "./llm-client";
+import { IMAGE_WINDOW, OFFLOADED_IMAGE_TEXT, planImageOffload } from "./image-window";
 
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 
@@ -33,11 +34,15 @@ export interface AgentContextData {
   active: number[];
   results: StoredResult[];
   checkpoints: ContextCheckpoint[];
-  requests?: { kind: "agent" | "compact"; generation: number; usage?: TokenUsage; inputChars?: number; inputTokens?: number; countMethod?: "local-bpe-estimate"; finishReason?: string; outputLimit?: number;
+  requests?: { kind: "agent" | "compact" | "pdf-transcription"; generation: number; sourceId?: string; page?: number; model?: string; durationMs?: number; usage?: TokenUsage; inputChars?: number; inputTokens?: number; countMethod?: "local-bpe-estimate"; finishReason?: string; outputLimit?: number;
     initialOutputLimit?: number; outputPolicy?: string; modelMaxOutput?: number; contextWindow?: number; inputLimit?: number; thinkingMode?: string; thinkEffort?: string }[];
   pending?: { assistant: ContextMessage; completed: { callId: string; resultId: string }[] };
   /** Binary image inputs are deliberately never serialized. */
   requiresRebuild?: boolean;
+  /** Event identities accepted in a completed provider response; not a claim of visual understanding. */
+  deliveredImageEvents?: number[];
+  imageOffloads?: { selections: { event: number; parts: number[] }[]; imageCount: number;
+    beforeBytes: number; afterBytes: number; triggerBytes: number; targetBytes: number; reason: "watermark" | "http-413" }[];
 }
 
 /** Task-independent continuation memory, not a user-facing answer. */
@@ -75,13 +80,57 @@ export class AgentContext {
 
   append(message: ContextMessage): void {
     // Never rewrite existing provider blocks. This also preserves raw argument strings.
-    this.data.active.push(this.archive(message));
+    const delivered = Array.isArray(message.content) && this.data.deliveredImageEvents?.some(index => this.data.events[index] === message);
+    const index = this.archive(message);
+    this.data.active.push(index);
+    if (delivered) (this.data.deliveredImageEvents ||= []).push(index);
   }
 
   /** Preserve incomplete responses without replaying invalid tool-call envelopes. */
   archive(message: ContextMessage): number {
     this.data.events.push(clone(message));
     return this.data.events.length - 1;
+  }
+
+  markImagesDelivered(): void {
+    const delivered = new Set(this.data.deliveredImageEvents);
+    for (const index of this.data.active) {
+      const content = this.data.events[index].content;
+      if (Array.isArray(content) && content.some(part => part.type === "image_url")) delivered.add(index);
+    }
+    this.data.deliveredImageEvents = [...delivered];
+  }
+
+  /** Persist one-way image substitutions while keeping text, tool receipts and original events exact. */
+  offloadImages(force = false, policy = IMAGE_WINDOW) {
+    const delivered = new Set(this.data.deliveredImageEvents);
+    const plan = planImageOffload(this.messages, new Set(this.data.active.flatMap((event, index) => delivered.has(event) ? [index] : [])), force, policy);
+    if (!plan) return;
+    const selections: { event: number; parts: number[] }[] = [];
+    for (const [index, parts] of plan.selections) {
+      const event = this.data.active[index], message = this.data.events[event];
+      if (!Array.isArray(message.content)) continue;
+      const replacement = this.archive({ ...message, content: message.content.map((part, partIndex) => parts.has(partIndex)
+        ? { type: "text" as const, text: OFFLOADED_IMAGE_TEXT } : part) });
+      this.data.active[index] = replacement;
+      if (delivered.has(event)) delivered.add(replacement);
+      selections.push({ event, parts: [...parts] });
+    }
+    this.data.deliveredImageEvents = [...delivered];
+    const record = { selections, imageCount: plan.imageCount, beforeBytes: plan.beforeBytes, afterBytes: plan.afterBytes,
+      triggerBytes: policy.triggerBytes, targetBytes: plan.targetBytes, reason: force ? "http-413" as const : "watermark" as const };
+    (this.data.imageOffloads ||= []).push(record);
+    return record;
+  }
+
+  /** Replace outgoing images without rewriting historical events or tool receipts. */
+  removeImageInputs(): void {
+    this.data.active = this.data.active.map(index => {
+      const message = this.data.events[index];
+      if (!Array.isArray(message.content) || !message.content.some(part => part.type === "image_url")) return index;
+      return this.archive({ ...message, content: message.content.map(part => part.type === "text" ? part.text
+        : "[Image omitted from this text-only request; this placeholder is not visual evidence.]").join("\n") });
+    });
   }
 
   storeResult(content: string, toolName: string, sourceIds: string[]): StoredResult {
@@ -175,7 +224,7 @@ export class AgentContext {
     const data = clone(this.data);
     for (const event of data.events) {
       if (event.resultId && data.results.some(result => result.id === event.resultId && result.content === event.content)) event.content = "";
-      if (Array.isArray(event.content)) {
+      if (Array.isArray(event.content) && event.content.some(part => part.type === "image_url")) {
         if (data.active.some(index => data.events[index] === event)) data.requiresRebuild = true;
         event.content = event.content.map(part => part.type === "text" ? part.text : "[Image input is not replayed after restart. Use read_image to inspect it again.]").join("\n");
       }

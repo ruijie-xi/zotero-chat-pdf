@@ -23,9 +23,9 @@ describe("shared Zotero tool channel", () => {
   });
   afterEach(() => { unregisterChatPdfBridge(); vi.mocked(Zotero.Prefs.get).mockReset(); });
 
-  it("publishes all 23 native names, descriptions and schemas by default", async () => {
+  it("publishes all 24 native names, descriptions and schemas by default", async () => {
     const tools = (await call("tools.list")).body.result.tools;
-    expect(tools).toHaveLength(23);
+    expect(tools).toHaveLength(24);
     expect(tools.map(({ metadata: _metadata, ...tool }: any) => tool)).toEqual(
       getToolDefinitions().map(tool => tool.function));
     expect(tools.find((tool: any) => tool.name === "web_search")).toBeDefined();
@@ -57,11 +57,15 @@ describe("shared Zotero tool channel", () => {
     expect(network).not.toHaveBeenCalled();
     network.mockRestore();
     setToolEnabled("web_fetch", true);
-    expect(getToolDefinitions()).toHaveLength(23);
+    expect(getToolDefinitions()).toHaveLength(24);
   });
   it.each([
+    ["search_pdf_text", { query: "energy", mode: "invalid" }, "unsupported value"],
+    ["search_pdf_text", { query: "energy", source_id: "PDF12345" }, "library-qualified"],
+    ["search_pdf_text", { query: "energy", collection_key: "COL00001" }, "library_id is required with collection_key"],
+    ["list_collection_items", { collection_key: "COL00001", detail: "summary" }, "unsupported value"],
     ["read_pdf_page", { key: "1:PDF12345", page: "2" }, "type integer"],
-    ["read_pdf_page", { key: "1:PDF12345", page: 1, dpi: 999 }, "allowed range"],
+    ["inspect_pdf_page", { key: "1:PDF12345", page: 1, dpi: 999 }, "allowed range"],
     ["list_sources", { unrestricted: true }, "not a supported parameter"],
     ["list_sources", null, "type object"],
   ])("validates %s arguments in the shared executor", async (name, args, error) => {

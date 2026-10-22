@@ -1,4 +1,4 @@
-> Historical record. The PDF-to-Markdown pipeline has been removed. For the current implementation, see [Direct PDF reading](direct-pdf-reading.md). Conversion-specific instructions below no longer apply.
+> Historical record. The legacy whole-document conversion pipeline has been retired. The current implementation uses [on-demand page Markdown](pdf-markdown-reading.md) and [original-page inspection](direct-pdf-reading.md). Legacy conversion instructions below no longer apply.
 
 > Historical implementation plan for 0.9.0. Token capacity policy is superseded by [model-aware-context-plan.md](model-aware-context-plan.md) and the current [LLM workflow](llm-workflow.md). Historical incident evidence below is unchanged.
 

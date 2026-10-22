@@ -4,10 +4,10 @@ import { atomicWrite } from "../utils/atomic-storage";
 import { sourceCacheKey } from "./source-identity";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-export const MAX_TURN_IMAGE_BYTES = 20 * 1024 * 1024;
-export const IMAGE_INPUT_HELP = "PNG, JPEG or WebP; up to 10 MiB per image and 20 MiB per turn. Requires a vision-capable model. Images are sent to your configured LLM provider when read.";
+export const IMAGE_INPUT_HELP = "PNG, JPEG or WebP; up to 10 MiB per image, with no cumulative turn or tool-call byte quota. Prefer images as primary evidence when available. Images are sent to your configured LLM provider when read; an explicit image-input rejection permits text fallback.";
 
 export interface ImageInput {
+  label?: string;
   sourceId: string;
   path: string;
   mime: string;
@@ -93,7 +93,7 @@ export async function listSourceImages(source: SourceItem, signal?: AbortSignal)
 
 export async function readSourceImage(source: SourceItem, relative?: string, signal?: AbortSignal): Promise<ImageInput> {
   signal?.throwIfAborted();
-  if (source.kind !== "image") throw new Error("Use read_pdf_page for PDF sources.");
+  if (source.kind !== "image") throw new Error("Use inspect_pdf_page for PDF sources.");
   const path = relative || "image.bin";
   if (source.kind === "image" && path !== "image.bin") throw new Error("This source contains only image.bin.");
   const bytes = await readImageFile(await checkedPath(source, path));

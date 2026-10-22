@@ -1,4 +1,4 @@
-> Historical record. The PDF-to-Markdown pipeline has been removed. For the current implementation, see [Direct PDF reading](direct-pdf-reading.md). Conversion-specific instructions below no longer apply.
+> Historical record. The legacy whole-document conversion pipeline has been retired. The current implementation uses [on-demand page Markdown](pdf-markdown-reading.md) and [original-page inspection](direct-pdf-reading.md). Legacy conversion instructions below no longer apply.
 
 # Character-unit audit and model-aware context requirements
 

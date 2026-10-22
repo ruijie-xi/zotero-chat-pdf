@@ -1,7 +1,8 @@
 import type { ModelBudgetSettings } from "./model-profile";
 import { buildLLMHeaders, getProviderApiBase, normalizeProvider, ProviderSettings } from "./llm-provider";
 import { getPref } from "../utils/prefs";
-import { assertRequestActive, withLLMTransport, TransportAttempt } from "./llm-transport";
+import { assertRequestActive, withLLMTransport, TransportAttempt, ProviderHttpError, ProviderRequestSizeError } from "./llm-transport";
+import { ProviderImageInputError, rejectsImageInput } from "./vision-support";
 
 export type VisionContent = ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail: "auto" | "low" | "high" } })[];
 /** Transport-only messages. Persisted chat messages remain plain text. */
@@ -184,7 +185,6 @@ export function getLLMSettings(): LLMSettings {
     requestedOutputTokens: Number(getPref("requestedOutputTokens")) || undefined,
     imageTokenReserve: Number(getPref("imageTokenReserve")) || undefined,
     tokenizerMode: String(getPref("tokenizerMode") || "auto"),
-    visionSupport: String(getPref("visionSupport") || "auto"),
     apiBase: getProviderApiBase({ provider, apiBase: (getPref("llmApiBase") as string) || DEFAULT_API_BASE }),
     apiKey: (getPref("llmApiKey") as string) || "",
     model: (getPref("llmModel") as string) || DEFAULT_MODEL,
@@ -356,7 +356,7 @@ export async function chatWithTools(
   signal?: AbortSignal,
   /** Use non-streaming mode. Returns rawMessage for provider-specific field preservation. */
   nonStreaming?: boolean,
-  requestOptions?: { maxTokens?: number; settings?: LLMSettings },
+  requestOptions?: { maxTokens?: number; settings?: LLMSettings; purpose?: "pdf-transcription" },
 ): Promise<ChatResult> {
   const settings = requestOptions?.settings || getLLMSettings();
 
@@ -368,19 +368,39 @@ export async function chatWithTools(
   const streaming = !nonStreaming;
   const gemini = isGeminiApi(url);
 
-  const body = buildChatCompletionBody(settings, messages, {
+  const body = requestOptions?.purpose === "pdf-transcription"
+    ? buildPdfTranscriptionBody(settings, messages, streaming, requestOptions.maxTokens)
+    : buildChatCompletionBody(settings, messages, {
     stream: streaming,
     tools,
     includeUsage: true,
     includeThinkingParams: !gemini,
     maxTokens: requestOptions?.maxTokens,
   });
-  if (gemini) {
+  if (gemini && requestOptions?.purpose !== "pdf-transcription") {
     body.extra_body = { google: { thinking_config: { include_thoughts: true } } };
   }
 
   return withLLMTransport(url, settings.model, signal, attempt =>
     requestChatCompletion(url, settings, body, messages, streaming, gemini, attempt, onStream, onThinking, signal));
+}
+
+/** Conversion-only policy. Never inherit the chat's reasoning effort or tools. */
+export function buildPdfTranscriptionBody(settings: LLMSettings, messages: ProviderMessage[], stream: boolean, maxTokens?: number): Record<string, unknown> {
+  const host = new URL(getProviderApiBase(settings)).hostname;
+  const gemini = isGeminiApi(getProviderApiBase(settings));
+  const openai = host === "api.openai.com";
+  const body = buildChatCompletionBody({ ...settings, thinkingMode: "disabled", thinkEffort: "default" }, messages,
+    { stream, maxTokens, includeThinkingParams: !gemini && !openai });
+  if (gemini) body.extra_body = { google: { thinking_config: { thinking_budget: 0, include_thoughts: false } } };
+  if (openai && /^(?:o\d|gpt-[5-9])/.test(settings.model)) {
+    delete body.max_tokens;
+    if (maxTokens) body.max_completion_tokens = maxTokens;
+    body.reasoning_effort = "none";
+  }
+  // Endpoints that cannot disable reasoning must report that error; no silent
+  // retry with thinking enabled or a different model is permitted.
+  return body;
 }
 
 async function requestChatCompletion(
@@ -391,26 +411,45 @@ async function requestChatCompletion(
 
   Zotero.debug(`[ChatPDF] chatWithTools: ${messages.length} messages, ${Array.isArray(body.tools) ? body.tools.length : 0} tools, stream=${streaming}, thinking=${settings.thinkingMode}, effort=${settings.thinkEffort}`);
 
+  const serialized = JSON.stringify(body);
   const res = await fetch(url, {
     method: "POST",
     headers: buildLLMHeaders(settings),
-    body: JSON.stringify(body),
+    body: serialized,
     signal,
   });
   attempt.phase = "response";
   assertRequestActive(signal);
 
   if (!res.ok) {
-    // An HTTP rejection must not be retried even if reading its body fails.
+    // Do not replay a network failure while reading an HTTP rejection body.
     attempt.receivedData = true;
     const text = await res.text();
+    // A complete HTTP rejection contains no model output. Only typed transient
+    // failures below may retry; context/image errors keep their own recovery.
+    attempt.receivedData = false;
     if ((res.status === 400 || res.status === 413) && /context_length_exceeded|maximum context length|context window|too many tokens|prompt is too long|exceed.{0,40}context/i.test(text)) {
       throw new ProviderContextError(`Provider context limit: ${text}`);
     }
-    const imageHint = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === "image_url"))
+    if (res.status === 413) {
+      const images = messages.flatMap(message => Array.isArray(message.content)
+        ? message.content.filter(part => part.type === "image_url") : []);
+      const inlineImageBytes = images.reduce((total, image) => {
+        const data = image.image_url.url;
+        if (!/^data:image\/[^,]+;base64,/.test(data)) return total;
+        const length = data.length - data.indexOf(",") - 1;
+        return total + Math.floor(length * 3 / 4) - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);
+      }, 0);
+      throw new ProviderRequestSizeError(new TextEncoder().encode(serialized).byteLength, images.length, inlineImageBytes);
+    }
+    const hasImages = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === "image_url"));
+    if (hasImages && rejectsImageInput(res.status, text)) {
+      throw new ProviderImageInputError(`LLM API rejected image inputs (${res.status}): ${text}`);
+    }
+    const imageHint = hasImages && [400, 415, 422].includes(res.status)
       ? " This request includes images. Check that the selected model and endpoint support vision and OpenAI-compatible image_url inputs."
       : "";
-    throw new Error(`LLM API error (${res.status}): ${text}${imageHint}`);
+    throw new ProviderHttpError(res.status, text, res.headers?.get("Retry-After"), imageHint);
   }
 
   // ---- Non-streaming path ----

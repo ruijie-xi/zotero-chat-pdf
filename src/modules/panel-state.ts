@@ -2,6 +2,7 @@ export type { ModelProfile } from "./model-profile";
 import { ChatSession } from "./chat-session";
 import { ChatInputEditor } from "./tiptap-input";
 import { IterationRecord, TokenUsage } from "./llm-client";
+import { uiLabel } from "../utils/ui-text";
 
 export interface StreamState {
   session: ChatSession;
@@ -15,6 +16,12 @@ export interface StreamState {
   iterations: IterationRecord[];
   /** Cumulative usage already reported for this in-flight turn. */
   usage?: TokenUsage;
+  modelLabel?: string;
+  timestamp?: number;
+  statusText?: string;
+  terminalStatus?: "complete" | "cancelled" | "error";
+  render?: (immediate?: boolean) => void;
+  completion?: Promise<void>;
 }
 
 
@@ -39,10 +46,12 @@ export interface PanelState {
   historyPinnedOnly: boolean;
   historyVisibleCount: number;
   historyLoadVersion: number;
+  sessionLoadVersion: number;
   backgroundStreams: Map<string, StreamState>;
   activePollIntervals: Set<number>;
   copyHandler: ((event: Event) => void) | null;
   panelCleanup: (() => void) | null;
+  streamViewCleanup: (() => void) | null;
 }
 
 const states = new Map<Window, PanelState>();
@@ -73,10 +82,12 @@ export function createPanelState(win: Window): PanelState {
     historyPinnedOnly: false,
     historyVisibleCount: 50,
     historyLoadVersion: 0,
+    sessionLoadVersion: 0,
     backgroundStreams: new Map(),
     activePollIntervals: new Set(),
     copyHandler: null,
     panelCleanup: null,
+    streamViewCleanup: null,
   };
   states.set(win, state);
   return state;
@@ -91,6 +102,7 @@ export function destroyPanelState(win: Window): void {
   if (!state) return;
   state.currentAbortController?.abort();
   for (const stream of state.backgroundStreams.values()) stream.abortController.abort();
+  state.streamViewCleanup?.();
   for (const interval of state.activePollIntervals) win.clearInterval(interval);
   state.panelCleanup?.();
   state.panelCleanup = null;
@@ -131,13 +143,15 @@ export function resetStreamingUI(root: HTMLElement): void {
 
 export function setSendButtonToStop(sendBtn: HTMLButtonElement): void {
   sendBtn.textContent = "\u25A0";
-  sendBtn.title = "Stop";
+  sendBtn.title = uiLabel("stop");
+  sendBtn.setAttribute("aria-label", uiLabel("stop"));
   sendBtn.classList.add("chatpdf-send-btn-stop");
   sendBtn.disabled = false;
 }
 
 export function setSendButtonToSend(sendBtn: HTMLButtonElement): void {
   sendBtn.textContent = "\u2191";
-  sendBtn.title = "Send";
+  sendBtn.title = uiLabel("send");
+  sendBtn.setAttribute("aria-label", uiLabel("send"));
   sendBtn.classList.remove("chatpdf-send-btn-stop");
 }

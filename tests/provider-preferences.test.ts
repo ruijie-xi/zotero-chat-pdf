@@ -49,28 +49,38 @@ afterEach(() => {
 });
 
 describe("provider selection in preferences", () => {
-  it("offers all 23 shared tool switches, enabled by default and persisted individually", () => {
+  it("offers current chat model or a saved visual profile without switching chat fields", () => {
+    const selector = field("pdfTranscriptionProfile");
+    expect(selector.value).toBe("");
+    expect(selector.querySelectorAll("menuitem")).toHaveLength(2);
+    change("pdfTranscriptionProfile", "Legacy");
+    expect(prefs.pdfTranscriptionProfile).toBe("Legacy");
+    expect(field("llmModel").value).toBe("existing-model");
+    expect(field("llmThinkingMode").value).toBe("enabled");
+    expect(field("modelRoleStatus").textContent).toContain("legacy-model");
+    change("pdfTranscriptionProfile", "");
+    expect(field("modelRoleStatus").textContent).toContain("existing-model");
+  });
+  it("offers all 24 shared tool switches, enabled by default and persisted individually", () => {
     const switches = [...document.querySelectorAll<HTMLInputElement>("input[data-tool-name]")];
-    expect(switches).toHaveLength(23);
+    expect(switches).toHaveLength(24);
     expect(switches.every(input => input.checked)).toBe(true);
     const web = switches.find(input => input.dataset.toolName === "web_fetch")!;
     web.checked = false; web.dispatchEvent(new Event("change"));
     expect(JSON.parse(prefs.disabledTools)).toEqual(["web_fetch"]);
-    expect(switches.filter(input => input.checked)).toHaveLength(22);
+    expect(switches.filter(input => input.checked)).toHaveLength(23);
     web.checked = true; web.dispatchEvent(new Event("change"));
     expect(JSON.parse(prefs.disabledTools)).toEqual([]);
   });
-  it("offers vision capability configuration and removes conversion settings", () => {
-    expect(document.querySelector('[preference="pdfConversionEngine"]')).toBeNull();
-    expect(document.querySelector('[preference="mineruToken"]')).toBeNull();
-    expect(document.querySelector('[preference="pdfVisionProfile"]')).toBeNull();
-    change("visionSupport", "enabled");
-    field("profileName").value = "Vision";
+  it("removes legacy vision gates and whole-document conversion settings, including from newly saved profiles", () => {
+    for (const key of ["visionSupport", "pdfConversionEngine", "mineruToken", "pdfVisionProfile"]) {
+      expect(document.querySelector('[preference="' + key + '"]')).toBeNull();
+    }
+    field("profileName").value = "Current";
     (field("profileSaveBtn") as HTMLButtonElement).click();
-    expect(JSON.parse(prefs.modelProfiles).find((p: any) => p.name === "Vision").visionSupport).toBe("enabled");
-    change("visionSupport", "disabled"); loadProfile("Vision");
-    expect(prefs.visionSupport).toBe("enabled");
-    loadProfile("Legacy"); expect(prefs.visionSupport).toBe("auto");
+    expect(JSON.parse(prefs.modelProfiles).find((p: any) => p.name === "Current").visionSupport).toBeUndefined();
+    loadProfile("Legacy");
+    expect(field("llmModel").value).toBeTruthy();
   });
   it("refreshes capabilities using all current manual limits, including the generation ceiling", async () => {
     change("inputTokenLimit", "40000"); change("imageTokenReserve", "2000");
@@ -81,7 +91,7 @@ describe("provider selection in preferences", () => {
   it("uses native Zotero menus for every dropdown and persists command selections", () => {
     expect(document.querySelectorAll("select, datalist")).toHaveLength(0);
     expect(document.querySelectorAll("menulist")).toHaveLength(7);
-    for (const [key, value] of [["visionSupport", "enabled"], ["llmProvider", "deepseek"], ["llmThinkingMode", "disabled"], ["llmThinkEffort", "max"], ["debugLogMode", "off"], ["tokenizerMode", "deepseek-v4-estimate"]]) {
+    for (const [key, value] of [["llmProvider", "deepseek"], ["llmThinkingMode", "disabled"], ["llmThinkEffort", "max"], ["debugLogMode", "off"], ["tokenizerMode", "deepseek-v4-estimate"]]) {
       const menu = field(key);
       expect(menu.namespaceURI).toBe(XUL_NS);
       expect(menu.getAttribute("native")).toBe("true");

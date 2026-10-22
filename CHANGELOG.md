@@ -1,33 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
-- Allow scoped, reviewed deletion of empty collections, including move-and-delete batches and conflict-safe restoration; reload local collection trees after collection changes without extra refresh moves.
-- Describe current library authority without unrelated selection allowlists and supersede stale per-turn permission claims without rewriting provider history.
-- Return full stored item metadata on demand, including creator roles, identifiers, collection ancestry, child-note references and attachment availability; keep compact summaries available.
-- Keep source chips compact with an in-chip Process button and context/More actions menus; retain control identity through streamed updates.
-- Move library editing permissions into chat; group approval and receipt views by add/edit/remove/move with readable names and sanitized note comparisons.
-- Search child and standalone Zotero notes with explicit paging/coverage, read complete text or exact HTML with revision tracking, and enumerate empty subcollections by name.
-- Render private PDF frames with PDF.js print scheduling to avoid animation-frame stalls in hidden windows.
-- Search local PDF text before conversion; read page text and page images, inspect document availability, and wait for existing conversions.
-- Add scoped, reviewed and reversible collection/tag/note edits with conflict detection and operation receipts.
-- Provide page citations and keep capability schemas, system instructions and existing provider history stable for prefix-cache reuse.
+### PDF reading and shared tools
 
-- Group Preferences into models, PDF conversion, behavior and collapsed advanced settings; add Chinese labels, engine-specific visibility, current model-role summaries and explicit save guidance.
-- Protect PDF conversion profiles from deletion while referenced, preserve native menu options during selection, and include current manual limits in capability refreshes.
-- Show conversion request totals, additional requests, retry reasons, saved-page reuse and provider-reported usage in source summaries without inventing unavailable history or usage fields.
-- Add history search across chat/paper titles, durable pins, empty-chat filtering and visible pagination; enrich old indexes without rewriting session content and preserve pins through background saves.
-- Add a default vision PDF-to-Markdown engine using Zotero PDF.js, independent conversion model profiles, bounded parallel requests, page-image caching, and a Reconvert action; retain MinerU as an optional engine.
-- Gate cache replacement on page coverage, formula syntax and chunk/line consistency; split invalid output, preserve cancellation, back off transient API failures, and resume validated staged chunks without mixing old assets or changed PDFs.
-- Emit chunk markers for single-chunk MinerU conversions and use the automatic image-token estimate for supported Go DeepSeek profiles.
-- Add an optional, default-on same-response model self-check with structured page-local edits, no separate review request, final-Markdown digests for checkpoint reuse, and explicit checked-page badges; retain existing v2 checkpoint behavior.
-- Add a local conversion inspector with per-page image/Markdown comparison, original-response streaming drafts, exact self-check edits, request/usage history and cache-write-only recovery of trusted finalized checkpoints.
-- Simplify the chat toolbar by removing Clear chat and Convert all; retain per-source conversion and Ctrl+Enter conversion-and-send.
-- Keep conversion process and chunk-navigation controls attached while streaming progress changes, preventing flicker and clicks lost to DOM replacement.
+- Read requested PDF pages as complete Markdown with citations and reusable page caches. Use the current chat model with thinking disabled, or a separate saved visual profile; share duplicate requests through two conversion workers and refresh only explicitly requested pages.
+- Inspect original pages and high-resolution regions separately: 200 DPI full-page previews and 600 DPI crops by default, with explicit resolution and image-size reporting.
+- Share all 24 tool definitions, switches, source permissions and execution paths between native chat and the protocol 2 MCP bridge. Native chat works independently of the companion MCP process.
+- Discover matching PDFs with one result per document, representative snippets and cumulative coverage; retrieve complete matching passages with explicit pagination. Return brief collection metadata by default and full abstracts and item metadata on request.
+- Search and read Zotero notes, inspect subcollections, and apply scoped, reviewed collection/tag/note edits with conflict-safe undo, including deletion of empty collections after moves.
 
-- Replace HTML dropdowns with native Zotero menus in Preferences and the panel profile selector; keep model names editable and use a native menu for suggestions.
-- Add DeepSeek, OpenCode Go and Custom provider choices to Preferences and saved model profiles while retaining legacy configurations as Custom.
-- Isolate provider drafts and credentials, add Go conversation/client headers to main and auxiliary requests, and use labelled catalogue capacity fallbacks for known Go DeepSeek models with explicit local token estimation.
+### Reliability and interface
+
+- Keep long reading sessions moving by replacing previously delivered images with stable rereadable references. Preserve fresh evidence, complete text and tool receipts; recover oversized requests without imposing a cumulative reading quota.
+- Retry transient HTTP failures within explicit bounds, and fall back visibly to text only after an explicit image-input rejection. Authentication failures, rate limits and invalid images do not mark a model as image-incompatible.
+- Unify live, historical and restored background replies; simplify the header and source controls, improve narrow-panel layouts, and retain complete expandable usage, reasoning and tool details.
+- Fix cross-chat cancellation, stale history loads, edit/resend races, cancelled-state persistence, composition-key submission, scroll following and generated titles overwriting user renames.
+- Add native model menus, DeepSeek/OpenCode Go/Custom provider profiles, isolated provider drafts, history search and durable pins. Preserve existing settings, source identities and library permissions.
+- Update KaTeX and synchronized bundled styles/fonts, refresh vulnerable build dependencies, and upgrade Vitest to 4.1.12 to fix the mocker security advisories.
+
+### Compatibility and validation
+
+- Retire whole-document MinerU/vision/self-check jobs and the protocol 1 bridge. Existing caches and credentials are preserved; external MCP clients need the matching protocol 2 companion and a refreshed tool list. No external OCR engine is required.
+- Type checking, lint, 53 test files / 456 tests and production build passed. Isolated Zotero 10.0.6 tests cover native/MCP cache sharing, image review, model selection, retries and persistence. The user also reported successful real-world testing; these checks do not establish a controlled mathematical-recognition benchmark or certify Zotero 7-9.
 
 ## 0.9.5
 
@@ -58,7 +53,9 @@
 - Remove unused document-embedding/truncation code and obsolete capacity settings; normalize legacy tool histories and back up older sessions before atomic schema migration.
 
 
-## Unreleased
+## Historical development notes (superseded)
+
+The entries below record earlier conversion and bridge designs. They are retained for history; the 0.10.0 notes above describe the current implementation.
 
 - Add a default vision PDF-to-Markdown engine using Zotero PDF.js, independent conversion model profiles, bounded parallel requests, page-image caching, and a Reconvert action; retain MinerU as an optional engine.
 - Gate cache replacement on page coverage, formula syntax and chunk/line consistency; split invalid output, preserve cancellation, back off transient API failures, and resume validated staged chunks without mixing old assets or changed PDFs.

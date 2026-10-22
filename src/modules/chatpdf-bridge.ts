@@ -19,7 +19,7 @@ async function dispatch(op: string, raw: unknown): Promise<unknown> {
       return {
         plugin_version: packageJson.version,
         zotero_version: Zotero.version,
-        capabilities: { shared_tools: true, pdf_page_reading: true, pdf_text_search: true, pdf_conversion: false },
+        capabilities: { shared_tools: true, pdf_page_reading: true, pdf_text_search: true, pdf_conversion: false, pdf_markdown_reading: true, pdf_page_inspection: true },
         enabled_tools: listChannelTools().tools.map(tool => tool.name),
       };
     case "tools.list": return listChannelTools();

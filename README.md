@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-ChatPDF is a Zotero 7–10 add-on for reading and discussing research papers with an OpenAI-compatible language model. It adds a persistent chat panel to Zotero, lets a vision-capable chat model read original PDF pages, and lets the assistant work with papers in your Zotero library.
+ChatPDF is a Zotero 7–10 add-on for reading and discussing research papers with an OpenAI-compatible language model. It adds a persistent chat panel and reads PDFs through cached page Markdown, with original-image review for formulas, tables and figures; extracted PDF text supports search and navigation.
 
 ![ChatPDF side panel in Zotero](docs/images/chatpdf-zotero-panel.png)
 
@@ -14,7 +14,7 @@ The source code is available for adaptation. You can use AI coding agents to hel
 
 ## Agent capabilities update
 
-The agent searches local PDF text to locate evidence, then reads original page images with the chat model. No PDF-to-Markdown conversion or separate OCR API key is required. Search responses report inspected coverage and continuation cursors; unextractable or unavailable files remain explicit.
+The agent searches local PDF text to locate evidence, then reads page Markdown. Missing pages are transcribed by the current model with thinking disabled, or a separately selected visual profile, and cached. No external OCR service is required. Search responses report inspected coverage and continuation cursors; unextractable or unavailable files remain explicit.
 
 The chat window's library permission menu enables batch collection, subcollection, tag and bibliographic note changes, including deletion of empty collections. Moving all contents out and deleting the empty shell can share one batch; Undo restores the collection and memberships. Batch review is the default; reviews and completed receipts group readable changes with Undo. Child and standalone notes can be searched and read without PDF conversion. Source chips show direct PDF reading and provide a right-click/More menu to open or remove a source. The agent chooses tools and their order while the harness enforces scope, transactions and conflict detection. Stable system instructions/tool schemas and immutable provider history support context prefix reuse. See [Agent capabilities](docs/agent-capabilities.md).
 
@@ -32,7 +32,7 @@ The chat window's library permission menu enables batch collection, subcollectio
 ## Requirements
 
 - Zotero 7, 8, 9, or 10.0.
-- A vision-capable chat model accepting OpenAI-compatible `image_url` content and tool calls.
+- An OpenAI-compatible chat model with tool calling. Page images need image-input support; missing capability metadata does not block chat.
 - An API key for an OpenAI-compatible chat-completions service.
 
 ## Installation
@@ -56,7 +56,6 @@ At minimum, configure:
 | LLM API Base URL | Base URL for an OpenAI-compatible API. |
 | LLM API Key | Bearer token for the model provider. |
 | Model Name | A vision-capable model identifier accepted by the provider. |
-| Vision inputs | Automatic endpoint metadata, or Confirmed when your provider supports images but omits that metadata. |
 
 The default API base and model target DeepSeek; existing settings and profiles remain **Custom**. Built-in providers fill in their endpoint and a default model. Provider selection is saved with each model profile. Switching providers keeps separate drafts while the settings pane is open and does not carry credentials or token overrides to a new provider. Save profiles to retain those configurations across restarts. Use **LLM API Test** to check the current endpoint and credentials.
 
@@ -64,14 +63,14 @@ The default API base and model target DeepSeek; existing settings and profiles r
 
 Optional settings include thinking controls, iteration limits, context/output budgets, a per-image token reserve, cache location, system prompt, debug logging and web tools. Search uses PDF.js or a fresh Zotero text index locally. Brave Search is used when configured; otherwise web search falls back to DuckDuckGo.
 
-Preferences group models and chat behavior, with advanced settings collapsed. The same model handles conversation and page reading. Unknown or unsupported vision capability blocks a turn with a configuration message. Current fields take effect immediately; named profiles and system prompts have explicit save controls.
+The same model handles conversation and page reading. All enabled tools are available without a vision confirmation step. An explicit image-input rejection switches the current native session/model to text, with a visible notice. Current fields take effect immediately; named profiles and system prompts have explicit save controls.
 
 History searches chat and paper titles, supports durable pins and an empty-chat filter, and shows 50 entries at a time. Existing chat history remains available; old conversion states migrate to direct reading.
 
 ## Quick Start
 
 1. Add a paper by right-clicking a Zotero item and choosing **Add to ChatPDF**, or drag an item or reader tab into the panel.
-2. Confirm a vision-capable model is configured; the PDF source is immediately ready for direct reading.
+2. Configure the chat model; PDF sources are immediately ready for text reading and on-demand page images.
 3. Enter a question and send it. The assistant can search PDF text, inspect original pages, search the Zotero library, and add relevant papers when needed.
 
 Keyboard shortcuts:
@@ -84,13 +83,13 @@ Mention one or more source chips in the editor to restrict a question to those p
 
 ## Reading and searching PDFs
 
-The assistant uses local text for keyword discovery and page navigation, then calls `read_pdf_page` for substantive reading. Zotero's bundled PDF.js renders only requested pages, at 300 DPI by default, and the images are sent to the current chat model with high image detail. Each result includes its PDF page number, Zotero citation link, dimensions and effective DPI.
+The assistant uses `read_pdf_page` for on-demand cached Markdown (single pages, ordered lists, or batches of four by default). Each missing page converts independently; successful pages are retained if another fails. The helper receives only the transcription instruction and page image, with thinking disabled. Select a saved visual model under **PDF transcription model**, or keep the default current chat model. Switching chat models preserves page caches. `inspect_pdf_page` retains original-image review: 200 DPI overview and 600 DPI region defaults, exact page citations, and unchanged image/raster safeguards. Key formulas, table values, figures and uncertain text can be checked against the original. See [the pipeline and cache contract](docs/pdf-markdown-reading.md).
 
 Page images and text are cached by attachment identity and file revision. Long papers can be searched before selecting pages. OCR and a dedicated scanned-document workflow are currently out of scope. Pages without a text layer can still be rendered, but keyword search reports the missing text; there is no OCR fallback. The [OCR research record](docs/local-ocr-options.md) is retained for reference only.
 
 ## Local MCP integration
 
-ChatPDF's native agent and the companion [Zotero MCP](https://github.com/ruijie-xi/zotero-mcp) share one tool registry and executor inside Zotero. All 23 tools are enabled by default. **Settings → Available tools** controls each tool for both callers; disabled tools disappear from discovery and stale calls are rejected. Library writes still follow the chat window's permissions and trusted batch review.
+ChatPDF's native agent and the companion [Zotero MCP](https://github.com/ruijie-xi/zotero-mcp) share one tool registry and executor inside Zotero. All 24 tools are enabled by default. **Settings → Available tools** controls each tool for both callers; disabled tools disappear from discovery and stale calls are rejected. Library writes still follow the chat window's permissions and trusted batch review.
 
 The companion MCP server forwards discovery, arguments and text/images through `POST /chatpdf/v2` (exact protocol 2). It does not read Zotero databases, conversion caches or implement another search path. PDF page images are returned as MCP image content. Each MCP session has its own document sources and result history; use `add_zotero_item_to_session` before document reads.
 
@@ -106,7 +105,7 @@ For safety, ChatPDF blocks embedded credentials, localhost, private/link-local n
 
 The default cache directory is `~/.chatpdf-cache/`; you can change it in ChatPDF settings. It contains local PDF text, rendered page caches, standalone image inputs, chat history and optional debug logs.
 
-- Requested page images are sent to the configured chat model. Adding a PDF or starting Zotero makes no transcription request. Local text extraction needs no OCR service key.
+- Missing requested pages are sent to the configured transcription model; original-image review sends images to the chat model. Adding a PDF or starting Zotero makes no transcription request. Local text extraction needs no OCR service key.
 - Conversation messages, relevant document content, and tool results are sent to your configured LLM provider.
 - Web queries and requested pages are sent to the selected search service and website only when web tools are enabled and used.
 - Debug logging defaults to metadata only. **Full** logging can contain prompts, paper text, answers, reasoning, and tool results.
@@ -118,7 +117,7 @@ The default cache directory is `~/.chatpdf-cache/`; you can change it in ChatPDF
 
 **The model request fails:** use **LLM API Test** and verify the base URL, key, model name, and provider compatibility.
 
-**Page reading fails:** check local PDF availability, password protection, image support, per-image token reserve and context limits. A successful text-only API test does not prove image support. If `/models` omits input capabilities, select **Confirmed** only after checking that your exact model and endpoint accept images.
+**Page reading fails:** check local PDF availability, password protection, per-image token reserve and context limits. Missing vision metadata is not a failure. An explicit image-input rejection triggers text fallback with a visible notice. Authentication, network, image-size and decoding errors remain errors. Request success alone does not establish that an intermediary forwarded the image.
 
 **A source cannot be read:** confirm that it is downloaded locally and included in the current question's source mentions or session.
 

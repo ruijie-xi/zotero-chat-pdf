@@ -13,11 +13,13 @@ beforeEach(() => {
   mocks.state = { session: new ChatSession(), windowId: "one", win: window, backgroundStreams: new Map(), chatInput: null };
 });
 const more = () => root.querySelector<HTMLButtonElement>('[data-action="source-menu"]')!;
-it("adds a PDF ready for direct reading and keeps controls attached through refresh", () => {
+it("adds a PDF ready for on-demand reading and keeps controls attached through refresh", () => {
   const source = mocks.state.session.addSource("PDF", "Paper", undefined, 1);
   refreshSourceChips(root);
   expect(source.status).toBe("ready");
-  expect(root.textContent).toMatch(/direct reading|直接阅读/);
+  expect(root.querySelector(".chatpdf-chip-badge")?.textContent).toBe("PDF");
+  expect(root.querySelector(".chatpdf-chip-badge")?.getAttribute("title")).toMatch(/transcribed and cached|按需转录/);
+  expect(root.querySelector("button.chatpdf-chip-title")?.textContent).toBe("Paper");
   expect(root.querySelector('[data-action="convert-source"], [data-action="view-conversion"]')).toBeNull();
   const button = more(); button.focus();
   refreshSourceChips(root);

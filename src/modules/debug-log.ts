@@ -94,6 +94,8 @@ export async function logGenerationResult(kind: "agent" | "compact" | "title", m
 /** Transport diagnostics deliberately omit headers, credentials, URLs and response text. */
 export async function logLLMTransportFailure(details: {
   endpoint: string; model: string; attempt: number; phase: "connect" | "response"; receivedData: boolean; retry: boolean;
+  status?: number; delayMs?: number;
+  requestBytes?: number; imageCount?: number; inlineImageBytes?: number;
 }): Promise<void> {
   if (mode() === "off") return;
   try {
@@ -104,4 +106,19 @@ export async function logLLMTransportFailure(details: {
   } catch (error: any) {
     Zotero.debug(`[ChatPDF] Failed to write transport metadata: ${error.message}`);
   }
+}
+
+/** Page conversion diagnostics contain metadata only, even in full log mode. */
+export async function logPdfReading(details: {
+  kind: "pdf-read" | "pdf-transcription"; sourceId: string; page: number;
+  model?: string; attempt?: number; finishReason?: string; usage?: import("./llm-client").TokenUsage;
+  delivery?: string; status?: string; durationMs: number; queueMs?: number; renderMs?: number; modelMs?: number; writeMs?: number;
+}): Promise<void> {
+  if (mode() === "off") return;
+  try {
+    await prepareLogDir();
+    await atomicWriteJson(PathUtils.join(getLogDir(), `res-${details.kind}-${timestamp()}-${Math.random().toString(16).slice(2)}.json`), {
+      timestamp: new Date().toISOString(), mode: "metadata", ...details,
+    });
+  } catch { Zotero.debug("[ChatPDF] Failed to write PDF reading metadata."); }
 }

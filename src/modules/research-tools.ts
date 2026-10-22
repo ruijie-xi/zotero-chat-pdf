@@ -1,6 +1,6 @@
 import type { ToolExecutionContext } from "./tools";
 import { getItemByKey } from "./zotero-items";
-import { readPdfText, readPdfPage, pdfTextStatus, searchPdfText, PdfSearchOptions } from "./pdf-text";
+import { readPdfText, readPdfPages, pdfTextStatus, searchPdfText, PdfSearchOptions, PdfPageOptions } from "./pdf-text";
 import { checkImageSize } from "./image-input";
 import { contextFingerprint } from "./agent-context";
 import { atomicWriteJson, withStorageLock } from "../utils/atomic-storage";
@@ -8,6 +8,8 @@ import { getCacheDir } from "../utils/cache-dir";
 import { applyLibraryChanges, listLibraryChanges, planLibraryChanges, summarizeLibraryChange, LibraryAction } from "./library-changes";
 import { throwIfAborted } from "../utils/abort";
 import { pdfCitation } from "./source-citation";
+import { readPdfMarkdown, type PdfMarkdownOptions } from "./pdf-markdown";
+import { getLLMSettings } from "./llm-client";
 import { readZoteroNotes, searchZoteroNotes } from "./zotero-notes";
 
 import { RESEARCH_TOOLS } from "./tool-registry";
@@ -34,7 +36,7 @@ export async function executeResearchTool(name: string, args: Record<string, unk
   const { source: src, attachment } = source(context, args.key);
   const assertCurrent = () => {
     throwIfAborted(context.signal);
-    if (source(context, args.key).source !== src) {
+    if (context.session.getSource(src.id) !== src || !context.turnScope.has(src.id)) {
       throw Object.assign(new Error("The source was replaced while reading."), { name: "AbortError" });
     }
   };
@@ -42,22 +44,42 @@ export async function executeResearchTool(name: string, args: Record<string, unk
     const text = await pdfTextStatus(attachment);
     assertCurrent();
     return json({ source_id: src.id, representation: "original-pdf", text,
-      page_count: text.page_count || null, visual_reading: "read_pdf_page",
-      note: "Pages are rendered locally on demand. Search requires extractable text; scanned pages remain visually readable." });
+      page_count: text.page_count || null, reading: "read_pdf_page", visual_review: "inspect_pdf_page",
+      note: "Read pages as cached Markdown, transcribed on demand by the configured visual model. Inspect original images for careful review. Search coverage depends on extractable PDF text." });
   }
   if (name === "read_pdf_page") {
-    if (!context.deliverImage) throw new Error("Image delivery is unavailable outside an active turn.");
-    const page = Number(args.page);
-    if (!Number.isSafeInteger(page) || page < 1) throw new Error("page must be a positive integer.");
-    const rendered = await readPdfPage(attachment, page, context.signal, args.dpi === undefined ? 300 : Number(args.dpi));
+    const batch = await readPdfMarkdown(attachment, args as PdfMarkdownOptions, {
+      signal: context.signal, assertCurrent,
+      settings: context.llmSettings || { ...getLLMSettings(), sessionId: context.session.id },
+      onUsage: context.onPdfConversionUsage || (event => context.session.addAuxiliaryUsage(event.usage)),
+    });
     assertCurrent();
-    const encoded = rendered.dataUrl.split(",")[1] || "";
-    const byteLength = Math.floor(encoded.length * 3 / 4) - (encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0);
-    checkImageSize(byteLength);
-    context.deliverImage({ sourceId: src.id, path: `pdf-page-${page}`, mime: "image/jpeg", dataUrl: rendered.dataUrl,
-      byteLength });
-    return json({ source_id: src.id, pdf_page: page, citation: pdfCitation(attachment, page), representation: "page-image",
-      page_count: rendered.pageCount, width: rendered.width, height: rendered.height, effective_dpi: rendered.effectiveDpi });
+    return json({ source_id: src.id, representation: "page-markdown", ...batch,
+      // Per-read timings belong in diagnostics, not semantic tool results: varying
+      // timings would defeat the agent's identical-call loop detector.
+      pages: batch.pages.map(({ duration_ms: _duration, ...page }) => ({ ...page, citation: pdfCitation(attachment, page.pdf_page) })),
+      note: "Model transcription, not verified original text. Page images were sent only to the transcription model. Use inspect_pdf_page for careful review of uncertain notation, key formulas, table values and figures. A cached or prefetched page is not read by you until its content is delivered. Failed pages are explicitly listed; do not claim complete coverage when a page failed." });
+  }
+  if (name === "inspect_pdf_page") {
+    if (!context.deliverImage) throw new Error("Image delivery is unavailable outside an active turn.");
+    const batch = await readPdfPages(attachment, args as PdfPageOptions, context.signal, true);
+    assertCurrent();
+    // Validate the whole batch before delivering any image; a failed tool must
+    // not leave an unlabelled partial image batch in either caller's context.
+    const images = batch.pages.map(rendered => {
+      const encoded = rendered.dataUrl.split(",")[1] || "";
+      const byteLength = Math.floor(encoded.length * 3 / 4) - (encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0);
+      checkImageSize(byteLength);
+      const region = rendered.region;
+      const crop = region ? `-region-${region.x}-${region.y}-${region.width}-${region.height}` : "";
+      return { sourceId: src.id, path: `pdf-page-${rendered.page}${crop}`, mime: "image/jpeg", dataUrl: rendered.dataUrl, byteLength,
+        label: `${src.title}: PDF page ${rendered.page}${region ? `, cropped region ${JSON.stringify(region)}` : ", full page"}; ${rendered.width} x ${rendered.height} pixels, effective DPI ${rendered.effectiveDpi}.` };
+    });
+    for (const image of images) context.deliverImage(image);
+    const pages = batch.pages.map(rendered => ({ pdf_page: rendered.page, citation: pdfCitation(attachment, rendered.page),
+      width: rendered.width, height: rendered.height, effective_dpi: rendered.effectiveDpi, ...(rendered.region ? { region: rendered.region } : {}) }));
+    return json({ source_id: src.id, representation: args.region ? "page-region-image" : pages.length === 1 ? "page-image" : "page-images",
+      page_count: batch.pageCount, ...(pages.length === 1 ? pages[0] : {}), pages, next_page: batch.nextPage });
   }
   const record = await readPdfText(attachment, context.signal, true);
   assertCurrent();
@@ -65,7 +87,7 @@ export async function executeResearchTool(name: string, args: Record<string, unk
   if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 1 || to < from || to > record.pageCount) throw new Error("Use an inclusive page range within the PDF page count.");
   return json({ source_id: src.id, representation: "pdf-text", digest: record.digest, page_count: record.pageCount,
     pages: record.pages.filter(page => page.page! >= from && page.page! <= to).map(page => ({ ...page, citation: pdfCitation(attachment, page.page!) })),
-    note: "Original text extraction; formulas, reading order and layout may be lost. Inspect original page images with read_pdf_page for substantive reading." });
+    note: "Extracted text for search and navigation. Prefer read_pdf_page Markdown for reading and summaries; use inspect_pdf_page for original-image review. Extraction may lose formulas and layout. Identify the evidence limitation when relying on extracted text." });
 }
 
 async function changeLibrary(args: Record<string, unknown>, context: ToolExecutionContext): Promise<Record<string, unknown>> {

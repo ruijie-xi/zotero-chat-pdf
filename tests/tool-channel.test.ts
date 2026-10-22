@@ -33,13 +33,16 @@ describe("MCP session and image adaptation", () => {
     expect(result.content[0]).toEqual({ type: "text", text: `${"page 2 evidence ".repeat(10000)}\n[Stored result: result-1]` });
     expect(result.content[1]).toEqual({ type: "image", mimeType: "image/jpeg", data: "/9j/4A==" });
   });
-  it("enforces the advertised image budget and releases the session after failure", async () => {
+  it("delivers multiple images beyond 20 MiB without a cumulative byte quota", async () => {
     vi.mocked(executeTool).mockImplementationOnce(async (_name, _args, context) => {
-      context.deliverImage!({ sourceId: "1:PDF12345", path: "page.jpg", mime: "image/jpeg", byteLength: 21 * 1024 * 1024, dataUrl: "data:image/jpeg;base64,AA==" });
-      return "";
+      for (let page = 1; page <= 3; page++) context.deliverImage!({ sourceId: "1:PDF12345", path: `page-${page}.jpg`,
+        label: `PDF page ${page}`, mime: "image/jpeg", byteLength: 9 * 1024 * 1024, dataUrl: "data:image/jpeg;base64,AA==" });
+      return "three full images";
     }).mockResolvedValue("next");
-    await expect(invoke()).rejects.toThrow("20 MiB");
-    expect((await invoke()).content[0]).toMatchObject({ text: "next\n[Stored result: result-1]" });
+    const result = await invoke();
+    expect(result.content.filter(block => block.type === "image")).toHaveLength(3);
+    expect(result.content[1]).toMatchObject({ type: "text", text: expect.stringContaining("PDF page 1") });
+    expect((await invoke()).content[0]).toMatchObject({ text: "next\n[Stored result: result-2]" });
   });
   it.each(["cancel", "close", "reset", "unload"])("propagates %s to the active execution", async action => {
     let signal: AbortSignal | undefined;

@@ -25,8 +25,7 @@ export async function resolveModelCapabilities(settings: LLMSettings, signal?: A
   const key = JSON.stringify([normalizeProvider(settings.provider), base, settings.apiKey, settings.model, getPref("modelCapabilitiesRevision")]);
   let entry = cache.get(key);
   const manual = positive(settings.contextWindowTokens) || positive(settings.inputTokenLimit);
-  const manualVision = settings.visionSupport === "enabled" || settings.visionSupport === "disabled";
-  if ((!entry || Date.now() - entry.at > 86_400_000 || refresh) && (!manual || !positive(settings.maxOutputTokens) || !manualVision || refresh)) {
+  if ((!entry || Date.now() - entry.at > 86_400_000 || refresh) && (!manual || !positive(settings.maxOutputTokens) || refresh)) {
     // Zotero's privileged module scope does not expose every window constructor.
     const Controller = typeof AbortController !== "undefined"
       ? AbortController : (Zotero.getMainWindow() as unknown as { AbortController: new () => AbortController }).AbortController;
@@ -57,7 +56,7 @@ export async function resolveModelCapabilities(settings: LLMSettings, signal?: A
   if (requireTokenizer && !officialV4 && settings.tokenizerMode !== "deepseek-v4-estimate") throw new Error("This model has no verified local tokenizer. Select the explicit DeepSeek V4 tokenizer estimate in its profile, or use a supported model. Counts are estimates; provider usage remains authoritative.");
   const generation = resolveGenerationPolicy(settings, maxOutput);
   return { contextWindow, inputLimit, maxOutput, generation, tokenizer: "deepseek-v4",
-    supportsVision: modelVisionSupport(metadata, settings.visionSupport),
+    supportsVision: modelVisionSupport(metadata),
     imageTokens: positive(settings.imageTokenReserve) || (officialV4 || (preset && /deepseek/i.test(settings.model)) ? 1024 : undefined),
     source: manual || positive(settings.maxOutputTokens) ? "manual" : preset && (!endpointContext || !endpointOutput) ? "provider-preset" : "endpoint", fetchedAt: entry?.at || Date.now() };
 }

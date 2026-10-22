@@ -16,6 +16,9 @@ function bounded<T>(operation: Promise<T>, milliseconds: number, signal?: AbortS
   });
 }
 
+/** Fractions of the displayed (rotated) page, measured from its top-left corner. */
+export interface PdfRegion { x: number; y: number; width: number; height: number; }
+
 export interface RenderedPdfPage {
   page: number;
   dataUrl: string;
@@ -23,12 +26,13 @@ export interface RenderedPdfPage {
   width: number;
   height: number;
   effectiveDpi: number;
+  region?: PdfRegion;
 }
 
 export interface PdfRenderer {
   pageCount: number;
   text(page: number): Promise<{ page: number; text: string; pageLabel?: string }>;
-  render(page: number, dpi: number): Promise<RenderedPdfPage>;
+  render(page: number, dpi: number, region?: PdfRegion): Promise<RenderedPdfPage>;
   close(): Promise<void>;
 }
 
@@ -84,9 +88,9 @@ export async function openPdfRenderer(pdfPath: string, signal?: AbortSignal, pdf
         throwIfAborted(signal);
         return bounded(api.text(page), 60_000, signal);
       },
-      render: async (page, dpi) => {
+      render: async (page, dpi, region) => {
         throwIfAborted(signal);
-        try { return await bounded<RenderedPdfPage>(api.render(page, dpi), 60_000, signal); }
+        try { return await bounded<RenderedPdfPage>(api.render(page, dpi, region ? JSON.stringify(region) : undefined), 60_000, signal); }
         catch (error) { throwIfAborted(signal); throw error; }
       },
       close: async () => {

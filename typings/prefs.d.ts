@@ -11,13 +11,13 @@ declare namespace _ZoteroTypes {
       "llmApiBase": string;
       "llmApiKey": string;
       "llmModel": string;
-      "visionSupport": string;
       "llmThinkingMode": string;
       "llmThinkEffort": string;
       "cacheDir": string;
       "systemPrompt": string;
       "modelProfiles": string;
       "activeProfile": string;
+      "pdfTranscriptionProfile": string;
       "panelWidth": number;
       "agentMaxIterations": number;
       "agentAutoContinue": boolean;

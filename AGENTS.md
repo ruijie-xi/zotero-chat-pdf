@@ -2,15 +2,15 @@
 
 ## Project Summary
 
-ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI-compatible LLM APIs. A vision-capable chat model reads original PDF page images on demand. Local PDF.js text extraction supports search and navigation. There is no PDF-to-Markdown pipeline or OCR service dependency.
+ChatPDF is a Zotero 7-10 plugin for chatting with research papers through OpenAI-compatible LLM APIs. PDF reading uses on-demand, page-level Markdown transcription. The helper defaults to the current chat model with thinking disabled, or a separately selected saved visual-model profile. Original page images remain available through inspect_pdf_page for careful review. Local extracted text supports discovery and navigation. Native chat and MCP share the same service and page caches. No external OCR service is required.
 
-Current scope excludes OCR and a dedicated scanned-document workflow. Keep the findings in `docs/local-ocr-options.md` as deferred research, not an implementation task or dependency. See `docs/project-status.md` for the working-tree status and the external Zotero MCP compatibility boundary.
+Current scope excludes external OCR engines and a dedicated scanned-document workflow. Vision transcription of requested pages is supported. Keep the findings in `docs/local-ocr-options.md` as deferred research, not an implementation task or dependency. See `docs/project-status.md` for the working-tree status and the external Zotero MCP compatibility boundary.
 
 - GitHub: `ruijie-xi/zotero-chat-pdf`
 - Add-on ID: `chatpdf@zotero-plugin`
 - Namespace: `chatpdf`
 - Preference prefix: `extensions.zotero.chatpdf`
-- Current release line: `0.9.x`
+- Current release line: `0.10.x`
 
 ## Runtime and Stack
 
@@ -46,6 +46,7 @@ Core modules:
 - `src/modules/panel-state.ts`: one state object per Zotero window, including session, editor, streams, abort controllers, and cleanup.
 - `src/modules/send-handler.ts`: TurnScope resolution, send lifecycle, streaming UI, terminal states, autosave, and titles.
 - `src/modules/agent-loop.ts`: LLM/tool iterations, scheduling, callbacks, and accumulated usage.
+- `src/modules/image-window.ts`: soft request-history watermarks and one-way offload of already-delivered images; fresh evidence is protected, and total reading is not capped.
 - `src/modules/llm-client.ts`: OpenAI-compatible requests, SSE parsing, tool-call accumulation, and provider thinking fields.
 - `src/modules/tool-registry.ts`: the sole tool schemas, order and risk metadata for native chat and MCP.
 - `src/modules/tool-settings.ts`: individual tool switches, default all enabled.
@@ -57,8 +58,10 @@ Core modules:
 - `src/modules/source-identity.ts`: `libraryID:key` source identity and cache keys.
 - `src/modules/source-chips.ts`: stable source controls for direct PDF/image reading.
 - `src/modules/chatpdf-bridge.ts`: protocol 2 loopback transport for the shared tool channel.
+- `src/modules/pdf-markdown.ts`: page-level Markdown caching, two-worker conversion queue, shared reads and cancellation.
+- `src/modules/pdf-transcription.ts`: isolated visual transcription, model selection, disabled thinking and bounded responses.
 - `src/modules/pdf-text.ts`: revision-aware local text search and on-demand page image caches.
-- `src/modules/vision-support.ts`: explicit image-input capability requirements.
+- `src/modules/vision-support.ts`: advisory metadata and explicit image-input rejection classification.
 - `src/modules/pdf-renderer.ts`: Zotero PDF.js page rasterization in a disposable XUL browser.
 - `src/modules/markdown-renderer.ts`: Markdown/KaTeX to sanitized XHTML-safe HTML.
 - `src/modules/debug-log.ts`: metadata/off/full logging and retention.
@@ -95,7 +98,6 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 | --- | --- | --- |
 | `llmApiBase` | string | `https://api.deepseek.com/v1` |
 | `llmApiKey` | string | `""` |
-| `visionSupport` | string | `auto` (endpoint metadata; `enabled` requires user confirmation) |
 | `llmModel` | string | `deepseek-flash` |
 | `llmThinkingMode` | string | `default` |
 | `llmThinkEffort` | string | `default` |
@@ -103,6 +105,7 @@ Preference defaults live in `addon/prefs.js`, types in `typings/prefs.d.ts`, UI 
 | `systemPrompt` | string | `""` |
 | `modelProfiles` | string | `[]` |
 | `activeProfile` | string | `""` |
+| `pdfTranscriptionProfile` | string | `""` (current chat model) |
 | `agentMaxIterations` | number | `10` |
 | `agentLibraryEditMode` | string | `ask` (review each batch; optional selected/collection/library scope) |
 | `contextWindowTokens` | number | `0` (automatic) |

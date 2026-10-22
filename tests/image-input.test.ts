@@ -93,7 +93,7 @@ describe("image sources", () => {
     const session = new ChatSession(), source = session.addSource("PDF", "Paper", undefined, 2);
     files.set("/cache/documents/2-PDF/assets/fig.png", png);
     expect(await listSourceImages(source)).toEqual([]);
-    await expect(readSourceImage(source, "assets/fig.png")).rejects.toThrow("read_pdf_page");
+    await expect(readSourceImage(source, "assets/fig.png")).rejects.toThrow("inspect_pdf_page");
     expect(IOUtils.read).not.toHaveBeenCalled();
   });
   it("rejects linked standalone image cache directories", async () => {
@@ -160,7 +160,7 @@ describe("agent visual delivery", () => {
     expect(JSON.stringify(session.toSavedSession())).not.toContain("data:image");
   });
 
-  it("reports the aggregate byte limit for concurrent image tools without attaching excess bytes", async () => {
+  it("delivers all concurrent images beyond 20 MiB without an aggregate byte quota", async () => {
     const session = new ChatSession();
     const bytes = new Uint8Array(MAX_IMAGE_BYTES);
     bytes.set(png);
@@ -170,9 +170,9 @@ describe("agent visual delivery", () => {
         function: { name: "read_image", arguments: JSON.stringify({ key: source.id }) } })) })
       .mockImplementationOnce(async messages => {
         const images = (messages.at(-1)!.content as llm.VisionContent).filter(p => p.type === "image_url");
-        expect(images).toHaveLength(2);
-        expect(messages.filter(m => m.role === "tool").some(m => String(m.content).includes("20 MiB"))).toBe(true);
-        return { content: "Limit reached" };
+        expect(images).toHaveLength(3);
+        expect(messages.filter(m => m.role === "tool").some(m => String(m.content).includes("20 MiB"))).toBe(false);
+        return { content: "All images delivered" };
       });
     await runAgentLoop(session.buildAgentMessages("Read images"), getToolDefinitions(), session);
   });

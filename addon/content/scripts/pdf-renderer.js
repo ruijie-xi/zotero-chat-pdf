@@ -33,24 +33,29 @@ window.chatpdfRendererReady = (async () => {
       pdf = await Promise.race([task.promise, protectedDocument]);
       return pdf.numPages;
     },
-    async render(pageNumber, dpi) {
+    async render(pageNumber, dpi, regionJSON) {
+      const region = regionJSON ? JSON.parse(regionJSON) : undefined;
       const page = await pdf.getPage(pageNumber);
       const original = page.getViewport({ scale: dpi / 72 });
+      const area = region || { x: 0, y: 0, width: 1, height: 1 };
+      const width = original.width * area.width, height = original.height * area.height;
       // Explicit raster safety limit: 16 megapixels, at most 8192 per side.
-      const factor = Math.min(1, 8192 / original.width, 8192 / original.height,
-        Math.sqrt(16000000 / (original.width * original.height)));
+      // Apply it to the crop itself, without allocating a full-page zoom canvas.
+      const factor = Math.min(1, 8192 / width, 8192 / height,
+        Math.sqrt(16000000 / (width * height)));
       const viewport = page.getViewport({ scale: dpi / 72 * factor });
       const canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
+      canvas.width = Math.ceil(viewport.width * area.width);
+      canvas.height = Math.ceil(viewport.height * area.height);
       try {
         // Off-screen rasterization must not wait for animation frames in a
         // hidden/minimized Zotero window. PDF.js print intent uses task scheduling.
-        rendering = page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "white", intent: "print" });
+        rendering = page.render({ canvasContext: canvas.getContext("2d"), viewport, background: "white", intent: "print",
+          transform: region ? [1, 0, 0, 1, -viewport.width * area.x, -viewport.height * area.y] : undefined });
         await rendering.promise;
         return { page: pageNumber, dataUrl: canvas.toDataURL("image/jpeg", 0.95),
           text: "",
-          width: canvas.width, height: canvas.height, effectiveDpi: dpi * factor };
+          width: canvas.width, height: canvas.height, effectiveDpi: dpi * factor, ...(region ? { region } : {}) };
       } finally {
         rendering = null;
         canvas.width = canvas.height = 0;

@@ -1,7 +1,7 @@
 import { ChatSession } from "./chat-session";
 import { ImageInput, IMAGE_INPUT_HELP, listSourceImages, readSourceImage } from "./image-input";
 import { getPref } from "../utils/prefs";
-import { getToolDefinitions } from "./tool-registry";
+import { getToolDefinitions, getToolMetadata } from "./tool-registry";
 import { validateToolArguments } from "./tool-validation";
 export { getToolDefinitions, getToolMetadata } from "./tool-registry";
 import { executeResearchTool } from "./research-tools";
@@ -44,6 +44,9 @@ function countLabel(returned: number, total: number): string {
 }
 
 export interface ToolExecutionContext {
+  llmSettings?: import("./llm-client").LLMSettings;
+  onPdfConversionUsage?: (event: import("./pdf-transcription").PdfConversionUsage) => void;
+  imageInputRejected?: boolean;
   readStoredResult?: (id: string, start: number, length: number, allowed: Set<string>) => string;
   deliverImage?: (image: ImageInput) => void;
   session: ChatSession;
@@ -57,7 +60,7 @@ export interface ToolExecutionContext {
 }
 
 export function toolResultSourceIds(name: string, args: Record<string, unknown>, context: ToolExecutionContext): string[] {
-  const documentTools = new Set(["list_images", "read_image", "read_pdf_text", "read_pdf_page", "get_document_status"]);
+  const documentTools = new Set(["list_images", "read_image", "read_pdf_text", "read_pdf_page", "inspect_pdf_page", "get_document_status"]);
   if (name === "list_sources") return [...context.turnScope];
   if (!documentTools.has(name)) return [];
   const source = context.session.getSource(String(args.key || args.source_key || ""));
@@ -76,6 +79,9 @@ export async function executeTool(
   try {
     const definition = getToolDefinitions().find(tool => tool.function.name === name);
     if (!definition) throw new Error(`Tool "${name}" is disabled or unavailable.`);
+    if (context.imageInputRejected && getToolMetadata(name).requiresImageInput) {
+      throw new Error("The model endpoint rejected image inputs in this session. Use read_pdf_page Markdown with the configured visual helper, or read_pdf_text, metadata, notes and annotations instead.");
+    }
     validateToolArguments(args, definition.function.parameters);
     let result: string;
 
@@ -97,7 +103,7 @@ export async function executeTool(
         const source = session.getSource(key)!;
         if (name === "list_images") {
           const paths = await listSourceImages(source, context.signal);
-          result = `Images for "${source.title}" [${source.id}]:\n${paths.length ? paths.join("\n") : "Use read_pdf_page to inspect PDF pages."}\n${IMAGE_INPUT_HELP}`;
+          result = `Images for "${source.title}" [${source.id}]:\n${paths.length ? paths.join("\n") : "Use inspect_pdf_page for original PDF images, read_pdf_page for Markdown."}\n${IMAGE_INPUT_HELP}`;
         } else {
           if (!context.deliverImage) throw new Error("Image delivery is unavailable outside an active agent turn.");
           const image = await readSourceImage(source, typeof args.path === "string" ? args.path : undefined, context.signal);
@@ -168,7 +174,7 @@ async function executeListSources(context: ToolExecutionContext): Promise<string
   return JSON.stringify({ sources: sources.map(source => ({
     source_id: source.id, title: source.title, kind: source.kind || "pdf",
     status: source.status, read_with: source.kind === "image" ? "read_image" : "read_pdf_page",
-  })), note: "PDF text is for search and navigation. Inspect original page images for substantive reading." });
+  })), note: "PDF text supports search and text-based reading. Inspect original page images for visual details when available." });
 }
 
 function normalizeYear(value: unknown): number | undefined {
@@ -187,7 +193,7 @@ function sessionStatusForItem(item: ZoteroItemSummary, session: ChatSession): st
   return source ? `in session (${source.status})` : "not in session";
 }
 
-function formatZoteroItemSummary(item: ZoteroItemSummary, session?: ChatSession, index?: number): string {
+function formatZoteroItemSummary(item: ZoteroItemSummary, session?: ChatSession, index?: number, includeAbstract = true): string {
   const prefix = index !== undefined ? `${index}. ` : "";
   const lines = [`${prefix}${item.title}`];
   lines.push(`   key: ${item.key}`);
@@ -200,7 +206,8 @@ function formatZoteroItemSummary(item: ZoteroItemSummary, session?: ChatSession,
   if (session) lines.push(`   session_status: ${sessionStatusForItem(item, session)}`);
   if (item.collections.length) lines.push(`   collections: ${item.collections.join(", ")}`);
   if (item.tags.length) lines.push(`   tags: ${item.tags.join(", ")}`);
-  if (item.abstractNote) lines.push(`   abstract: ${item.abstractNote}`);
+  if (!includeAbstract) lines.push(`   abstract_available: ${item.abstractNote ? "yes" : "no"}`);
+  else if (item.abstractNote) lines.push(`   abstract: ${item.abstractNote}`);
   return lines.join("\n");
 }
 
@@ -324,7 +331,7 @@ async function executeSearchZoteroLibrary(args: Record<string, unknown>, session
 
   const lines = [`Zotero library results for "${query}" (${countLabel(summaries.length, allSummaries.length)}):`, ""];
   summaries.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
-  lines.push("Add relevant PDFs with add_zotero_item_to_session, then read_pdf_page to inspect their visual content.");
+  lines.push("Add relevant PDFs with add_zotero_item_to_session, then read_pdf_page for Markdown or inspect_pdf_page for careful visual review.");
   return lines.join("\n");
 }
 
@@ -440,8 +447,11 @@ async function executeListCollectionItems(args: Record<string, unknown>, session
     return `No matching items found in Zotero collection "${collection.name || key}".`;
   }
 
-  const lines = [`Items in Zotero collection "${collection.name || key}" (${countLabel(items.length, allItems.length)}):`, ""];
-  items.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1), ""));
+  const includeAbstract = args.detail === "full";
+  const lines = [`Items in Zotero collection "${collection.name || key}" (${countLabel(items.length, allItems.length)}):`,
+    includeAbstract ? "Metadata detail: full (complete abstracts included)."
+      : "Metadata detail: brief (abstract bodies omitted). Use detail=full for complete abstracts, or get_zotero_item for selected items.", ""];
+  items.forEach((item, i) => lines.push(formatZoteroItemSummary(item, session, i + 1, includeAbstract), ""));
   return lines.join("\n");
 }
 

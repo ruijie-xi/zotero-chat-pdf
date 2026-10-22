@@ -27,6 +27,13 @@ export function isNearBottom(el: Element, threshold = 60): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
+/** Keep a reader at the bottom across content or viewport-size changes, without moving someone reading above. */
+export function preserveBottomScroll(el: Element | null, update: () => void): void {
+  const followBottom = el && isNearBottom(el);
+  update();
+  if (el && followBottom) el.scrollTop = el.scrollHeight;
+}
+
 /** Scroll to bottom only if the user hasn't scrolled up. */
 export function scrollToBottomIfNeeded(el: Element): void {
   if (isNearBottom(el)) {

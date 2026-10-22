@@ -1,3 +1,4 @@
+import { cancelPdfConversions } from "./modules/pdf-markdown";
 import { config } from "../package.json";
 import { injectChatPanel, removeChatPanel, registerContextMenu, abortCurrentStream } from "./modules/chat-panel";
 import { registerChatPdfBridge, unregisterChatPdfBridge } from "./modules/chatpdf-bridge";
@@ -62,6 +63,7 @@ async function onMainWindowUnload(win: Window) {
 async function onShutdown() {
   addon.data.alive = false;
   abortCurrentStream();
+  cancelPdfConversions();
   unregisterChatPdfBridge();
   for (const win of Zotero.getMainWindows()) {
     removeChatPanel(win);

@@ -1,9 +1,9 @@
-import { MODEL_BUDGET_FIELDS } from "./model-profile";
+import { applyModelProfile, loadModelProfiles, modelProfilePreferences, saveModelProfiles, MODEL_BUDGET_FIELDS } from "./model-profile";
 import { resolveModelCapabilities } from "./model-capabilities";
 import type { ModelProfile } from "./model-profile";
 import { buildLLMHeaders, createProviderSessionId, getProviderApiBase, LLMProvider, normalizeProvider, PROVIDER_MODELS, PROVIDER_PRESETS } from "./llm-provider";
 import { config } from "../../package.json";
-import { XUL_NS, XULMenuList } from "../utils/dom";
+import { h, XUL_NS, XULMenuList } from "../utils/dom";
 import { uiText } from "../utils/ui-text";
 import { getAllToolDefinitions } from "./tool-registry";
 import { isToolEnabled, setToolEnabled } from "./tool-settings";
@@ -55,21 +55,6 @@ function maskApiKey(apiKey: string): string {
   return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
 }
 
-function loadProfiles(): ModelProfile[] {
-  try {
-    const raw = Zotero.Prefs.get(`${PREF_PREFIX}.modelProfiles`, true) as string;
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(profile => profile && typeof profile.name === "string" && typeof profile.model === "string" && typeof profile.apiBase === "string" && typeof profile.apiKey === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveProfiles(profiles: ModelProfile[]): void {
-  Zotero.Prefs.set(`${PREF_PREFIX}.modelProfiles`, JSON.stringify(profiles), true);
-}
-
 function readModelFields(name: string, provider = normalizeProvider(getFieldValue("llmProvider"))): ModelProfile {
   const profile: ModelProfile = {
     name, provider,
@@ -78,30 +63,16 @@ function readModelFields(name: string, provider = normalizeProvider(getFieldValu
     thinkingMode: getFieldValue("llmThinkingMode", "default"),
     thinkEffort: getFieldValue("llmThinkEffort", "default"),
     tokenizerMode: getFieldValue("tokenizerMode", "auto"),
-    visionSupport: getFieldValue("visionSupport", "auto"),
   };
   for (const key of MODEL_BUDGET_FIELDS) profile[key] = Number(getFieldValue(key)) || 0;
   return profile;
 }
 
 function writeModelFields(profile: ModelProfile): void {
-  const provider = normalizeProvider(profile.provider);
-  const values = {
-    llmProvider: provider, llmApiBase: getProviderApiBase({ ...profile, provider }),
-    llmApiKey: profile.apiKey, llmModel: profile.model,
-    llmThinkingMode: profile.thinkingMode || "default", llmThinkEffort: profile.thinkEffort || "default",
-    tokenizerMode: profile.tokenizerMode || "auto",
-    visionSupport: profile.visionSupport || "auto",
-  };
+  const values = applyModelProfile(profile);
   for (const [key, value] of Object.entries(values)) {
-    setPrefFull(key, value);
-    setFieldValue(key, value);
+    setFieldValue(key, String(value));
   }
-  for (const key of MODEL_BUDGET_FIELDS) {
-    Zotero.Prefs.set(`${PREF_PREFIX}.${key}`, profile[key] || 0, true);
-    setFieldValue(key, String(profile[key] || 0));
-  }
-  setPrefFull("activeProfile", profile.name);
   syncProviderUI();
   updateSettingsSummary();
 }
@@ -110,15 +81,16 @@ function updateSettingsSummary(): void {
   const summary = document.querySelector(`#zotero-prefpane-${ADDON_REF}-modelRoleStatus`);
   if (!summary) return;
   const current = getFieldValue("llmModel") || uiText("Not configured", "未配置");
-  const activeName = getPrefFull("activeProfile"), active = loadProfiles().find(profile => profile.name === activeName);
+  const activeName = getPrefFull("activeProfile"), active = loadModelProfiles().find(profile => profile.name === activeName);
   let edited = false;
   if (active) {
-    const live = readModelFields(activeName);
-    const normalized = { ...active, provider: normalizeProvider(active.provider), apiBase: getProviderApiBase(active), thinkingMode: active.thinkingMode || "default", thinkEffort: active.thinkEffort || "default", tokenizerMode: active.tokenizerMode || "auto", visionSupport: active.visionSupport || "auto" };
-    edited = (["provider", "apiBase", "apiKey", "model", "thinkingMode", "thinkEffort", "tokenizerMode", "visionSupport", ...MODEL_BUDGET_FIELDS] as const)
-      .some(key => (live[key] ?? 0) !== (normalized[key] ?? 0));
+    const live = modelProfilePreferences(readModelFields(activeName));
+    const saved = modelProfilePreferences(active);
+    edited = (Object.keys(saved) as (keyof typeof saved)[]).some(key => live[key] !== saved[key]);
   }
-  summary.textContent = uiText(`Chat and PDF reading: ${current}`, `聊天与 PDF 阅读：${current}`)
+  const converter = getPrefFull("pdfTranscriptionProfile");
+  const visual = converter ? loadModelProfiles().find(profile => profile.name === converter)?.model || uiText("Missing profile", "配置不存在") : current;
+  summary.textContent = uiText(`Chat: ${current} · PDF transcription: ${visual} (thinking off)`, `聊天：${current} · PDF 转录：${visual}（关闭思考）`)
     + (edited ? uiText(` · Current fields differ from saved profile "${activeName}"`, ` · 当前字段已修改，尚未更新已保存配置“${activeName}”`) : "");
 }
 
@@ -128,11 +100,32 @@ function initSettingsLayout(): void {
     if (!element || element.hasAttribute("data-layout-bound")) return;
     element.setAttribute("data-layout-bound", "true"); element.addEventListener(event, listener);
   };
-  for (const key of ["llmProvider", "llmModel", "llmApiBase", "llmApiKey", "llmThinkingMode", "llmThinkEffort", "tokenizerMode", "visionSupport", ...MODEL_BUDGET_FIELDS]) {
+  for (const key of ["llmProvider", "llmModel", "llmApiBase", "llmApiKey", "llmThinkingMode", "llmThinkEffort", "tokenizerMode", ...MODEL_BUDGET_FIELDS]) {
     const element = document.querySelector(`#zotero-prefpane-${ADDON_REF}-${key}`);
     bind(key, element?.localName === "menulist" ? "command" : "change", updateSettingsSummary);
   }
-  initToolSwitches(); updateSettingsSummary();
+  initToolSwitches(); refreshTranscriptionProfiles(); updateSettingsSummary();
+}
+
+function refreshTranscriptionProfiles(): void {
+  const select = document.querySelector(`#zotero-prefpane-${ADDON_REF}-pdfTranscriptionProfile`) as XULMenuList | null;
+  if (!select) return;
+  const popup = select.querySelector("menupopup")!;
+  const selected = getPrefFull("pdfTranscriptionProfile");
+  const profiles = loadModelProfiles();
+  popup.replaceChildren();
+  const option = (value: string, label: string) => {
+    const node = document.createElementNS(XUL_NS, "menuitem");
+    node.setAttribute("value", value); node.setAttribute("label", label); popup.appendChild(node);
+  };
+  option("", uiText("Use current chat model", "跟随当前聊天模型"));
+  for (const profile of profiles) option(profile.name, `${profile.name} · ${profile.model}`);
+  if (selected && !profiles.some(profile => profile.name === selected)) option(selected, uiText(`Missing profile: ${selected}`, `配置不存在：${selected}`));
+  select.value = selected;
+  if (!select.hasAttribute("data-transcription-bound")) {
+    select.setAttribute("data-transcription-bound", "true");
+    select.addEventListener("command", () => { setPrefFull("pdfTranscriptionProfile", select.value); updateSettingsSummary(); });
+  }
 }
 
 function initToolSwitches(): void {
@@ -142,7 +135,7 @@ function initToolSwitches(): void {
   const ns = "http://www.w3.org/1999/xhtml";
   for (const { function: tool } of getAllToolDefinitions()) {
     const label = document.createElementNS(ns, "label") as HTMLLabelElement;
-    label.style.display = "block";
+    label.className = "chatpdf-preference-tool";
     const input = document.createElementNS(ns, "input") as HTMLInputElement;
     input.type = "checkbox";
     input.checked = isToolEnabled(tool.name);
@@ -225,53 +218,47 @@ function initProfileUI() {
   function showProfileStatus(msg: string, isError = false) {
     if (!profileStatus) return;
     profileStatus.textContent = msg;
-    profileStatus.style.color = isError ? "#ff3b30" : "#34c759";
+    profileStatus.classList.toggle("chatpdf-preference-error", isError);
     setTimeout(() => { profileStatus.textContent = ""; }, 2500);
   }
 
   function renderProfileList() {
+    refreshTranscriptionProfiles();
     if (!profileList) return;
     profileList.innerHTML = "";
-    const profiles = loadProfiles();
+    const profiles = loadModelProfiles();
     const activeProfile = Zotero.Prefs.get(`${PREF_PREFIX}.activeProfile`, true) as string || "";
 
     if (profiles.length === 0) {
-      const empty = document.createElement("div");
-      empty.textContent = uiText("No profiles saved", "尚未保存模型配置");
-      empty.style.cssText = "padding: 8px; font-size: 11px; color: #999;";
+      const empty = h(document, "div", { className: "chatpdf-profile-empty" }, uiText("No profiles saved", "尚未保存模型配置"));
       profileList.appendChild(empty);
       return;
     }
 
     for (const p of profiles) {
-      const row = document.createElement("div");
-      row.style.cssText = "display: flex; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--fill-quinary, #eee); gap: 6px;";
-      if (p.name === activeProfile) row.style.background = "var(--color-accent10, rgba(66,133,244,0.08))";
+      const row = h(document, "div", { className: "chatpdf-profile-row" });
+      row.classList.toggle("chatpdf-profile-row-active", p.name === activeProfile);
 
-      const nameEl = document.createElement("span");
+      const nameEl = h(document, "span", { className: "chatpdf-profile-name", title: p.name });
       nameEl.textContent = p.name;
-      nameEl.style.cssText = "flex: 1; font-size: 12px; font-weight: 500;";
 
-      const modelEl = document.createElement("span");
+      const modelEl = h(document, "span", { className: "chatpdf-profile-model", title: p.model });
       const effortLabel = p.thinkEffort && p.thinkEffort !== "default" ? ` / ${p.thinkEffort}` : "";
       modelEl.textContent = `${p.model}${effortLabel}`;
-      modelEl.style.cssText = "font-size: 11px; color: #888; max-width: 120px; overflow: hidden; text-overflow: ellipsis;";
 
-      const loadBtn = document.createElement("button");
+      const loadBtn = h(document, "button", { type: "button", className: "chatpdf-pref-small-button" });
       loadBtn.textContent = uiText("Load", "加载");
-      loadBtn.style.cssText = "font-size: 11px; padding: 1px 8px; cursor: pointer;";
       loadBtn.addEventListener("click", () => {
         writeModelFields(p);
         showProfileStatus(uiText(`Loaded profile "${p.name}"`, `已加载配置“${p.name}”`));
         renderProfileList();
       });
 
-      const deleteBtn = document.createElement("button");
+      const deleteBtn = h(document, "button", { type: "button", className: "chatpdf-pref-small-button" });
       deleteBtn.textContent = uiText("Delete", "删除");
-      deleteBtn.style.cssText = "font-size: 11px; padding: 1px 6px; cursor: pointer;";
       deleteBtn.addEventListener("click", () => {
-        const updated = loadProfiles().filter(x => x.name !== p.name);
-        saveProfiles(updated);
+        const updated = loadModelProfiles().filter(x => x.name !== p.name);
+        saveModelProfiles(updated);
         if (activeProfile === p.name) {
           Zotero.Prefs.set(`${PREF_PREFIX}.activeProfile`, "", true);
         }
@@ -292,7 +279,7 @@ function initProfileUI() {
   profileSaveBtn.addEventListener("click", () => {
     const name = profileNameInput.value.trim();
     if (!name) { showProfileStatus(uiText("Enter a profile name", "请填写配置名称"), true); return; }
-    const profiles = loadProfiles();
+    const profiles = loadModelProfiles();
     const existing = profiles.findIndex(p => p.name === name);
     const profile = readModelFields(name);
     if (existing >= 0) {
@@ -300,7 +287,7 @@ function initProfileUI() {
     } else {
       profiles.push(profile);
     }
-    saveProfiles(profiles);
+    saveModelProfiles(profiles);
     writeModelFields(profile);
     showProfileStatus(uiText(`Saved profile "${name}"`, `已保存配置“${name}”`));
     profileNameInput.value = "";
@@ -330,7 +317,7 @@ function initLLMTestUI() {
   const sessionId = createProviderSessionId();
 
   function writeDebug(value: unknown) {
-    debugOut.style.display = "";
+    debugOut.hidden = false;
     debugOut.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   }
 
@@ -388,7 +375,7 @@ function initLLMTestUI() {
     }
 
     testBtn.disabled = true;
-    testBtn.textContent = "Testing...";
+    testBtn.textContent = uiText("Testing…", "测试中…");
     writeDebug({
       status: "Sending test request...",
       request: requestDebug,
@@ -438,7 +425,7 @@ function initLLMTestUI() {
       });
     } finally {
       testBtn.disabled = false;
-      testBtn.textContent = "Test LLM";
+      testBtn.textContent = uiText("Test LLM", "测试 LLM");
     }
   });
 

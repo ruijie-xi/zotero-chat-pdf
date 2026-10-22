@@ -78,11 +78,108 @@ describe("LLM transport recovery", () => {
     expect((await pending).content).toBe("OK");
   });
 
-  it.each([400, 401, 429, 503])("does not replay HTTP %i rejections", async status => {
+  it.each([400, 401, 403, 404, 415, 422])("does not replay HTTP %i rejections", async status => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("Provider rejection", { status })));
     await expect(request()).rejects.toThrow(`LLM API error (${status})`);
     expect(fetch).toHaveBeenCalledOnce();
     expect(logLLMTransportFailure).not.toHaveBeenCalled();
+  });
+
+  it("classifies HTTP 413 once and logs exact body/image sizes without contents or credentials", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<h1>413 Request Entity Too Large</h1>", { status: 413 })));
+    const content = [{ type: "text" as const, text: "Inspect 公式" },
+      { type: "image_url" as const, image_url: { url: "data:image/jpeg;base64,/9j/2Q==", detail: "high" as const } },
+      { type: "image_url" as const, image_url: { url: "https://example.com/page.jpg" } }];
+    const error = await chatWithTools([{ role: "user", content }], [], undefined, undefined, undefined, false, { settings }).catch(error => error);
+    const requestBytes = new TextEncoder().encode(vi.mocked(fetch).mock.calls[0][1]!.body as string).byteLength;
+    expect(error).toMatchObject({ name: "ProviderRequestSizeError", status: 413, requestBytes, imageCount: 2, inlineImageBytes: 4 });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(logLLMTransportFailure).toHaveBeenCalledWith({ endpoint: "opencode.ai", model: settings.model, phase: "response", attempt: 1,
+      receivedData: false, retry: false, status: 413, requestBytes, imageCount: 2, inlineImageBytes: 4 });
+    expect(JSON.stringify(vi.mocked(logLLMTransportFailure).mock.calls)).not.toMatch(/secret-test-key|公式|base64|example.com/);
+  });
+
+  it.each([408, 429, 500, 502, 503, 504])("recovers HTTP %i without changing the request or conversation", async status => {
+    const body = JSON.stringify({ error: { type: "server_error", message: "Upstream request failed: Endpoint is unavailable." } });
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(body, { status })).mockResolvedValueOnce(success());
+    vi.stubGlobal("fetch", fetch);
+    const pending = request();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetch).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await pending).content).toBe("OK");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1]).toEqual(fetch.mock.calls[0]);
+    expect(logLLMTransportFailure).toHaveBeenCalledWith(expect.objectContaining({ status, attempt: 1, receivedData: false, retry: true, delayMs: 1000 }));
+  });
+
+  it("bounds repeated HTTP failures and retains the original provider error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Endpoint is unavailable", { status: 429 })));
+    const pending = request().catch(error => error);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect((await pending).message).toContain("LLM API error (429): Endpoint is unavailable");
+    expect((await pending).message).toContain("after 3 attempts");
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(logLLMTransportFailure).toHaveBeenLastCalledWith(expect.objectContaining({ status: 429, attempt: 3, retry: false }));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["3", "date"])("honors Retry-After %s", async header => {
+    vi.setSystemTime(new Date("2026-10-21T00:00:00Z"));
+    const retryAfter = header === "date" ? "Wed, 21 Oct 2026 00:00:03 GMT" : header;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("Busy", { status: 503, headers: { "Retry-After": retryAfter } })).mockResolvedValueOnce(success()));
+    const pending = request();
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(fetch).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await pending).content).toBe("OK");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not shorten a provider wait beyond the automatic retry budget", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Busy", { status: 429, headers: { "Retry-After": "90" } })));
+    await expect(request()).rejects.toThrow("wait of 90 seconds");
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["invalid", "-1", "0"])("uses bounded backoff for Retry-After %s", async header => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("Busy", { status: 429, headers: { "Retry-After": header } })).mockResolvedValueOnce(success()));
+    const pending = request();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await pending).content).toBe("OK");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["insufficient_quota", "billing_hard_limit_reached", "usage_limit_exceeded"])("does not retry explicit %s errors", async code => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { code, message: "Account limit reached" } }), { status: 429 })));
+    await expect(request()).rejects.toThrow(code);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(logLLMTransportFailure).not.toHaveBeenCalled();
+  });
+
+  it("cancels an HTTP retry wait without sending again", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Busy", { status: 503 })));
+    const pending = request(controller.signal).catch(error => error);
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort();
+    expect((await pending).name).toBe("AbortError");
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retains image inputs and avoids a misleading vision hint on transient failures", async () => {
+    const messages = [{ role: "user" as const, content: [{ type: "image_url" as const, image_url: { url: "data:image/png;base64,dGVzdA==", detail: "high" as const } }] }];
+    const fetch = vi.fn().mockResolvedValueOnce(new Response("Endpoint is unavailable", { status: 429 })).mockResolvedValueOnce(success());
+    vi.stubGlobal("fetch", fetch);
+    const pending = chatWithTools(messages, [], undefined, undefined, undefined, false, { settings });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((await pending).content).toBe("OK");
+    expect(fetch.mock.calls[1]).toEqual(fetch.mock.calls[0]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Busy", { status: 429, headers: { "Retry-After": "90" } })));
+    const error = await chatWithTools(messages, [], undefined, undefined, undefined, false, { settings }).catch(error => error);
+    expect(error.message).not.toContain("support vision");
   });
 
   it("does not retry an HTTP rejection whose body cannot be read", async () => {

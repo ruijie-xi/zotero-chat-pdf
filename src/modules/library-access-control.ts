@@ -16,6 +16,7 @@ export function createLibraryAccessControl(root: HTMLElement): HTMLElement {
   const label = h(doc, "label", { for: "chatpdf-library-edit-mode" }, uiText("Library access", "文献库权限"));
   const menu = doc.createElementNS(XUL_NS, "menulist") as XULMenuList;
   menu.id = "chatpdf-library-edit-mode"; menu.setAttribute("native", "true");
+  menu.setAttribute("aria-label", uiText("Library access", "文献库权限"));
   const popup = doc.createElementNS(XUL_NS, "menupopup");
   for (const [mode, en, zh] of modes) {
     const option = doc.createElementNS(XUL_NS, "menuitem");

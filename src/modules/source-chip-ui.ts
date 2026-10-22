@@ -12,7 +12,7 @@ export function createSourceChip(root: HTMLElement, source: SourceItem, actions:
   const doc = root.ownerDocument!;
   const chip = h(doc, "div", { className: "chatpdf-source-chip" });
   const indicator = h(doc, "span");
-  const title = h(doc, "span", { className: "chatpdf-chip-title" });
+  const title = h(doc, "button", { type: "button", className: "chatpdf-chip-title" });
   const badge = h(doc, "span");
   const buttons = h(doc, "span", { className: "chatpdf-chip-actions" });
   const more = h(doc, "button", { type: "button", className: "chatpdf-chip-text-btn", "data-action": "source-menu",
@@ -62,8 +62,8 @@ export function createSourceChip(root: HTMLElement, source: SourceItem, actions:
     title.textContent = source.title; title.title = source.title;
     chip.title = source.errorMessage || (source.kind === "image" ? uiText("Image source", "图片来源") : uiText("Open PDF", "打开 PDF"));
     badge.className = `chatpdf-chip-badge chatpdf-chip-badge-${source.status}`;
-    badge.textContent = source.kind === "image" ? uiText("Image", "图片") : uiText("PDF · direct reading", "PDF · 直接阅读");
-    badge.title = source.kind === "image" ? "" : uiText("The assistant reads original page images on demand.", "助手按需直接查看原始 PDF 页面。");
+    badge.textContent = source.status === "error" ? uiText("Unavailable", "不可用") : source.kind === "image" ? uiText("Image", "图片") : "PDF";
+    badge.title = source.kind === "image" ? "" : uiText("Pages are transcribed and cached on demand; original images remain available for careful review.", "助手按需转录并缓存页面，仍可查看原图仔细复查。");
   };
   update(); return { element: chip, update, dismiss: () => dismiss() };
 }

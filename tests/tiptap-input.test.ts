@@ -36,6 +36,19 @@ describe("TipTap input key isolation", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it.each([{ isComposing: true }, { keyCode: 229 }])("does not submit when Enter confirms an IME candidate (%j)", flags => {
+    const submit = vi.fn();
+    editor = createChatInput(document, submit, submit);
+    document.body.append(editor.element);
+    editor.setText("中文输入");
+    const surface = editor.element.querySelector(".ProseMirror")!;
+    surface.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, ...flags }));
+    expect(submit).not.toHaveBeenCalled();
+    expect(editor.getText()).toBe("中文输入");
+    surface.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["ArrowLeft", false, "move", "left", "character"],
     ["ArrowRight", false, "move", "right", "character"],

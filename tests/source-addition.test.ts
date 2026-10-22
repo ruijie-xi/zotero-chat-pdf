@@ -3,14 +3,14 @@ const mocks = vi.hoisted(() => ({ state: null as any }));
 vi.mock("../src/modules/panel-state", async original => ({
   ...await original<typeof import("../src/modules/panel-state")>(), getPanelState: () => mocks.state,
 }));
-vi.mock("../src/modules/send-handler", () => ({ handleSend: vi.fn(), autoSaveSession: vi.fn(async () => {}) }));
+vi.mock("../src/modules/session-persistence", () => ({ autoSaveSession: vi.fn(async () => {}) }));
 vi.mock("../src/modules/zotero-items", async original => ({
   ...await original<typeof import("../src/modules/zotero-items")>(), addZoteroItemToSession: vi.fn(),
 }));
 import { ChatSession } from "../src/modules/chat-session";
 import { addItemToSession } from "../src/modules/chat-panel";
 import { addZoteroItemToSession } from "../src/modules/zotero-items";
-import { autoSaveSession } from "../src/modules/send-handler";
+import { autoSaveSession } from "../src/modules/session-persistence";
 
 let root: HTMLElement;
 beforeEach(() => {
