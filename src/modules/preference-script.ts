@@ -1,4 +1,4 @@
-import { applyModelProfile, loadModelProfiles, modelProfilePreferences, saveModelProfiles, MODEL_BUDGET_FIELDS } from "./model-profile";
+import { applyModelProfile, loadModelProfiles, modelProfilePreferences, saveModelProfiles, updateActiveProfileApiKey, MODEL_BUDGET_FIELDS } from "./model-profile";
 import { resolveModelCapabilities } from "./model-capabilities";
 import type { ModelProfile } from "./model-profile";
 import { buildLLMHeaders, createProviderSessionId, getProviderApiBase, LLMProvider, normalizeProvider, PROVIDER_MODELS, PROVIDER_PRESETS } from "./llm-provider";
@@ -249,7 +249,9 @@ function initProfileUI() {
       const loadBtn = h(document, "button", { type: "button", className: "chatpdf-pref-small-button" });
       loadBtn.textContent = uiText("Load", "加载");
       loadBtn.addEventListener("click", () => {
-        writeModelFields(p);
+        const latest = loadModelProfiles().find(profile => profile.name === p.name);
+        if (!latest) { renderProfileList(); return; }
+        writeModelFields(latest);
         showProfileStatus(uiText(`Loaded profile "${p.name}"`, `已加载配置“${p.name}”`));
         renderProfileList();
       });
@@ -514,6 +516,15 @@ function tryInit(retries: number) {
     if (!field || field.dataset.budgetBound) continue;
     field.dataset.budgetBound = "true";
     field.addEventListener("change", () => {
+      if (key === "llmApiKey") {
+        // Read the field directly: Zotero's preference binding can run after this listener.
+        setPrefFull("llmApiKey", field.value);
+        if (updateActiveProfileApiKey(readModelFields(getPrefFull("activeProfile")))) {
+          refreshProfiles?.();
+          updateSettingsSummary();
+          return;
+        }
+      }
       // Direct edits select a new endpoint/model/account. Do not inherit another model's overrides.
       for (const budgetKey of MODEL_BUDGET_FIELDS) {
         Zotero.Prefs.set(`${PREF_PREFIX}.${budgetKey}`, 0, true);

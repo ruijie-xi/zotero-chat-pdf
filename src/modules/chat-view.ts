@@ -1,9 +1,8 @@
-import { applyModelProfile, loadModelProfiles } from "./model-profile";
+import { installModelSelector } from "./model-selector";
 import { createLibraryAccessControl } from "./library-access-control";
 import { ChatSession } from "./chat-session";
 import { createChatInput } from "./tiptap-input";
 import { IMAGE_INPUT_HELP } from "./image-input";
-import { getPref } from "../utils/prefs";
 import { h, XUL_NS, XULMenuList } from "../utils/dom";
 import { uiLabel, uiText } from "../utils/ui-text";
 import { getPanelState, abortCurrentStream, resetStreamingUI } from "./panel-state";
@@ -14,37 +13,13 @@ import { handleSend, resendEditedMessage } from "./send-handler";
 import { MESSAGE_EDIT_EVENT, type MessageEditRequest } from "./message-editor";
 import { autoSaveSession } from "./session-persistence";
 import { installInputSources } from "./chat-input-sources";
-
-function getCurrentProfileName(): string {
-  return (getPref("activeProfile") as string) || "";
-}
-
-function refreshProfileSelect(root: HTMLElement): void {
-  const select = root.querySelector("#chatpdf-profile-select") as XULMenuList | null;
-  if (!select) return;
-  const doc = root.ownerDocument!;
-  const popup = select.querySelector("menupopup")!;
-  popup.replaceChildren();
-  const profiles = loadModelProfiles();
-  const currentProfile = getCurrentProfileName();
-  if (profiles.length === 0) {
-    select.style.display = "none";
-    return;
-  }
-  select.style.display = "";
-  for (const p of profiles) {
-    const opt = doc.createElementNS(XUL_NS, "menuitem");
-    opt.setAttribute("value", p.name);
-    opt.setAttribute("label", p.name);
-    popup.appendChild(opt);
-  }
-  select.value = currentProfile || profiles[0].name;
-}
-
+import { installChatFind } from "./chat-find";
 
 export function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   const doc = root.ownerDocument!;
   const state = getPanelState(root);
+  state.findCleanup?.();
+  state.modelSelectorCleanup?.();
   root.innerHTML = "";
   state.showingHistory = false;
 
@@ -98,6 +73,8 @@ export function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
   state.copyHandler = handler;
 
   root.appendChild(messagesArea);
+  messagesArea.tabIndex = 0;
+  state.findCleanup = installChatFind(root, messagesArea, titleActions);
 
   // History view elements (hidden by default)
   const historyHeader = h(doc, "div", { className: "chatpdf-header-bar", id: "chatpdf-history-header", style: "display:none" });
@@ -235,18 +212,11 @@ export function buildChatUI(root: HTMLElement, onMinimize?: () => void) {
     void resendEditedMessage(root, (event as CustomEvent & { detail: MessageEditRequest }).detail);
   });
 
-  profileSelect.addEventListener("command", () => {
-    const profiles = loadModelProfiles();
-    const selected = profiles.find(p => p.name === profileSelect.value);
-    if (selected) {
-      applyModelProfile(selected);
-      getPanelState(root).session.contextStats = undefined;
-      updateUsageBar(root, getPanelState(root).session.getTokenUsage());
-      Zotero.debug(`[ChatPDF] Switched to profile: ${selected.name}`);
-    }
+  state.modelSelectorCleanup = installModelSelector(profileSelect, () => {
+    state.session.contextStats = undefined;
+    updateUsageBar(root, state.session.getTokenUsage());
   });
 
   renderChatHistory(root);
   refreshSourceChips(root);
-  refreshProfileSelect(root);
 }

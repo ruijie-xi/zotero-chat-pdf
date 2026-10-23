@@ -149,6 +149,44 @@ describe("provider selection in preferences", () => {
     expect((field("llmApiBase") as HTMLInputElement).readOnly).toBe(false);
   });
 
+  it("keeps a replacement key after repeated edits and switching profiles without an extra Save", async () => {
+    loadProfile("Legacy");
+    for (const apiKey of ["replacement-key", "second-replacement", ""]) {
+      change("llmApiKey", apiKey);
+      expect(prefs.activeProfile).toBe("Legacy");
+      expect(prefs.contextWindowTokens).toBe(40000);
+      expect(JSON.parse(prefs.modelProfiles)[0].apiKey).toBe(apiKey);
+      change("llmProvider", "deepseek");
+      loadProfile("Legacy");
+      expect(prefs.llmApiKey).toBe(apiKey);
+    }
+    change("llmApiKey", "working-key");
+    const fetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: "OK" } }] }) }));
+    vi.stubGlobal("fetch", fetch);
+    (field("llmTestBtn") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    const calls = fetch.mock.calls as unknown as [string, RequestInit][];
+    expect(calls[0][1].headers).toMatchObject({ Authorization: "Bearer working-key" });
+  });
+
+  it("keeps changed endpoint/model drafts separate from the previously loaded account", () => {
+    for (const key of ["llmApiBase", "llmModel"]) {
+      loadProfile("Legacy");
+      change(key, key === "llmApiBase" ? "https://different.example/v1" : "different-model");
+      change("llmApiKey", "new-account-key");
+      expect(prefs.activeProfile).toBe("");
+      expect(JSON.parse(prefs.modelProfiles)[0].apiKey).toBe("legacy-key");
+    }
+  });
+
+  it("loads the latest saved credential even when a profile row was rendered earlier", () => {
+    const profiles = JSON.parse(prefs.modelProfiles);
+    profiles[0].apiKey = "updated-after-render";
+    prefs.modelProfiles = JSON.stringify(profiles);
+    loadProfile("Legacy");
+    expect(prefs.llmApiKey).toBe("updated-after-render");
+  });
+
   it("uses the selected Go provider and a stable session ID for repeated API tests", async () => {
     const fetch = vi.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ message: { content: "OK" } }] }) }));
     vi.stubGlobal("fetch", fetch);

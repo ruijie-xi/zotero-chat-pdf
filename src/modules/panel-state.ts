@@ -51,6 +51,8 @@ export interface PanelState {
   activePollIntervals: Set<number>;
   copyHandler: ((event: Event) => void) | null;
   panelCleanup: (() => void) | null;
+  findCleanup: (() => void) | null;
+  modelSelectorCleanup: (() => void) | null;
   streamViewCleanup: (() => void) | null;
 }
 
@@ -87,6 +89,8 @@ export function createPanelState(win: Window): PanelState {
     activePollIntervals: new Set(),
     copyHandler: null,
     panelCleanup: null,
+    findCleanup: null,
+    modelSelectorCleanup: null,
     streamViewCleanup: null,
   };
   states.set(win, state);
@@ -103,6 +107,8 @@ export function destroyPanelState(win: Window): void {
   state.currentAbortController?.abort();
   for (const stream of state.backgroundStreams.values()) stream.abortController.abort();
   state.streamViewCleanup?.();
+  state.findCleanup?.();
+  state.modelSelectorCleanup?.();
   for (const interval of state.activePollIntervals) win.clearInterval(interval);
   state.panelCleanup?.();
   state.panelCleanup = null;

@@ -63,7 +63,7 @@ The default API base and model target DeepSeek; existing settings and profiles r
 
 Optional settings include thinking controls, iteration limits, context/output budgets, a per-image token reserve, cache location, system prompt, debug logging and web tools. Search uses PDF.js or a fresh Zotero text index locally. Brave Search is used when configured; otherwise web search falls back to DuckDuckGo.
 
-The same model handles conversation and page reading. All enabled tools are available without a vision confirmation step. An explicit image-input rejection switches the current native session/model to text, with a visible notice. Current fields take effect immediately; named profiles and system prompts have explicit save controls.
+The same model handles conversation and page reading. All enabled tools are available without a vision confirmation step. An explicit image-input rejection switches the current native session/model to text, with a visible notice. Current fields take effect immediately. Replacing or clearing the API key of a loaded profile also updates that profile, so switching away and back does not restore its old key. Other named-profile edits and system prompts have explicit save controls.
 
 History searches chat and paper titles, supports durable pins and an empty-chat filter, and shows 50 entries at a time. Existing chat history remains available; old conversion states migrate to direct reading.
 
@@ -78,6 +78,7 @@ Keyboard shortcuts:
 - **Enter**: send.
 - **Shift+Enter**: insert a new line.
 - **Ctrl+Enter**: send.
+- **Ctrl+F** (macOS: **Cmd+F**), with focus in ChatPDF: find user messages and assistant body text in the current chat. The header's **Find** button opens the same bar. In the find field, **Enter / Shift+Enter** navigate matches and **Esc** closes it. Reasoning, tool arguments and tool results are excluded, even when expanded.
 
 Mention one or more source chips in the editor to restrict a question to those papers. Without mentions, the assistant can use all sources in the current session. Use **Stop** to cancel an answer and its pending page reads.
 

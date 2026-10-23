@@ -4,7 +4,10 @@ vi.mock("../src/modules/llm-client", async original => ({ ...await original<type
 vi.mock("../src/modules/tools", () => ({ executeTool: vi.fn(), getToolMetadata: vi.fn(() => ({ readOnly: true })) }));
 import { runAgentLoop } from "../src/modules/agent-loop";
 import { ChatSession } from "../src/modules/chat-session";
-import { chatWithTools } from "../src/modules/llm-client";
+import { chatWithTools, getLLMSettings } from "../src/modules/llm-client";
+import { createPanelState, destroyPanelState } from "../src/modules/panel-state";
+import { generateTitle } from "../src/modules/session-persistence";
+vi.mock("../src/modules/chat-history", () => ({ saveSession: vi.fn(async () => {}) }));
 import { clearModelCapabilityCache } from "../src/modules/model-capabilities";
 
 const model = vi.mocked(chatWithTools);
@@ -18,6 +21,24 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.mocked(Zotero.Prefs.get).mockReset(); });
 
 describe("Go conversation transport", () => {
+  it("uses the captured turn route for both the answer and its title after preferences change", async () => {
+    Object.assign(preferences, { llmProvider: "custom", llmApiBase: "https://google.example/v1", llmApiKey: "google-test", llmModel: "gemini-test", contextWindowTokens: 200000, maxOutputTokens: 8000, tokenizerMode: "deepseek-v4-estimate" });
+    const settings = getLLMSettings();
+    Object.assign(preferences, { llmProvider: "opencode-go", llmApiKey: "go-test", llmModel: "deepseek-v4.1-flash" });
+    const session = new ChatSession();
+    const messages = session.buildAgentMessages("Question", undefined, []);
+    session.addUserMessage("Question");
+    model.mockResolvedValue({ content: "Answer", finishReason: "stop" });
+    const result = await runAgentLoop(messages, [], session, undefined, undefined, { settings, requestId: "test", windowId: "test", turnScope: session.resolveTurnScope([]) });
+    session.addAssistantMessage(result.content);
+    const root = document.createElement("div");
+    createPanelState(window).session = session;
+    try { await generateTitle(session, root, settings); }
+    finally { destroyPanelState(window); }
+    expect(model).toHaveBeenCalledTimes(2);
+    for (const args of model.mock.calls) expect(args[6]!.settings).toMatchObject({ ...settings, sessionId: session.id });
+  });
+
   it("retains the Go conversation ID across compaction, answer requests and following turns", async () => {
     Object.assign(preferences, { llmProvider: "opencode-go", llmApiKey: "go-test", llmModel: "deepseek-v4.1-flash", tokenizerMode: "deepseek-v4-estimate", contextWindowTokens: 1000000, maxOutputTokens: 384000 });
     const session = new ChatSession();

@@ -1,4 +1,5 @@
-import { getPref } from "../utils/prefs";
+import { getLLMSettings } from "./llm-client";
+import { activeModelProfile } from "./model-profile";
 import { uiText } from "../utils/ui-text";
 import { runAgentLoop } from "./agent-loop";
 import { getToolDefinitions } from "./tools";
@@ -38,8 +39,9 @@ export async function handleSend(root: HTMLElement): Promise<void> {
   const scope = session.resolveTurnScope(input.getMentionKeys());
   const libraryAccess = captureLibraryAccess(state.win);
   const sources = session.snapshotSources(scope).filter(source => session.getSource(source.id)?.status === "ready");
-  const model = String(getPref("llmModel") || "deepseek-chat");
-  const profile = String(getPref("activeProfile") || "");
+  const settings = getLLMSettings();
+  const model = settings.model;
+  const profile = activeModelProfile(settings)?.name;
   const { controller, signal } = createAbortController(root.ownerDocument!.defaultView || undefined);
   let complete!: () => void;
   const stream: StreamState = {
@@ -68,6 +70,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
     await saveSession(session.toSavedSession());
     void logLLMRequest(messages, model).catch(() => {});
     const result = await runAgentLoop(messages, tools, session, createTurnCallbacks(stream), signal, {
+      settings,
       requestId: crypto.randomUUID?.() ?? Zotero.Utilities.randomString(24),
       windowId: state.windowId, turnScope: scope, libraryAccess,
       approveLibraryChanges: (plan, undo) => state.session === session && root.isConnected
@@ -122,7 +125,7 @@ export async function handleSend(root: HTMLElement): Promise<void> {
       complete();
     }
   }
-  if (succeeded && session.getHistoryLength() === 2 && session.titleSource !== "user") void generateTitle(session, root);
+  if (succeeded && session.getHistoryLength() === 2 && session.titleSource !== "user") void generateTitle(session, root, settings);
 }
 
 /** Wait for cancellation to finish before truncating and replacing a turn. */

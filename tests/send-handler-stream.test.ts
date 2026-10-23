@@ -25,6 +25,20 @@ beforeEach(() => {
 afterEach(() => { destroyPanelState(window); vi.useRealTimers(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("assistant narration chronology", () => {
+  it("keeps the clicked model and label when preferences change during the initial save", async () => {
+    const preferences: Record<string, unknown> = { llmApiBase: "https://google.example/v1", llmApiKey: "google-test-key", llmModel: "gemini-test" };
+    vi.mocked(Zotero.Prefs.get).mockImplementation(key => preferences[String(key).split(".").at(-1)!] as never);
+    vi.mocked(saveSession).mockImplementationOnce(async () => {
+      Object.assign(preferences, { llmApiBase: "https://deepseek.example/v1", llmApiKey: "deepseek-test-key", llmModel: "deepseek-test" });
+    });
+    vi.mocked(runAgentLoop).mockResolvedValue({ content: "Answer", iterations: [], totalIterations: 1 });
+    try {
+      await handleSend(root);
+      expect(vi.mocked(runAgentLoop).mock.calls[0][5]!.settings).toMatchObject({ apiBase: "https://google.example/v1", apiKey: "google-test-key", model: "gemini-test" });
+      expect(createPanelState(window).session.getHistory()[1].modelLabel).toBe("gemini-test");
+    } finally { vi.mocked(Zotero.Prefs.get).mockReset(); }
+  });
+
   it("persists and releases a completed turn even when its final view fails", async () => {
     const state = createPanelState(window);
     let completed!: Promise<void>;

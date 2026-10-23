@@ -71,6 +71,41 @@
 #chatpdf-root[data-has-sources="false"] > .chatpdf-resize-handle { display: none; }
 .chatpdf-sources-heading { font-size: 11px; color: var(--fill-secondary, #666); margin: 0 0 5px; }
 .chatpdf-title-actions { display: flex; align-items: center; gap: 4px; }
+
+.chatpdf-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--fill-quinary, #e5e5e5);
+}
+.chatpdf-find-input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  padding: 4px 6px;
+  color: var(--fill-primary, #222);
+  background: var(--material-background, #fff);
+  border: 1px solid var(--fill-quaternary, #ccc);
+  border-radius: 4px;
+  font: inherit;
+}
+.chatpdf-find-count { flex-shrink: 0; font-size: 11px; color: var(--fill-secondary, #666); }
+.chatpdf-find-button {
+  flex-shrink: 0;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fill-primary, #222);
+  cursor: pointer;
+  font: inherit;
+}
+.chatpdf-find-button:hover { background: var(--fill-quinary, #eee); }
+.chatpdf-find-button:disabled { opacity: 0.4; cursor: default; }
+::highlight(chatpdf-find-all) { background-color: #ffe58a; color: #222; }
+::highlight(chatpdf-find-current) { background-color: #f59e0b; color: #111; }
 .chatpdf-image-status { font-size: 11px; color: var(--fill-secondary, #666); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 4px; }
 .chatpdf-image-status:empty { display: none; }
 .chatpdf-msg-footer { margin-top: 7px; padding-right: 30px; }

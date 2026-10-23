@@ -1,5 +1,6 @@
 import { getPref, setPref } from "../utils/prefs";
 import { getProviderApiBase, normalizeProvider, type LLMProvider } from "./llm-provider";
+import type { LLMSettings } from "./llm-client";
 
 /** Model limits belong to an endpoint/model profile, never to a document. */
 export interface ModelBudgetSettings {
@@ -48,8 +49,33 @@ export function loadModelProfiles(): ModelProfile[] {
   return parseModelProfiles(getPref("modelProfiles"));
 }
 
+/** A saved name is only a routing label when it still matches the live endpoint/model/account. */
+export function activeModelProfile(settings: LLMSettings, profiles = loadModelProfiles()): ModelProfile | undefined {
+  const active = profiles.find(profile => profile.name === getPref("activeProfile"));
+  return active
+    && normalizeProvider(active.provider) === settings.provider
+    && getProviderApiBase(active).replace(/\/+$/, "") === settings.apiBase.replace(/\/+$/, "")
+    && active.model === settings.model && active.apiKey === settings.apiKey
+    ? active : undefined;
+}
+
 export function saveModelProfiles(profiles: ModelProfile[]): void {
   setPref("modelProfiles", JSON.stringify(profiles));
+}
+
+/** Replacing a loaded profile's credential must survive selecting that profile again. */
+export function updateActiveProfileApiKey(fields: ModelProfile): boolean {
+  const profiles = loadModelProfiles();
+  const active = profiles.find(profile => profile.name === getPref("activeProfile"));
+  if (!active || normalizeProvider(active.provider) !== normalizeProvider(fields.provider)
+    || getProviderApiBase(active).replace(/\/+$/, "") !== getProviderApiBase(fields).replace(/\/+$/, "")
+    || active.model !== fields.model) return false;
+  // Update only this named account, including explicit clearing; retain all other profile fields.
+  if (active.apiKey !== fields.apiKey) {
+    active.apiKey = fields.apiKey;
+    saveModelProfiles(profiles);
+  }
+  return true;
 }
 
 /** Normalize only at application time; reading a profile never rewrites saved user data. */

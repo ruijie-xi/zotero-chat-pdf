@@ -1,7 +1,7 @@
 import { resolveModelCapabilities } from "./model-capabilities";
 import { TokenCounter, loadTokenizer } from "./token-accounting";
 import { ContextBudget } from "./context-budget";
-import { ProviderMessage, VisionContent, Tool, chatWithTools, StreamCallback, TokenUsage, IterationRecord, ChatResult, ProviderContextError, sumTokenUsage, getLLMSettings } from "./llm-client";
+import { ProviderMessage, VisionContent, Tool, chatWithTools, StreamCallback, TokenUsage, IterationRecord, ChatResult, ProviderContextError, sumTokenUsage, getLLMSettings, type LLMSettings } from "./llm-client";
 import { ImageInput } from "./image-input";
 import { executeTool, getToolMetadata, ToolExecutionContext } from "./tools";
 import { ChatSession } from "./chat-session";
@@ -34,6 +34,7 @@ export interface AgentResult {
   usage?: TokenUsage;
 }
 export interface AgentExecutionContext { requestId: string; windowId: string; turnScope: Set<string>;
+  settings?: LLMSettings;
   libraryAccess?: ToolExecutionContext["libraryAccess"]; approveLibraryChanges?: ToolExecutionContext["approveLibraryChanges"]; }
 
 function abortError(message = "The request was cancelled."): Error {
@@ -55,7 +56,7 @@ export async function runAgentLoop(
   const configuredIterations = Number(getPref("agentMaxIterations") ?? 0);
   const maxIterations = Number.isFinite(configuredIterations) ? Math.max(0, Math.floor(configuredIterations)) : 0;
   const autoContinue = getPref("agentAutoContinue") !== false;
-  const settings = { ...getLLMSettings(), sessionId: session.id };
+  const settings = { ...(execution?.settings || getLLMSettings()), sessionId: session.id };
   const capabilities = await resolveModelCapabilities(settings, signal);
   const budget = new ContextBudget(capabilities, new TokenCounter(await loadTokenizer(), settings, capabilities));
   const context = session.ensureAgentContext(messages);

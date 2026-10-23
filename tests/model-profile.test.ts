@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyModelProfile, loadModelProfiles, modelProfilePreferences, parseModelProfiles, saveModelProfiles } from "../src/modules/model-profile";
+import { applyModelProfile, loadModelProfiles, modelProfilePreferences, parseModelProfiles, saveModelProfiles, updateActiveProfileApiKey } from "../src/modules/model-profile";
 
 const legacy = { name: "Legacy custom", apiBase: "https://custom.example/v1", apiKey: "fixture-only", model: "custom-model" };
 
@@ -38,5 +38,31 @@ describe("shared model profiles", () => {
   it("preserves the existing profile storage format", () => {
     saveModelProfiles([legacy]);
     expect(Zotero.Prefs.set).toHaveBeenCalledWith("extensions.zotero.chatpdf.modelProfiles", JSON.stringify([legacy]), true);
+  });
+
+  it("rotates or clears only the loaded account's key while preserving other fields and accounts", () => {
+    const selected = { ...legacy, historicalSetting: "retain", maxOutputTokens: 12345 };
+    const other = { ...legacy, name: "Another account", apiKey: "other-account-key" };
+    const prefs: Record<string, unknown> = { activeProfile: selected.name, modelProfiles: JSON.stringify([selected, other]) };
+    vi.mocked(Zotero.Prefs.get).mockImplementation(key => prefs[String(key).split(".").at(-1)!] as never);
+    vi.mocked(Zotero.Prefs.set).mockImplementation((key, value) => { prefs[String(key).split(".").at(-1)!] = value; });
+    for (const apiKey of ["replacement-key", "second-replacement", ""]) {
+      expect(updateActiveProfileApiKey({ ...legacy, apiKey, maxOutputTokens: 99 })).toBe(true);
+      expect(loadModelProfiles()).toEqual([{ ...selected, apiKey }, other]);
+      expect(prefs.activeProfile).toBe(selected.name);
+    }
+  });
+
+  it("does not attach an unsaved credential to an absent or different model profile", () => {
+    const prefs: Record<string, unknown> = { activeProfile: legacy.name, modelProfiles: JSON.stringify([legacy]) };
+    vi.mocked(Zotero.Prefs.get).mockImplementation(key => prefs[String(key).split(".").at(-1)!] as never);
+    for (const change of [{ model: "different" }, { apiBase: "https://another.example/v1" }, { provider: "deepseek" as const }]) {
+      expect(updateActiveProfileApiKey({ ...legacy, apiKey: "replacement", ...change })).toBe(false);
+    }
+    for (const name of ["", "deleted"]) {
+      prefs.activeProfile = name;
+      expect(updateActiveProfileApiKey({ ...legacy, apiKey: "replacement" })).toBe(false);
+    }
+    expect(Zotero.Prefs.set).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,5 @@
 import { getPanelState } from "./panel-state";
-import { chatWithTools, getLLMSettings, type ChatMessage } from "./llm-client";
+import { chatWithTools, getLLMSettings, type ChatMessage, type LLMSettings } from "./llm-client";
 import { resolveModelCapabilities } from "./model-capabilities";
 import { loadTokenizer, TokenCounter } from "./token-accounting";
 import { ContextBudget } from "./context-budget";
@@ -20,7 +20,7 @@ export async function autoSaveSession(root: HTMLElement, force = false): Promise
 
 
 /** Generate an LLM-based title for a session. */
-export async function generateTitle(targetSession: import("./chat-session").ChatSession, root: HTMLElement): Promise<void> {
+export async function generateTitle(targetSession: import("./chat-session").ChatSession, root: HTMLElement, turnSettings?: LLMSettings): Promise<void> {
   const panelState = getPanelState(root);
   const hasUserTitle = () => targetSession.titleSource === "user";
   if (hasUserTitle()) return;
@@ -43,7 +43,7 @@ export async function generateTitle(targetSession: import("./chat-session").Chat
       },
     ];
 
-    const settings = { ...getLLMSettings(), sessionId: targetSession.id };
+    const settings = { ...(turnSettings || getLLMSettings()), sessionId: targetSession.id };
     const capabilities = await resolveModelCapabilities(settings);
     const budget = new ContextBudget(capabilities, new TokenCounter(await loadTokenizer(), settings, capabilities));
     budget.assertFits(titleMessages);
