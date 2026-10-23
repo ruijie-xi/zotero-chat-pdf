@@ -25,7 +25,7 @@ describe("shared Zotero tool channel", () => {
 
   it("publishes all 24 native names, descriptions and schemas by default", async () => {
     const tools = (await call("tools.list")).body.result.tools;
-    expect(tools).toHaveLength(24);
+    expect(tools).toHaveLength(25);
     expect(tools.map(({ metadata: _metadata, ...tool }: any) => tool)).toEqual(
       getToolDefinitions().map(tool => tool.function));
     expect(tools.find((tool: any) => tool.name === "web_search")).toBeDefined();
@@ -57,7 +57,7 @@ describe("shared Zotero tool channel", () => {
     expect(network).not.toHaveBeenCalled();
     network.mockRestore();
     setToolEnabled("web_fetch", true);
-    expect(getToolDefinitions()).toHaveLength(24);
+    expect(getToolDefinitions()).toHaveLength(25);
   });
   it.each([
     ["search_pdf_text", { query: "energy", mode: "invalid" }, "unsupported value"],

@@ -37,9 +37,11 @@ Go's public `/models` response currently omits token capacities. For the exact s
 | `tools.ts` / `tool-validation.ts` | Shared validation, authorization, dispatch and result accounting |
 | `research-tools.ts` | PDF discovery/evidence and library-edit dispatch |
 | `pdf-text.ts` | Local PDF text/page caches, index reuse, revision-aware search and continuation |
+| `pdf-locations.ts` | Scoped local phrase location, candidate-page geometry caches and citation target resolution |
+| `pdf-location-geometry.ts` | Normalized text/offset matching and PDF/rotated-page coordinate transforms |
 | `library-changes.ts` | Captured edit scope, transaction preflight, durable receipts and conflict-safe undo |
 | `library-approval.ts` | Trusted batch review of concrete changes or reversals |
-| `source-citation.ts` | Library-qualified PDF page links and native reader routing |
+| `source-citation.ts` | Validated library-qualified PDF page/region links and native reader routing |
 | `safe-web-client.ts` | Public HTTP(S) validation, redirect checks, timeout, MIME, and streamed byte limits |
 | `chat-session.ts` | Session library, TurnScope messages, prompt construction, history, and schema-v5 serialization |
 | `chat-history.ts` | Atomic session/index repository, index recovery, and deletion tombstones |
@@ -158,6 +160,7 @@ Provider replay preserves DeepSeek `reasoning_content` and Gemini thought-signat
 - `search_pdf_text` (default document discovery, explicit passage mode, cumulative coverage and continuation; one shared native/MCP implementation)
 - `read_pdf_text` (session-scoped text and page navigation)
 - `read_pdf_page` (session-scoped cached Markdown, on-demand visual transcription)
+- `locate_pdf_content` (session-scoped local phrase/number/caption location, cached geometry and clickable region citations)
 - `inspect_pdf_page` (session-scoped original visual review)
 - `list_images`, `read_image` (standalone images)
 - `read_tool_result` (exact stored text, with current source-scope enforcement)

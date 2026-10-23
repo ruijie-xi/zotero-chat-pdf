@@ -6,10 +6,13 @@ vi.mock("../src/modules/zotero-items", async original => ({
   ...await original<typeof import("../src/modules/zotero-items")>(), getItemByKey: vi.fn(),
 }));
 vi.mock("../src/modules/pdf-markdown", () => ({ readPdfMarkdown: vi.fn() }));
+vi.mock("../src/modules/pdf-locations", () => ({ locatePdfContent: vi.fn(), resolvePdfCitationLocation: vi.fn() }));
+import { locatePdfContent } from "../src/modules/pdf-locations";
 import { readPdfMarkdown } from "../src/modules/pdf-markdown";
 import { readPdfPages, readPdfText } from "../src/modules/pdf-text";
 import { getItemByKey } from "../src/modules/zotero-items";
-import { executeTool, getToolDefinitions } from "../src/modules/tools";
+import { executeTool, getToolDefinitions, toolResultSourceIds } from "../src/modules/tools";
+import { getToolMetadata } from "../src/modules/tool-registry";
 import { ChatSession } from "../src/modules/chat-session";
 
 const attachment = { key: "PDF12345", libraryID: 1, isPDFAttachment: () => true } as any;
@@ -25,6 +28,29 @@ function fixture() {
   return { session, src, ctx: { session, turnScope: new Set([src.id]), requestId: "r", windowId: "w", deliverImage: vi.fn() } };
 }
 describe("original PDF reading tools", () => {
+  it("exposes a local locator with scoped result memory and region citations", async () => {
+    const { src, ctx } = fixture();
+    expect(getToolMetadata("locate_pdf_content")).toMatchObject({ readOnly: true, network: false, costly: false });
+    expect(toolResultSourceIds("locate_pdf_content", { key: src.id }, ctx)).toEqual([src.id]);
+    vi.mocked(locatePdfContent).mockResolvedValueOnce({ revision: "a".repeat(64), matches: [{ pdf_page: 2,
+      rects: [[10, 20, 30, 40]], region: { x: 0.1, y: 0.2, width: 0.2, height: 0.1 } }] } as any);
+    const output = await executeTool("locate_pdf_content", { key: src.id, query: "Theorem", page: 2 }, { ...ctx, imageInputRejected: true });
+    expect(output).toContain("chatpdf_rects"); expect(output).toContain("chatpdf_revision");
+    expect(ctx.deliverImage).not.toHaveBeenCalled();
+  });
+  it("enforces locator scope, source revocation and disabled-tool settings", async () => {
+    const { src, ctx, session } = fixture();
+    ctx.turnScope.clear();
+    expect(await executeTool("locate_pdf_content", { key: src.id, query: "energy" }, ctx)).toContain("outside this turn");
+    expect(locatePdfContent).not.toHaveBeenCalled();
+    ctx.turnScope.add(src.id);
+    vi.mocked(Zotero.Prefs.get).mockImplementation(key => String(key).endsWith("disabledTools") ? '["locate_pdf_content"]' as never : undefined);
+    expect(await executeTool("locate_pdf_content", { key: src.id, query: "energy" }, ctx)).toContain("disabled");
+    expect(locatePdfContent).not.toHaveBeenCalled();
+    vi.mocked(Zotero.Prefs.get).mockReturnValue(undefined);
+    vi.mocked(locatePdfContent).mockImplementationOnce(async () => { session.removeSource(src.id); return {} as any; });
+    await expect(executeTool("locate_pdf_content", { key: src.id, query: "energy" }, ctx)).rejects.toMatchObject({ name: "AbortError" });
+  });
   it("exposes cached Markdown reading and separate original-image review without legacy document jobs", () => {
     const names = getToolDefinitions().map(tool => tool.function.name);
     expect(names).toContain("inspect_pdf_page"); expect(names).toContain("read_pdf_page"); expect(names).toContain("search_pdf_text");

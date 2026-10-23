@@ -1,6 +1,6 @@
 # Shared native and MCP tool channel
 
-Decision: 2026-10-20. Zotero owns all tool definitions and execution. Native ChatPDF chat and the companion Zotero MCP use the same names, descriptions, JSON schemas and executor. Each tool is individually enabled or disabled in preferences; all 23 are enabled by default.
+Decision: 2026-10-20; inventory updated 2026-10-23. Zotero owns all tool definitions and execution. Native ChatPDF chat and the companion Zotero MCP use the same names, descriptions, JSON schemas and executor. Each tool is individually enabled or disabled in preferences; all 25 are enabled by default.
 
 ```mermaid
 flowchart LR
@@ -29,7 +29,7 @@ Native chat calls the executor in-process. External MCP reaches that same execut
 | Purpose | Tools |
 | --- | --- |
 | Document sources and images | `list_sources`, `add_zotero_item_to_session`, `list_images`, `read_image` |
-| PDF retrieval, Markdown and original-image review | `search_pdf_text`, `get_document_status`, `read_pdf_text`, `read_pdf_page`, `inspect_pdf_page` |
+| PDF retrieval, location, Markdown and original-image review | `search_pdf_text`, `locate_pdf_content`, `get_document_status`, `read_pdf_text`, `read_pdf_page`, `inspect_pdf_page` |
 | Zotero metadata, annotations and selection | `search_zotero_library`, `search_zotero_annotations`, `get_zotero_item`, `get_current_zotero_selection`, `list_zotero_collections`, `list_collection_items` |
 | Notes and scoped changes | `read_zotero_notes`, `search_zotero_notes`, `change_zotero_library` |
 | Public web | `web_search`, `web_fetch` |
@@ -37,6 +37,8 @@ Native chat calls the executor in-process. External MCP reaches that same execut
 | Complete stored results | `read_tool_result` |
 
 Web search uses Brave when a key is configured and otherwise the existing DuckDuckGo fallback. No new search credential is required by the shared channel. Public network access still uses `SafeWebClient`.
+
+`locate_pdf_content` reuses page-mapped local text to find candidate pages, then caches their text geometry. Both channels return the same matches, crop regions and citations. It does not perform semantic search, OCR or image/model requests. See [Content location and region citations](pdf-content-location.md) for matching behavior, precision and host compatibility.
 
 ## Protocol
 

@@ -9,6 +9,7 @@ import { applyLibraryChanges, listLibraryChanges, planLibraryChanges, summarizeL
 import { throwIfAborted } from "../utils/abort";
 import { pdfCitation } from "./source-citation";
 import { readPdfMarkdown, type PdfMarkdownOptions } from "./pdf-markdown";
+import { locatePdfContent, type PdfLocateOptions } from "./pdf-locations";
 import { getLLMSettings } from "./llm-client";
 import { readZoteroNotes, searchZoteroNotes } from "./zotero-notes";
 
@@ -40,6 +41,13 @@ export async function executeResearchTool(name: string, args: Record<string, unk
       throw Object.assign(new Error("The source was replaced while reading."), { name: "AbortError" });
     }
   };
+  if (name === "locate_pdf_content") {
+    const result = await locatePdfContent(attachment, args as unknown as PdfLocateOptions, context.signal);
+    assertCurrent();
+    return json({ source_id: src.id, ...result, matches: result.matches.map(match => ({ ...match,
+      citation: pdfCitation(attachment, match.pdf_page, match.region ? { rects: match.rects, revision: result.revision } : {}),
+    })) });
+  }
   if (name === "get_document_status") {
     const text = await pdfTextStatus(attachment);
     assertCurrent();
@@ -76,7 +84,7 @@ export async function executeResearchTool(name: string, args: Record<string, unk
         label: `${src.title}: PDF page ${rendered.page}${region ? `, cropped region ${JSON.stringify(region)}` : ", full page"}; ${rendered.width} x ${rendered.height} pixels, effective DPI ${rendered.effectiveDpi}.` };
     });
     for (const image of images) context.deliverImage(image);
-    const pages = batch.pages.map(rendered => ({ pdf_page: rendered.page, citation: pdfCitation(attachment, rendered.page),
+    const pages = batch.pages.map(rendered => ({ pdf_page: rendered.page, citation: pdfCitation(attachment, rendered.page, { region: rendered.region }),
       width: rendered.width, height: rendered.height, effective_dpi: rendered.effectiveDpi, ...(rendered.region ? { region: rendered.region } : {}) }));
     return json({ source_id: src.id, representation: args.region ? "page-region-image" : pages.length === 1 ? "page-image" : "page-images",
       page_count: batch.pageCount, ...(pages.length === 1 ? pages[0] : {}), pages, next_page: batch.nextPage });

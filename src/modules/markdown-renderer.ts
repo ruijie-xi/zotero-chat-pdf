@@ -24,6 +24,18 @@ export function renderMarkdown(text: string): string {
   }
 }
 
+/** Import only our sanitized output. Chrome innerHTML drops even allowed zotero: hrefs. */
+export function renderMarkdownInto(target: HTMLElement, text: string): void {
+  const parsed = getDomParser().parseFromString(renderMarkdown(text), "text/html");
+  const doc = target.ownerDocument, body = parsed.body;
+  if (!doc || !body) throw new Error("Unable to create Markdown document");
+  const fragment = doc.createDocumentFragment();
+  for (const node of Array.from(body.childNodes)) {
+    if (node) fragment.appendChild(doc.importNode(node, true));
+  }
+  target.replaceChildren(fragment);
+}
+
 /** Replace a math pattern with a placeholder, rendering via KaTeX. */
 function replaceMath(
   text: string,

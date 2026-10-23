@@ -61,14 +61,14 @@ describe("provider selection in preferences", () => {
     change("pdfTranscriptionProfile", "");
     expect(field("modelRoleStatus").textContent).toContain("existing-model");
   });
-  it("offers all 24 shared tool switches, enabled by default and persisted individually", () => {
+  it("offers all 25 shared tool switches, enabled by default and persisted individually", () => {
     const switches = [...document.querySelectorAll<HTMLInputElement>("input[data-tool-name]")];
-    expect(switches).toHaveLength(24);
+    expect(switches).toHaveLength(25);
     expect(switches.every(input => input.checked)).toBe(true);
     const web = switches.find(input => input.dataset.toolName === "web_fetch")!;
     web.checked = false; web.dispatchEvent(new Event("change"));
     expect(JSON.parse(prefs.disabledTools)).toEqual(["web_fetch"]);
-    expect(switches.filter(input => input.checked)).toHaveLength(23);
+    expect(switches.filter(input => input.checked)).toHaveLength(24);
     web.checked = true; web.dispatchEvent(new Event("change"));
     expect(JSON.parse(prefs.disabledTools)).toEqual([]);
   });

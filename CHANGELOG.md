@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.1
+
+- Locate literal phrases, theorem headings, equation numbers and captions with the new shared `locate_pdf_content` tool. Return every matching context, PDF page, text-item rectangle, inspection region and clickable citation.
+- Reuse revision-aware page text and geometry caches across native chat and MCP. Known-page queries avoid full-document extraction; matching handles case, whitespace, compatibility ligatures and line-end hyphenation without model calls or OCR.
+- Open citation links at the matched PDF region and briefly highlight it without creating annotations. Support rotated pages and crop origins, reject stale locator coordinates after a file changes, and retain ordinary page links.
+- Preserve allowed Zotero citation addresses when rendering assistant messages in Zotero's privileged document, using the existing sanitizer and unchanged allowlists.
+- Share all 25 tools, switches and source permissions between native chat and MCP. External clients must refresh their tool catalog; region highlighting is handled by ChatPDF and other clients may only open the page.
+- Type checking, lint, 56 test files / 486 tests and production packaging passed. Isolated Zotero 10.0.6 checks cover normal, rotated, crop and page links, cache reuse, native/MCP result parity, temporary highlights and absence of saved annotations. Bounds cover matching text items, not a whole equation or figure; unavailable geometry falls back to the page.
+
 ## 0.10.0
 
 ### PDF reading and shared tools

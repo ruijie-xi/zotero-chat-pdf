@@ -1,7 +1,7 @@
 import { h } from "../utils/dom";
 import { formatMsgTime } from "../utils/format";
 import { uiLabel, uiText } from "../utils/ui-text";
-import { renderMarkdown } from "./markdown-renderer";
+import { renderMarkdownInto } from "./markdown-renderer";
 import { visibleAssistantText, type ChatMessage, type IterationRecord } from "./llm-client";
 import { createToolBlock } from "./tool-message-view";
 import { appendUsageMeta } from "./usage-view";
@@ -94,7 +94,7 @@ class IterationView {
       }
       this.content.className = pending || finalContent ? "chatpdf-live-content" : "chatpdf-iteration-content";
       if (text !== this.text) {
-        try { this.content.innerHTML = renderMarkdown(text); }
+        try { renderMarkdownInto(this.content, text); }
         catch { this.content.textContent = text; }
       }
     } else {

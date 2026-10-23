@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { renderMarkdown, sanitizeHtml } from "../src/modules/markdown-renderer";
+import { renderMarkdown, renderMarkdownInto, sanitizeHtml } from "../src/modules/markdown-renderer";
 
 describe("Markdown HTML sanitizer", () => {
+  it("imports sanitized links and math without a privileged innerHTML assignment", () => {
+    const target = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+    Object.defineProperty(target, "innerHTML", { set() { throw new Error("Chrome innerHTML must not be used"); } });
+    const href = "zotero://open-pdf/library/items/PDF12345?page=2&chatpdf_rects=%5B%5B10%2C20%2C30%2C40%5D%5D";
+    renderMarkdownInto(target, `[Equation](${href})\n\n$x^2$ <img src=x onerror=bad()> <script>bad()</script> [Bad](javascript:alert)`);
+    expect(target.querySelector("a")?.getAttribute("href")).toBe(href);
+    expect(target.querySelector("a")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+    expect(target.querySelector(".katex")).not.toBeNull();
+    expect(target.querySelector("[onerror], script, a[href^='javascript:']")).toBeNull();
+    renderMarkdownInto(target, "Replacement");
+    expect(target.textContent).toBe("Replacement\n");
+  });
   it("removes scripts and their content", () => {
     const html = sanitizeHtml("<p>safe</p><script>alert(1)</script>");
     expect(html).toContain("safe");

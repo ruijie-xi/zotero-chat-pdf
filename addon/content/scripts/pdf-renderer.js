@@ -62,6 +62,24 @@ window.chatpdfRendererReady = (async () => {
         page.cleanup();
       }
     },
+    async layout(pageNumber) {
+      const page = await pdf.getPage(pageNumber);
+      try {
+        const content = await page.getTextContent();
+        const labels = await pdf.getPageLabels();
+        const viewport = page.getViewport({ scale: 1 });
+        return { page: pageNumber, pageLabel: labels?.[pageNumber - 1] || undefined,
+          viewBox: [...page.view], viewport: { width: viewport.width, height: viewport.height, transform: [...viewport.transform] },
+          items: content.items.filter(item => typeof item.str === "string").map(item => ({
+            str: item.str, transform: [...item.transform], width: item.width, height: item.height,
+            fontName: item.fontName, hasEOL: !!item.hasEOL,
+          })),
+          styles: Object.fromEntries(Object.entries(content.styles).map(([name, style]) => [name, {
+            ascent: style.ascent, descent: style.descent, vertical: style.vertical,
+          }])),
+        };
+      } finally { page.cleanup(); }
+    },
     async text(pageNumber) {
       const page = await pdf.getPage(pageNumber);
       try {

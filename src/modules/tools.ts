@@ -60,7 +60,7 @@ export interface ToolExecutionContext {
 }
 
 export function toolResultSourceIds(name: string, args: Record<string, unknown>, context: ToolExecutionContext): string[] {
-  const documentTools = new Set(["list_images", "read_image", "read_pdf_text", "read_pdf_page", "inspect_pdf_page", "get_document_status"]);
+  const documentTools = new Set(["list_images", "read_image", "read_pdf_text", "read_pdf_page", "inspect_pdf_page", "locate_pdf_content", "get_document_status"]);
   if (name === "list_sources") return [...context.turnScope];
   if (!documentTools.has(name)) return [];
   const source = context.session.getSource(String(args.key || args.source_key || ""));

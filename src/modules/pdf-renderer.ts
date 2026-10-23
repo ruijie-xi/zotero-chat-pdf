@@ -18,6 +18,15 @@ function bounded<T>(operation: Promise<T>, milliseconds: number, signal?: AbortS
 
 /** Fractions of the displayed (rotated) page, measured from its top-left corner. */
 export interface PdfRegion { x: number; y: number; width: number; height: number; }
+export type PdfRect = [number, number, number, number];
+export interface PdfTextLayout {
+  page: number;
+  pageLabel?: string;
+  viewBox: PdfRect;
+  viewport: { width: number; height: number; transform: number[] };
+  items: { str: string; transform: number[]; width: number; height: number; fontName: string; hasEOL: boolean }[];
+  styles: Record<string, { ascent?: number; descent?: number; vertical?: boolean }>;
+}
 
 export interface RenderedPdfPage {
   page: number;
@@ -32,6 +41,7 @@ export interface RenderedPdfPage {
 export interface PdfRenderer {
   pageCount: number;
   text(page: number): Promise<{ page: number; text: string; pageLabel?: string }>;
+  layout(page: number): Promise<PdfTextLayout>;
   render(page: number, dpi: number, region?: PdfRegion): Promise<RenderedPdfPage>;
   close(): Promise<void>;
 }
@@ -87,6 +97,10 @@ export async function openPdfRenderer(pdfPath: string, signal?: AbortSignal, pdf
       text: async page => {
         throwIfAborted(signal);
         return bounded(api.text(page), 60_000, signal);
+      },
+      layout: async page => {
+        throwIfAborted(signal);
+        return bounded(api.layout(page), 60_000, signal);
       },
       render: async (page, dpi, region) => {
         throwIfAborted(signal);

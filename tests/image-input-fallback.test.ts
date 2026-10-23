@@ -54,7 +54,7 @@ describe("actual image requests and text-only recovery", () => {
     expect((await turn(new ChatSession())).content).toBe("Text answer");
     expect(fetch).toHaveBeenCalledOnce();
     const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
-    expect(body.tools).toHaveLength(24);
+    expect(body.tools).toHaveLength(25);
   });
 
   it("sends real image content even when vision metadata is missing", async () => {
@@ -66,7 +66,7 @@ describe("actual image requests and text-only recovery", () => {
     expect((await turn(sessionWithSource())).content).toBe("Image read");
     expect(rendered).toBe(1); expect(requests).toHaveLength(2);
     expect(hasImages(requests[1].messages)).toBe(true);
-    expect(requests[1].tools).toHaveLength(24);
+    expect(requests[1].tools).toHaveLength(25);
   });
 
   it("continues native image reading beyond 20 MiB across multiple iterations", async () => {
@@ -97,7 +97,7 @@ describe("actual image requests and text-only recovery", () => {
     expect(result.content).toBe("Summary based on extracted text");
     expect(requests).toHaveLength(4);
     expect(rendered).toBe(1); expect(writes).toBe(1);
-    expect(requests[2].tools).toHaveLength(22);
+    expect(requests[2].tools).toHaveLength(23);
     expect(requests[3].messages.at(-1).content).toContain("rejected image inputs");
     expect(result.iterations.some(it => it.content?.includes("rejected image inputs"))).toBe(true);
     const context = session.getAgentContext()!;
@@ -106,17 +106,17 @@ describe("actual image requests and text-only recovery", () => {
     expect(context.data.results.some(r => r.content.includes("Saved write receipt"))).toBe(true);
     expect(JSON.stringify(session.toSavedSession())).not.toContain("dummy-test-key");
     await turn(session, "Continue");
-    expect(requests.at(-1).tools).toHaveLength(22);
+    expect(requests.at(-1).tools).toHaveLength(23);
     expect(hasImages(requests.at(-1).messages)).toBe(false);
     preferences.llmModel = "another-model";
     await turn(session, "Use the new model");
-    expect(requests.at(-1).tools).toHaveLength(24);
+    expect(requests.at(-1).tools).toHaveLength(25);
     preferences.llmModel = "test-model";
     await turn(new ChatSession(), "New session");
-    expect(requests.at(-1).tools).toHaveLength(24);
+    expect(requests.at(-1).tools).toHaveLength(25);
     session.clearHistory();
     await turn(session, "Retry after clearing");
-    expect(requests.at(-1).tools).toHaveLength(24);
+    expect(requests.at(-1).tools).toHaveLength(25);
   });
 
   it.each([400, 401, 429, 503])("does not turn unrelated HTTP %i errors into text fallback", async status => {
@@ -154,7 +154,7 @@ describe("actual image requests and text-only recovery", () => {
     expect((await runAgentLoop(messages, tools, session)).content).toBe("Continued with text");
     expect(requests).toHaveLength(3);
     expect(hasImages(requests[0].messages)).toBe(true);
-    expect(requests.slice(1).every(request => !hasImages(request.messages) && request.tools.length === 22)).toBe(true);
+    expect(requests.slice(1).every(request => !hasImages(request.messages) && request.tools.length === 23)).toBe(true);
     expect(context.data.checkpoints).toHaveLength(1);
     expect(hasImages(context.data.events)).toBe(true);
   });

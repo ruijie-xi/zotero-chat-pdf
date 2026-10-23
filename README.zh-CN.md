@@ -87,9 +87,11 @@ PDF 转录默认跟随当前聊天模型，也可在“PDF 转录模型”中选
 
 长文先搜索、再查看相关页面，无需整篇预处理。Markdown、文本与页图按附件身份和文件版本缓存。当前不接入外部 OCR 引擎；请求的无文本层页面也可交给视觉辅助模型转录。没有文本层的页面仍可渲染成图片，但关键词检索会报告缺少文本，不会自动启动 OCR。[OCR 调研记录](docs/local-ocr-options.md)仅供后续参考，不是当前开发计划。
 
+Agent 可以通过 `locate_pdf_content` 按原文片段、定理标题、公式编号或图题定位内容，获得匹配页、文字区域和引用链接。在 ChatPDF 中点击区域链接，会跳转并短暂高亮目标；已知页码时可直接定位该页，坐标缓存可跨会话复用，无需额外模型调用。公式编号的位置不代表整个公式的范围。详见 [内容定位与区域引用](docs/pdf-content-location.md)。
+
 ## 本地 MCP 集成
 
-ChatPDF 原生 Agent 与配套 [Zotero MCP](https://github.com/ruijie-xi/zotero-mcp) 共用 Zotero 内的一套工具定义和执行逻辑。24 个工具默认全部开启，可在 **设置 → 可用工具** 中逐项关闭或开启；两端同时生效，旧连接调用已禁用工具也会被拒绝。文库修改继续遵守聊天窗口的权限和逐批确认。
+ChatPDF 原生 Agent 与配套 [Zotero MCP](https://github.com/ruijie-xi/zotero-mcp) 共用 Zotero 内的一套工具定义和执行逻辑。25 个工具默认全部开启，可在 **设置 → 可用工具** 中逐项关闭或开启；两端同时生效，旧连接调用已禁用工具也会被拒绝。文库修改继续遵守聊天窗口的权限和逐批确认。
 
 MCP 通过 `POST /chatpdf/v2`（严格协议版本 2）转发工具发现、参数和文本/图片结果，不再自行读取文库数据库、转换缓存或另写搜索逻辑。`read_pdf_page` 返回按需转录并缓存的 Markdown，`inspect_pdf_page` 将 PDF 原页作为 MCP 图片内容返回。每个 MCP 会话保留独立的文献范围和结果历史，阅读前使用 `add_zotero_item_to_session` 加入文献。
 

@@ -59,7 +59,7 @@ describe("HTTP 413 checkpoint recovery", () => {
     expect(await compactAgentContext(context, getToolDefinitions(), user, budget, vi.fn())).toBe(true);
     expect(accepted).toEqual(urls.slice(0, 4));
     expect(requests.length).toBeLessThan(16);
-    expect(requests.every(body => body.model === "same-model" && body.tools.length === 24)).toBe(true);
+    expect(requests.every(body => body.model === "same-model" && body.tools.length === 25)).toBe(true);
     expect(context.data.events.slice(0, original.length)).toEqual(original);
     expect(context.data.results[0]).toMatchObject({ content: "Edit completed once", mutating: true });
     expect(images(context.messages)).toEqual([]);
@@ -80,7 +80,7 @@ describe("HTTP 413 checkpoint recovery", () => {
     });
     vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
       const body = JSON.parse(init!.body as string); requests.push(body);
-      expect(body.tools).toHaveLength(24);
+      expect(body.tools).toHaveLength(25);
       if (images(body.messages).length > 1) return rejected();
       if (String(body.messages.at(-1).content).startsWith(COMPACT_PROMPT)) return notes(body);
       if (stage++ === 0) return response("", [call("inspect_pdf_page"), call("change_zotero_library")]);
@@ -130,7 +130,7 @@ describe("HTTP 413 checkpoint recovery", () => {
     });
     vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
       const body = JSON.parse(init!.body as string); requests.push(body);
-      expect(body.tools).toHaveLength(24);
+      expect(body.tools).toHaveLength(25);
       expect(String(body.messages.at(-1).content)).not.toContain(COMPACT_PROMPT);
       if (images(body.messages).length > 2) return rejected();
       if (stage++ === 0) return response("", [call("inspect_pdf_page"), call("change_zotero_library")]);

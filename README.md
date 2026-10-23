@@ -87,9 +87,11 @@ The assistant uses `read_pdf_page` for on-demand cached Markdown (single pages, 
 
 Page images and text are cached by attachment identity and file revision. Long papers can be searched before selecting pages. OCR and a dedicated scanned-document workflow are currently out of scope. Pages without a text layer can still be rendered, but keyword search reports the missing text; there is no OCR fallback. The [OCR research record](docs/local-ocr-options.md) is retained for reference only.
 
+To pinpoint a passage, the assistant can use `locate_pdf_content` with a phrase, theorem heading, equation number or caption. It returns matching pages, text regions and clickable links; in ChatPDF, clicking a region link scrolls to and briefly highlights the target. Known-page queries avoid whole-document extraction, and cached coordinates are reused without model calls. See [content location](docs/pdf-content-location.md) for precision and external-host limitations.
+
 ## Local MCP integration
 
-ChatPDF's native agent and the companion [Zotero MCP](https://github.com/ruijie-xi/zotero-mcp) share one tool registry and executor inside Zotero. All 24 tools are enabled by default. **Settings → Available tools** controls each tool for both callers; disabled tools disappear from discovery and stale calls are rejected. Library writes still follow the chat window's permissions and trusted batch review.
+ChatPDF's native agent and the companion [Zotero MCP](https://github.com/ruijie-xi/zotero-mcp) share one tool registry and executor inside Zotero. All 25 tools are enabled by default. **Settings → Available tools** controls each tool for both callers; disabled tools disappear from discovery and stale calls are rejected. Library writes still follow the chat window's permissions and trusted batch review.
 
 The companion MCP server forwards discovery, arguments and text/images through `POST /chatpdf/v2` (exact protocol 2). It does not read Zotero databases, conversion caches or implement another search path. PDF page images are returned as MCP image content. Each MCP session has its own document sources and result history; use `add_zotero_item_to_session` before document reads.
 
