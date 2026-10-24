@@ -49,7 +49,7 @@ class IterationView {
   private toolCalls?: IterationRecord["toolCalls"];
   private wasThinking = false;
 
-  constructor(private doc: Document, private index: number) {
+  constructor(private doc: Document, private index: number, private visualCard?: (ref: import("./visual-model").VisualRef) => HTMLElement) {
     this.element = h(doc, "div", { className: "chatpdf-iteration-block" });
   }
 
@@ -106,6 +106,14 @@ class IterationView {
       this.tools?.remove();
       this.tools = record.toolCalls.length ? createToolBlock(this.doc, record.toolCalls, record.toolCalls.reduce((sum, tool) => sum + tool.durationMs, 0)) : undefined;
       if (this.tools) this.element.append(this.tools);
+      for (const old of Array.from(this.element.querySelectorAll(":scope > .chatpdf-visual-card")) as Element[]) old.remove();
+      const seen = new Set<string>();
+      for (const call of record.toolCalls) {
+        if (!call.visual || !this.visualCard) continue;
+        const key = `${call.visual.id}@${call.visual.version}`;
+        if (!seen.has(key)) this.element.append(this.visualCard(call.visual));
+        seen.add(key);
+      }
       this.toolCalls = record.toolCalls;
     }
     this.element.hidden = !this.element.childElementCount;
@@ -130,7 +138,7 @@ export class AssistantMessageView {
   private copy?: HTMLElement;
   private snapshot: AssistantMessageSnapshot = { content: "" };
 
-  constructor(private doc: Document) {
+  constructor(private doc: Document, private visualCard?: (ref: import("./visual-model").VisualRef) => HTMLElement) {
     this.row = h(doc, "div", { className: "chatpdf-msg-row chatpdf-msg-row-assistant" });
     this.bubble = h(doc, "div", { className: "chatpdf-message chatpdf-message-assistant" });
     this.dots = h(doc, "div", { className: "chatpdf-thinking", "aria-label": uiLabel("thinking") }, h(doc, "span"), h(doc, "span"), h(doc, "span"));
@@ -144,14 +152,14 @@ export class AssistantMessageView {
     this.snapshot = snapshot;
     const records = snapshot.iterations || [];
     for (let index = this.iterations.length; index < records.length; index++) {
-      const view = this.current || new IterationView(this.doc, index);
+      const view = this.current || new IterationView(this.doc, index, this.visualCard);
       this.current = undefined;
       view.update(records[index]);
       this.bubble.insertBefore(view.element, this.dots.parentNode ? this.dots : this.footer);
       this.iterations.push(view);
     }
     if (!this.current) {
-      this.current = new IterationView(this.doc, records.length);
+      this.current = new IterationView(this.doc, records.length, this.visualCard);
       this.bubble.insertBefore(this.current.element, this.dots.parentNode ? this.dots : this.footer);
     }
     this.current.update({ content: snapshot.content, reasoning: snapshot.reasoning, toolCalls: [] }, snapshot.pending, true);

@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { inspectZoteroItem } from "../src/modules/zotero-item-details";
-import { executeTool, getToolDefinitions } from "../src/modules/tools";
+import { executeTool } from "../src/modules/tools";
 import { ChatSession } from "../src/modules/chat-session";
 const inventory = new Map<number, any>();
 function item(id: number, key: string, type: string, data: any) {
@@ -45,7 +45,6 @@ it("defaults get_zotero_item to full details while supporting a compact summary 
   expect(full.item.DOI).toBe(raw.DOI); expect(session.getSources()).toHaveLength(0);
   expect(await executeTool("get_zotero_item", { key: paper.key, library_id: 1, detail: "summary" }, context)).toContain("has_pdf: yes");
   expect(await executeTool("get_zotero_item", { key: paper.key, library_id: 2 }, context)).toContain("not found");
-  expect(getToolDefinitions().find(tool => tool.function.name === "get_zotero_item")!.function.description).toContain("Extra");
 });
 it("aborts before metadata reads and reports broken ancestry without fabricating a path", async () => {
   const controller = new AbortController(); controller.abort();

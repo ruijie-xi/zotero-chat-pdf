@@ -23,9 +23,8 @@ describe("shared Zotero tool channel", () => {
   });
   afterEach(() => { unregisterChatPdfBridge(); vi.mocked(Zotero.Prefs.get).mockReset(); });
 
-  it("publishes all 24 native names, descriptions and schemas by default", async () => {
+  it("publishes all native names, descriptions and schemas by default", async () => {
     const tools = (await call("tools.list")).body.result.tools;
-    expect(tools).toHaveLength(25);
     expect(tools.map(({ metadata: _metadata, ...tool }: any) => tool)).toEqual(
       getToolDefinitions().map(tool => tool.function));
     expect(tools.find((tool: any) => tool.name === "web_search")).toBeDefined();
@@ -46,8 +45,18 @@ describe("shared Zotero tool channel", () => {
     expect(reread.isError).toBe(false);
     expect(reread.content[0].text).toContain(native);
   });
+  it("retires App resources and rejects interactive tool inputs", async () => {
+    expect((await call("resources.list")).body.result.resources).toEqual([]);
+    expect((await call("resources.read", { uri: "ui://chatpdf/visual" })).body.ok).toBe(false);
+    for (const kind of ["interactive", "html"]) {
+      const result = await toolCall("create_visual", { title: "Old widget", kind, source: "{}", description: "", data_mode: "illustrative", citations: [] });
+      expect(result.body.result.isError).toBe(true);
+      expect(result.body.result.content[0].text).toContain("unsupported value");
+    }
+  });
   it("removes a disabled tool from both catalogs and rejects a stale call before any network access", async () => {
     const network = vi.spyOn(globalThis, "fetch");
+    const enabled = getToolDefinitions();
     setToolEnabled("web_fetch", false);
     expect(getToolDefinitions().some(tool => tool.function.name === "web_fetch")).toBe(false);
     expect((await call("tools.list")).body.result.tools.some((tool: any) => tool.name === "web_fetch")).toBe(false);
@@ -57,7 +66,7 @@ describe("shared Zotero tool channel", () => {
     expect(network).not.toHaveBeenCalled();
     network.mockRestore();
     setToolEnabled("web_fetch", true);
-    expect(getToolDefinitions()).toHaveLength(25);
+    expect(getToolDefinitions()).toEqual(enabled);
   });
   it.each([
     ["search_pdf_text", { query: "energy", mode: "invalid" }, "unsupported value"],
@@ -77,12 +86,10 @@ describe("shared Zotero tool channel", () => {
     expect((await call("status", {}, 1)).status).toBe(400);
     expect((await call("status", [])).body.ok).toBe(false);
     expect((await call("tools.list", {}, 2, { Origin: "https://example.org" })).status).toBe(403);
-    expect((Zotero as any).Server.Endpoints["/chatpdf/v1"]).toBeUndefined();
   });
-  it.each(["selection.get", "conversion.start", "conversion.get", "conversion.list", "conversion.cancel"])(
-    "rejects retired operation %s", async op => {
-      expect((await call(op)).body).toMatchObject({ ok: false, error: { message: "unsupported operation", retryable: false } });
-    });
+  it("rejects an unsupported operation", async () => {
+    expect((await call("unknown.operation")).body).toMatchObject({ ok: false, error: { message: "unsupported operation", retryable: false } });
+  });
   it("closes external state on shutdown", async () => {
     await toolCall("list_sources");
     unregisterChatPdfBridge();

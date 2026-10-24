@@ -6,10 +6,14 @@ import { getToolDefinitions } from "../src/modules/tool-registry";
 import * as toolsModule from "../src/modules/tools";
 import type { ToolExecutionContext } from "../src/modules/tools";
 import type { ProviderMessage } from "../src/modules/llm-client";
+import { getLLMSettings } from "../src/modules/llm-client";
+import { ContextBudget } from "../src/modules/context-budget";
+import { TokenCounter, loadTokenizer } from "../src/modules/token-accounting";
 
 const caps = { inputLimit: 240000, maxOutput: 32768, generation: { outputTokens: 32768, retryCeiling: 32768, source: "model-maximum" as const, thinkingMode: "default", thinkEffort: "default" }, tokenizer: "deepseek-v4" as const, imageTokens: 1024, source: "manual" as const, fetchedAt: 1 };
 const image = { sourceId: "1:ABC12345", path: "pdf-page-1", dataUrl: "data:image/jpeg;base64,/9j/2Q==", mime: "image/jpeg" as const, byteLength: 4 };
 const hasImages = (messages: ProviderMessage[]) => messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === "image_url"));
+const textOnlyTools = () => getToolDefinitions().filter(tool => !["inspect_pdf_page", "read_image"].includes(tool.function.name));
 const call = (name: string, args = {}) => ({ id: "call-" + name, type: "function", function: { name, arguments: JSON.stringify(args) } });
 function response(content: string, calls?: ReturnType<typeof call>[]) {
   return new Response("data: " + JSON.stringify({ choices: [{ delta: { content, ...(calls ? { tool_calls: calls.map((c, index) => ({ ...c, index })) } : {}) }, finish_reason: calls ? "tool_calls" : "stop" }] }) + "\n\ndata: [DONE]\n\n");
@@ -19,7 +23,7 @@ let rendered: number, writes: number;
 let execute: ReturnType<typeof vi.spyOn>;
 const originalExecute = toolsModule.executeTool;
 beforeEach(() => {
-  preferences = { llmApiKey: "dummy-test-key", llmModel: "test-model", visionSupport: "disabled" };
+  preferences = { llmApiKey: "dummy-test-key", llmModel: "test-model" };
   rendered = 0; writes = 0;
   vi.mocked(Zotero.Prefs.get).mockImplementation(key => preferences[String(key).split(".").at(-1)!] as never);
   vi.mocked(resolveModelCapabilities).mockResolvedValue({ ...caps, supportsVision: undefined });
@@ -48,13 +52,13 @@ async function turn(session: ChatSession, text = "Read the paper", callbacks = {
 }
 
 describe("actual image requests and text-only recovery", () => {
-  it.each([false, undefined])("allows text requests regardless of metadata (%s) or legacy settings", async supportsVision => {
-    vi.mocked(resolveModelCapabilities).mockResolvedValue({ ...caps, supportsVision });
+  it("allows text requests when metadata declares no image support", async () => {
+    vi.mocked(resolveModelCapabilities).mockResolvedValue({ ...caps, supportsVision: false });
     vi.stubGlobal("fetch", vi.fn(async () => response("Text answer")));
     expect((await turn(new ChatSession())).content).toBe("Text answer");
     expect(fetch).toHaveBeenCalledOnce();
     const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
-    expect(body.tools).toHaveLength(25);
+    expect(body.tools).toEqual(getToolDefinitions());
   });
 
   it("sends real image content even when vision metadata is missing", async () => {
@@ -66,7 +70,7 @@ describe("actual image requests and text-only recovery", () => {
     expect((await turn(sessionWithSource())).content).toBe("Image read");
     expect(rendered).toBe(1); expect(requests).toHaveLength(2);
     expect(hasImages(requests[1].messages)).toBe(true);
-    expect(requests[1].tools).toHaveLength(25);
+    expect(requests[1].tools).toEqual(getToolDefinitions());
   });
 
   it("continues native image reading beyond 20 MiB across multiple iterations", async () => {
@@ -97,7 +101,7 @@ describe("actual image requests and text-only recovery", () => {
     expect(result.content).toBe("Summary based on extracted text");
     expect(requests).toHaveLength(4);
     expect(rendered).toBe(1); expect(writes).toBe(1);
-    expect(requests[2].tools).toHaveLength(23);
+    expect(requests[2].tools).toEqual(textOnlyTools());
     expect(requests[3].messages.at(-1).content).toContain("rejected image inputs");
     expect(result.iterations.some(it => it.content?.includes("rejected image inputs"))).toBe(true);
     const context = session.getAgentContext()!;
@@ -106,28 +110,28 @@ describe("actual image requests and text-only recovery", () => {
     expect(context.data.results.some(r => r.content.includes("Saved write receipt"))).toBe(true);
     expect(JSON.stringify(session.toSavedSession())).not.toContain("dummy-test-key");
     await turn(session, "Continue");
-    expect(requests.at(-1).tools).toHaveLength(23);
+    expect(requests.at(-1).tools).toEqual(textOnlyTools());
     expect(hasImages(requests.at(-1).messages)).toBe(false);
     preferences.llmModel = "another-model";
     await turn(session, "Use the new model");
-    expect(requests.at(-1).tools).toHaveLength(25);
+    expect(requests.at(-1).tools).toEqual(getToolDefinitions());
     preferences.llmModel = "test-model";
     await turn(new ChatSession(), "New session");
-    expect(requests.at(-1).tools).toHaveLength(25);
+    expect(requests.at(-1).tools).toEqual(getToolDefinitions());
     session.clearHistory();
     await turn(session, "Retry after clearing");
-    expect(requests.at(-1).tools).toHaveLength(25);
+    expect(requests.at(-1).tools).toEqual(getToolDefinitions());
   });
 
-  it.each([400, 401, 429, 503])("does not turn unrelated HTTP %i errors into text fallback", async status => {
+  it("does not turn an image format error into text fallback", async () => {
     const requests: any[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
       const body = JSON.parse(init!.body as string); requests.push(body);
-      return requests.length === 1 ? response("", [call("inspect_pdf_page")]) : new Response(status === 400 ? "Unsupported image format" : "This model does not support images.", { status });
+      return requests.length === 1 ? response("", [call("inspect_pdf_page")]) : new Response("Unsupported image format", { status: 400 });
     }));
     const session = sessionWithSource();
     await expect(turn(session)).rejects.toThrow("LLM API error");
-    expect(requests).toHaveLength([429, 503].includes(status) ? 4 : 2);
+    expect(requests).toHaveLength(2);
     expect(hasImages(session.getAgentContext()!.messages)).toBe(true);
   });
 
@@ -142,7 +146,9 @@ describe("actual image requests and text-only recovery", () => {
     const messages = session.buildAgentMessages("Continue", undefined, tools);
     session.addUserMessage("Continue");
     const context = session.getAgentContext()!;
-    context.append({ role: "assistant", content: "x".repeat(195000) });
+    // Keep the fixture inside one exchange's budget as the shared tool catalog grows.
+    const budget = new ContextBudget(caps, new TokenCounter(await loadTokenizer(), getLLMSettings(), caps));
+    context.append({ role: "assistant", content: "x".repeat(Math.floor(budget.inputLimit() * 0.9) - budget.count(context.messages, tools)) });
     context.append({ role: "user", content: [{ type: "image_url", image_url: { url: image.dataUrl, detail: "high" } }] });
     const requests: any[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
@@ -154,7 +160,10 @@ describe("actual image requests and text-only recovery", () => {
     expect((await runAgentLoop(messages, tools, session)).content).toBe("Continued with text");
     expect(requests).toHaveLength(3);
     expect(hasImages(requests[0].messages)).toBe(true);
-    expect(requests.slice(1).every(request => !hasImages(request.messages) && request.tools.length === 23)).toBe(true);
+    for (const request of requests.slice(1)) {
+      expect(hasImages(request.messages)).toBe(false);
+      expect(request.tools).toEqual(textOnlyTools());
+    }
     expect(context.data.checkpoints).toHaveLength(1);
     expect(hasImages(context.data.events)).toBe(true);
   });

@@ -9,6 +9,8 @@ async function startup({ id, version, resourceURI, rootURI }, reason) {
   var manifestURI = Services.io.newURI(rootURI + "manifest.json");
   chromeHandle = aomStartup.registerChrome(manifestURI, [
     ["content", "__addonRef__", rootURI + "content/"],
+    // Only the fixed renderer assets are loadable by isolated content documents.
+    ["content", "chatpdf-visual", rootURI + "content/visual/", "contentaccessible=yes"],
     ["locale", "__addonRef__", "en-US", rootURI + "locale/en-US/"],
   ]);
 

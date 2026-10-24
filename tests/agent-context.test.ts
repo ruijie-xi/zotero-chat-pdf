@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentContext, COMPACT_PROMPT, ContextMessage } from "../src/modules/agent-context";
+import { AgentContext, ContextMessage } from "../src/modules/agent-context";
 import { ChatSession } from "../src/modules/chat-session";
 import { buildChatCompletionBody } from "../src/modules/llm-client";
 import { executeTool } from "../src/modules/tools";
@@ -97,13 +97,6 @@ describe("durable transcript and working context", () => {
     expect(await executeTool("read_tool_result", { result_id: result.id, max_chars: 6 }, context)).toContain("next_start=6");
     session.removeSource(source.id);
     expect(await executeTool("read_tool_result", { result_id: result.id }, context)).not.toContain("secret evidence");
-  });
-
-  it("uses a task-independent prompt and preserves uncertainty and pending work", () => {
-    expect(COMPACT_PROMPT).not.toMatch(/paper|PDF|Zotero|theorem|research/i);
-    expect(COMPACT_PROMPT).toContain("side effects");
-    expect(COMPACT_PROMPT).toContain("has not been inspected");
-    expect(COMPACT_PROMPT).toContain("Do not use tools");
   });
 
   it("keeps unread result IDs outside the generated summary and merges exact coverage", () => {

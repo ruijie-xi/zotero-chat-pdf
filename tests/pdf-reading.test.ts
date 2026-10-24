@@ -11,7 +11,7 @@ import { locatePdfContent } from "../src/modules/pdf-locations";
 import { readPdfMarkdown } from "../src/modules/pdf-markdown";
 import { readPdfPages, readPdfText } from "../src/modules/pdf-text";
 import { getItemByKey } from "../src/modules/zotero-items";
-import { executeTool, getToolDefinitions, toolResultSourceIds } from "../src/modules/tools";
+import { executeTool, toolResultSourceIds } from "../src/modules/tools";
 import { getToolMetadata } from "../src/modules/tool-registry";
 import { ChatSession } from "../src/modules/chat-session";
 
@@ -50,21 +50,6 @@ describe("original PDF reading tools", () => {
     vi.mocked(Zotero.Prefs.get).mockReturnValue(undefined);
     vi.mocked(locatePdfContent).mockImplementationOnce(async () => { session.removeSource(src.id); return {} as any; });
     await expect(executeTool("locate_pdf_content", { key: src.id, query: "energy" }, ctx)).rejects.toMatchObject({ name: "AbortError" });
-  });
-  it("exposes cached Markdown reading and separate original-image review without legacy document jobs", () => {
-    const names = getToolDefinitions().map(tool => tool.function.name);
-    expect(names).toContain("inspect_pdf_page"); expect(names).toContain("read_pdf_page"); expect(names).toContain("search_pdf_text");
-    for (const name of ["convert_session_source", "add_and_convert_zotero_item", "wait_for_conversion",
-      "read_document", "list_document_chunks", "read_document_chunk", "search_document"]) expect(names).not.toContain(name);
-    const { session } = fixture();
-    const prompt = String(session.buildAgentMessages("Explain")[0].content);
-    expect(prompt).toContain("Use read_pdf_page for ordinary PDF reading");
-    expect(prompt).toContain("Full-page inspection defaults to 200 DPI");
-    expect(prompt).toContain("Before transcribing, checking or deriving an exact formula, read its region at high resolution");
-    expect(prompt).toContain("default 600 DPI, rendered afresh from the PDF");
-    expect(prompt).toContain("Image tools remain available without vision metadata prechecks");
-    expect(prompt).not.toContain("Mandatory paper workflow");
-    expect(prompt).toContain("Conversion images never enter your context");
   });
   it("returns Markdown and citations without images, including when the chat model rejected images", async () => {
     const { src, ctx } = fixture();
@@ -133,6 +118,6 @@ describe("original PDF reading tools", () => {
     saved.schemaVersion = 4; saved.sources![0].status = status as any; saved.sources![0].errorMessage = "Old conversion failure";
     const restored = ChatSession.fromSavedSession(saved);
     expect(restored.getSources()[0]).toMatchObject({ status: "ready", errorMessage: undefined });
-    expect(restored.toSavedSession().schemaVersion).toBe(5);
+    expect(restored.toSavedSession().schemaVersion).toBe(6);
   });
 });

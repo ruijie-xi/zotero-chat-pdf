@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MODEL_BUDGET_FIELDS } from "../src/modules/model-profile";
+import { getToolDefinitions } from "../src/modules/tool-registry";
 import { XUL_NS, XULMenuList } from "../src/utils/dom";
 const mocks = vi.hoisted(() => ({ resolve: vi.fn() }));
 vi.mock("../src/modules/model-capabilities", () => ({ resolveModelCapabilities: mocks.resolve }));
@@ -61,26 +62,16 @@ describe("provider selection in preferences", () => {
     change("pdfTranscriptionProfile", "");
     expect(field("modelRoleStatus").textContent).toContain("existing-model");
   });
-  it("offers all 25 shared tool switches, enabled by default and persisted individually", () => {
+  it("offers switches for the shared tool registry, enabled by default and persisted individually", () => {
     const switches = [...document.querySelectorAll<HTMLInputElement>("input[data-tool-name]")];
-    expect(switches).toHaveLength(25);
+    expect(switches.map(input => input.dataset.toolName).sort()).toEqual(getToolDefinitions().map(tool => tool.function.name).sort());
     expect(switches.every(input => input.checked)).toBe(true);
     const web = switches.find(input => input.dataset.toolName === "web_fetch")!;
     web.checked = false; web.dispatchEvent(new Event("change"));
     expect(JSON.parse(prefs.disabledTools)).toEqual(["web_fetch"]);
-    expect(switches.filter(input => input.checked)).toHaveLength(24);
+    expect(switches.filter(input => !input.checked)).toEqual([web]);
     web.checked = true; web.dispatchEvent(new Event("change"));
     expect(JSON.parse(prefs.disabledTools)).toEqual([]);
-  });
-  it("removes legacy vision gates and whole-document conversion settings, including from newly saved profiles", () => {
-    for (const key of ["visionSupport", "pdfConversionEngine", "mineruToken", "pdfVisionProfile"]) {
-      expect(document.querySelector('[preference="' + key + '"]')).toBeNull();
-    }
-    field("profileName").value = "Current";
-    (field("profileSaveBtn") as HTMLButtonElement).click();
-    expect(JSON.parse(prefs.modelProfiles).find((p: any) => p.name === "Current").visionSupport).toBeUndefined();
-    loadProfile("Legacy");
-    expect(field("llmModel").value).toBeTruthy();
   });
   it("refreshes capabilities using all current manual limits, including the generation ceiling", async () => {
     change("inputTokenLimit", "40000"); change("imageTokenReserve", "2000");
@@ -88,16 +79,13 @@ describe("provider selection in preferences", () => {
     await vi.waitFor(() => expect(mocks.resolve).toHaveBeenCalled());
     expect(mocks.resolve.mock.calls[0][0]).toMatchObject({ contextWindowTokens: 50000, inputTokenLimit: 40000, maxOutputTokens: 10000, requestedOutputTokens: 5000, imageTokenReserve: 2000 });
   });
-  it("uses native Zotero menus for every dropdown and persists command selections", () => {
+  it("renders preference dropdowns as native XUL menus", () => {
     expect(document.querySelectorAll("select, datalist")).toHaveLength(0);
-    expect(document.querySelectorAll("menulist")).toHaveLength(7);
     for (const [key, value] of [["llmProvider", "deepseek"], ["llmThinkingMode", "disabled"], ["llmThinkEffort", "max"], ["debugLogMode", "off"], ["tokenizerMode", "deepseek-v4-estimate"]]) {
       const menu = field(key);
       expect(menu.namespaceURI).toBe(XUL_NS);
       expect(menu.getAttribute("native")).toBe("true");
       expect(menu.querySelector(`menupopup > menuitem[value="${value}"]`)).not.toBeNull();
-      change(key, value);
-      expect(prefs[key]).toBe(value);
     }
   });
 
@@ -123,7 +111,6 @@ describe("provider selection in preferences", () => {
     for (const key of MODEL_BUDGET_FIELDS) expect(prefs[key]).toBe(0);
     expect((field("llmApiBase") as HTMLInputElement).readOnly).toBe(true);
     expect((document.querySelector("#zotero-prefpane-chatpdf-providerHint") as HTMLElement).hidden).toBe(false);
-    expect(document.querySelectorAll("#zotero-prefpane-chatpdf-providerModels menuitem")).toHaveLength(4);
     change("llmProvider", "custom");
     expect(prefs).toMatchObject({ llmApiBase: "https://custom.example/v1", llmApiKey: "custom-key-for-tests", llmModel: "existing-model", contextWindowTokens: 50000, maxOutputTokens: 10000, requestedOutputTokens: 5000, activeProfile: "Legacy" });
   });

@@ -16,6 +16,7 @@ export interface SavedSource {
 }
 
 export interface SavedSession {
+  visuals?: import("./visual-model").VisualData;
   schemaVersion?: number;
   id: string;
   title: string;
@@ -25,7 +26,7 @@ export interface SavedSession {
   sourceParentKeys?: string[];
   referencedParentKeys?: string[];
   sources?: SavedSource[];
-  messages: { role: string; content: string; reasoning?: string; timestamp?: number; sources?: { id?: string; key: string; libraryID?: number; title: string; parentKey?: string }[]; modelLabel?: string; toolHistory?: any[]; iterations?: any[]; usage?: any; status?: "complete" | "cancelled" | "error"; errorMessage?: string }[];
+  messages: { id?: string; role: string; content: string; reasoning?: string; timestamp?: number; sources?: { id?: string; key: string; libraryID?: number; title: string; parentKey?: string }[]; modelLabel?: string; toolHistory?: any[]; iterations?: any[]; usage?: any; status?: "complete" | "cancelled" | "error"; errorMessage?: string }[];
   /** Provider usage from session-owned LLM calls outside assistant turns, such as title generation. */
   auxiliaryUsage?: any;
   agentContext?: AgentContextData;
@@ -49,12 +50,39 @@ export interface SessionMeta {
 /** Prevent a late background save from resurrecting a session deleted in this runtime. */
 const deletedSessionIds = new Set<string>();
 const canonicalSessionIds = new Set<string>();
+let historyGeneration = 0;
+const sessionGenerations = new Map<string, number>();
+
+export function validSessionId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id);
+}
+
+export function getHistoryGeneration(): number { return historyGeneration; }
+
+export async function getSessionStamp(id: string): Promise<string | null> {
+  if (deletedSessionIds.has(id)) return null;
+  const path = getSessionPath(id);
+  if (!(await IOUtils.exists(path))) return null;
+  const stat = await IOUtils.stat(path);
+  return `${stat.lastModified}:${stat.size}:${sessionGenerations.get(id) || 0}`;
+}
+
+/** Include orphaned and unreadable files so search can report actual coverage. */
+export async function listHistoryIds(): Promise<string[]> {
+  const ids = new Set((await listSessions()).map(meta => meta.id));
+  for (const path of await IOUtils.getChildren(getHistoryDir())) {
+    const name = path.split(/[\\/]/).pop()!;
+    if (name.endsWith(".json") && name !== "_index.json" && validSessionId(name.slice(0, -5))) ids.add(name.slice(0, -5));
+  }
+  return [...ids].filter(id => validSessionId(id) && !deletedSessionIds.has(id)).sort();
+}
 
 function getHistoryDir(): string {
   return PathUtils.join(getCacheDir(), "history");
 }
 
 function getSessionPath(id: string): string {
+  if (!validSessionId(id)) throw new Error("Invalid saved chat ID.");
   return PathUtils.join(getHistoryDir(), `${id}.json`);
 }
 
@@ -94,6 +122,7 @@ export async function saveSession(session: SavedSession): Promise<void> {
       }
     }
     await atomicWriteJson(getSessionPath(session.id), session);
+    sessionGenerations.set(session.id, ++historyGeneration);
     if ((session.schemaVersion || 0) >= 4) canonicalSessionIds.add(session.id);
 
     const index = await loadIndex();
@@ -112,6 +141,8 @@ export async function loadSession(id: string): Promise<SavedSession | null> {
   const bytes = await IOUtils.read(path);
   const json = new TextDecoder().decode(bytes);
   const session = JSON.parse(json) as SavedSession;
+  if (deletedSessionIds.has(id)) return null;
+  if (session.id !== id || !Array.isArray(session.messages)) throw new Error("Invalid saved chat record.");
   if ((session.schemaVersion || 0) < 4) canonicalSessionIds.delete(id);
   return session;
 }
@@ -145,7 +176,9 @@ export async function setSessionPinned(id: string, pinned: boolean): Promise<voi
 }
 
 export async function deleteSession(id: string): Promise<void> {
+  if (!validSessionId(id)) throw new Error("Invalid saved chat ID.");
   deletedSessionIds.add(id);
+  sessionGenerations.set(id, ++historyGeneration);
   await withStorageLock("chat-history", async () => {
     const path = getSessionPath(id);
     if (await IOUtils.exists(path)) await IOUtils.remove(path);
@@ -153,6 +186,8 @@ export async function deleteSession(id: string): Promise<void> {
     if (await IOUtils.exists(backup)) await IOUtils.remove(backup);
     const index = await loadIndex();
     await saveIndex(index.filter((m) => m.id !== id));
+    const searchCache = PathUtils.join(getCacheDir(), "history-search", `${id}.json`);
+    if (await IOUtils.exists(searchCache)) await IOUtils.remove(searchCache);
   });
 }
 

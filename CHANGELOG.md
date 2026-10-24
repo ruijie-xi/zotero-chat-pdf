@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.2
+
+- Search saved conversations by paper/chat titles and visible message text with the shared `search_chat_history`, `read_chat_session` and `list_item_chats` tools. Read original historical messages with explicit pagination and versioned citations, and find conversations associated with one or more Zotero items.
+- Add full-text history search, matching excerpts and read-only message previews that preserve the active chat and draft. Keep incremental search caches rebuildable, distinguish source availability from successful reads, and enforce source scope and revision checks on historical receipts.
+- Create, inspect and update static SVG, Mermaid and TikZ drawings in native chat and MCP. Show inline images with enlarged previews, source inspection and PNG/SVG/source exports. Bundle offline renderers and fonts; preserve earlier interactive drawings as non-executing snapshots.
+- Find text in the current chat with Ctrl/Cmd+F, next/previous navigation and scoped highlights across user messages and assistant answers.
+- Synchronize model selection across settings and windows, capture one model configuration per reply, and retain replacement API keys in the intended saved profile without changing other accounts.
+- Consolidate duplicate and obsolete tests while retaining storage, source permissions, cancellation, provider, rendering and security regressions. Adapt the image-fallback compaction fixture to the current tool catalog budget.
+- Both TypeScript targets, lint, 60 test files / 502 tests, production packaging, bundled asset integrity and the update manifest passed; the dependency audit reported zero vulnerabilities. Native acceptance used Zotero 10.0.6; external MCP clients should reconnect to discover the added tools. PDF transcription behavior and existing Markdown caches are unchanged.
+
 ## 0.10.1
 
 - Locate literal phrases, theorem headings, equation numbers and captions with the new shared `locate_pdf_content` tool. Return every matching context, PDF page, text-item rectangle, inspection region and clickable citation.

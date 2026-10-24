@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 const ownAsset = path => /^addon\/(?:bootstrap\.js|prefs\.js|content\/[\w/-]+\.(?:js|css|html|xhtml)|locale\/[\w-]+\/[\w-]+\.ftl)$/.test(path)
-  && !/\/(?:katex|tokenizers)(?:[/.]|$)/.test(path);
+  && !/\/(?:katex|tokenizers|vendor)(?:[/.]|$)/.test(path);
 
 /** Only project-owned code and two architecture documents; never follow symlinks. */
 export async function createSourceSnapshot(root, version, buildTime) {

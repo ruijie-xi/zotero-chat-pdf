@@ -1,6 +1,6 @@
 # Shared native and MCP tool channel
 
-Decision: 2026-10-20; inventory updated 2026-10-23. Zotero owns all tool definitions and execution. Native ChatPDF chat and the companion Zotero MCP use the same names, descriptions, JSON schemas and executor. Each tool is individually enabled or disabled in preferences; all 25 are enabled by default.
+Decision: 2026-10-20; inventory updated 2026-10-24. Zotero owns all tool definitions and execution. Native ChatPDF chat and the companion Zotero MCP use the same names, descriptions, JSON schemas and executor. Each tool is individually enabled or disabled in preferences; all registered tools are enabled by default.
 
 ```mermaid
 flowchart LR
@@ -34,6 +34,8 @@ Native chat calls the executor in-process. External MCP reaches that same execut
 | Notes and scoped changes | `read_zotero_notes`, `search_zotero_notes`, `change_zotero_library` |
 | Public web | `web_search`, `web_fetch` |
 | Installed source inspection | `list_plugin_source`, `read_plugin_source`, `search_plugin_source` |
+| Saved chat history | `search_chat_history`, `read_chat_session`, `list_item_chats` |
+| Static drawings | `create_visual`, `read_visual`, `update_visual`, `inspect_visual` |
 | Complete stored results | `read_tool_result` |
 
 Web search uses Brave when a key is configured and otherwise the existing DuckDuckGo fallback. No new search credential is required by the shared channel. Public network access still uses `SafeWebClient`.
@@ -100,3 +102,5 @@ Regression coverage includes 44 PDFs with 70 repeated header matches in the firs
 ## Page Markdown transcription
 
 `read_pdf_page` returns ordered page-level Markdown and citations, with per-page cache/error metadata. Cache misses make billed visual-model requests inside Zotero, using the current ChatPDF model or its selected transcription profile with thinking disabled. Metadata marks this read-only tool as network/costly; it does not require image input from the calling agent. `inspect_pdf_page` alone returns original PDF images. Both callers share cache entries, conversion concurrency and cancellation logic; external agents do not supply or reveal their own model credentials. Refresh the MCP tool catalog after upgrading. Legacy conversion operations remain retired. See [Page transcription](pdf-markdown-reading.md).
+
+Saved ChatPDF history uses the shared local query service; see [history retrieval and boundaries](chat-history-search.md). History lookup does not switch chats or import sources, and raw historical document receipts retain TurnScope checks.

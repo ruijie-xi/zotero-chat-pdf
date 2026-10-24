@@ -1,9 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ sessions: [] as any[], list: vi.fn() }));
+const mocks = vi.hoisted(() => ({ sessions: [] as any[], list: vi.fn(), query: vi.fn() }));
+vi.mock("../src/modules/history-query", () => ({ queryHistory: mocks.query }));
 vi.mock("../src/modules/chat-history", () => ({ listSessions: mocks.list, setSessionPinned: vi.fn(async (id: string, pinned: boolean) => { mocks.sessions.find(m => m.id === id).pinned = pinned; }) }));
 vi.mock("../src/modules/message-renderer", () => ({ renderChatHistory: vi.fn(), refreshSourceChips: vi.fn(), renderLiveStreamState: vi.fn(), updateUsageBar: vi.fn() }));
 vi.mock("../src/modules/send-handler", () => ({ autoSaveSession: vi.fn() }));
 vi.mock("../src/modules/source-chips", () => ({ recoverSource: vi.fn() }));
+import { filterHistory } from "../src/modules/history-search";
 import { showHistoryView, hideHistoryView } from "../src/modules/history-view";
 import { destroyPanelState } from "../src/modules/panel-state";
 let root: HTMLElement;
@@ -13,6 +15,11 @@ beforeEach(() => {
   root = document.querySelector("#chatpdf-root")!;
   mocks.sessions = [{ id: "one", title: "Questions", sourceTitles: ["Hamiltonian systems"], createdAt: 1, updatedAt: 2, messageCount: 2 }, { id: "two", title: "Other", sourceTitles: [], createdAt: 1, updatedAt: 3, messageCount: 2 }, { id: "empty", title: "Empty", sourceTitles: [], createdAt: 1, updatedAt: 4, messageCount: 0 }];
   mocks.list.mockImplementation(async () => mocks.sessions);
+  mocks.query.mockImplementation(async (options: any) => {
+    const all = await mocks.list();
+    const filtered = filterHistory(all, { query: options.query, includeEmpty: options.include_empty, pinnedOnly: options.pinned_only });
+    return { results: filtered.map(m => ({ ...m, session_id: m.id, source_titles: m.sourceTitles, updated_at: m.updatedAt, message_index: null, relations: [] })), total_matches: filtered.length, coverage: { unreadable: [], saved_chats: all.length } };
+  });
 });
 const search = () => root.querySelector("#chatpdf-history-search") as HTMLInputElement;
 const entries = () => [...root.querySelectorAll(".chatpdf-history-item")].map(item => item.getAttribute("data-session-id"));

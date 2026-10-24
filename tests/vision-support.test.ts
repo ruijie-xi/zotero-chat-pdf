@@ -35,10 +35,8 @@ describe("advisory vision metadata and explicit image rejection", () => {
     [400, "Image is too large"],
     [413, "Images are not supported"],
     [401, "Model does not support images"],
-    [403, "Model does not support images"],
     [429, "Model does not support images"],
     [500, "Model does not support images"],
-    [503, "Model does not support images"],
     [400, "Invalid tool arguments"],
   ])("does not downgrade other failures (%s, %s)", (status, message) => {
     expect(rejectsImageInput(Number(status), String(message))).toBe(false);

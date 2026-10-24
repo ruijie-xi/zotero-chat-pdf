@@ -31,6 +31,7 @@ export interface ToolCall {
 }
 
 export interface ChatMessage {
+  id?: string;
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   reasoning?: string;
@@ -99,6 +100,7 @@ export interface IterationRecord {
   content?: string;
   reasoning?: string;
   toolCalls: {
+    visual?: import("./visual-model").VisualRef;
     toolName: string;
     args: Record<string, unknown>;
     result: string;

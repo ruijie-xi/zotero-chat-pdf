@@ -1,0 +1,5 @@
+# Preserve the exact upstream bytes checked by the bundled asset manifest.
+addon/content/visual/vendor/** -text whitespace=cr-at-eol
+# Upstream license notices are retained verbatim, including whitespace.
+addon/content/visual/vendor/tikzjax/LICENSE.md whitespace=cr-at-eol,-blank-at-eof
+addon/content/visual/vendor/tikzjax/fonts/LICENSE.txt whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

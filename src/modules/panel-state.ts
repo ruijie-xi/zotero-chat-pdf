@@ -40,6 +40,7 @@ export interface PanelState {
   isStreaming: boolean;
   currentAbortController: AbortLike | null;
   historyFilterParentKey: string | null;
+  historyFilterItemIds?: string[];
   historyFilterTitle: string | null;
   historyQuery: string;
   historyIncludeEmpty: boolean;

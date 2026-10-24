@@ -1,6 +1,7 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
 import { writeSourceSnapshot } from "./scripts/build-source-snapshot.mjs";
+import { verifyVisualAssets } from "./scripts/verify-visual-assets.mjs";
 
 export default defineConfig({
   source: ["src", "addon"],
@@ -13,7 +14,7 @@ export default defineConfig({
   updateURL: pkg.config.updateURL,
 
   build: {
-    hooks: { "build:bundle": writeSourceSnapshot },
+    hooks: { "build:bundle": async (...args) => { await verifyVisualAssets(); await writeSourceSnapshot(...args); } },
     assets: ["addon/**/*.*"],
     define: {
       ...pkg.config,
@@ -25,6 +26,13 @@ export default defineConfig({
       prefix: pkg.config.prefsPrefix,
     },
     esbuildOptions: [
+      {
+        entryPoints: ["src/visual/host.ts", "src/visual/sandbox.ts"],
+        entryNames: "[name]",
+        bundle: true,
+        target: "firefox140",
+        outdir: ".scaffold/build/addon/content/visual/scripts",
+      },
       {
         entryPoints: ["src/index.ts"],
         define: {

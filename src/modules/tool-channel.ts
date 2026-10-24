@@ -23,6 +23,10 @@ export function listChannelTools() {
   return { tools: getToolDefinitions().map(({ function: tool }) => ({ ...tool, metadata: getToolMetadata(tool.name) })) };
 }
 
+// Empty catalogs let older adapter connections retire the removed App resource.
+export function listChannelResources() { return { resources: [] }; }
+export function readChannelResource(_uri: unknown) { throw new Error("UI resources are unavailable. Drawing tools return static images."); }
+
 export function closeToolSession(clientId: unknown): void {
   const id = identifier(clientId);
   sessions.get(id)?.active?.abort();
@@ -60,8 +64,12 @@ export async function callChannelTool(params: Record<string, unknown>) {
   try {
     const memory = session.ensureAgentContext([]);
     const images: ToolContent[] = [];
+    let visual: import("./visual-model").VisualRef | undefined;
+    let historyAccess: { refs: import("./history-query").HistoryRef[]; sources: string[] } | undefined;
     const context: ToolExecutionContext = {
+    recordHistoryAccess(refs, sources) { historyAccess = { refs, sources }; },
     session, signal, requestId, windowId: `mcp-${clientId}`,
+    deliverVisual(ref) { visual = { id: ref.id, version: ref.version }; },
     turnScope: session.resolveTurnScope([]),
     libraryAccess: captureLibraryAccess(win),
     approveLibraryChanges: (plan, undo) => {
@@ -79,9 +87,13 @@ export async function callChannelTool(params: Record<string, unknown>) {
     throwIfAborted(signal);
     const safeArgs = args && typeof args === "object" ? args : {};
     const original = params.name === "read_tool_result" ? memory.data.results.find(result => result.id === safeArgs.result_id) : undefined;
-    const result = memory.storeResult(text, params.name, original?.sourceIds ?? toolResultSourceIds(params.name, safeArgs, context));
+    const result = memory.storeResult(text, params.name, original?.sourceIds ?? historyAccess?.sources ?? toolResultSourceIds(params.name, safeArgs, context));
+    result.historyRefs = original?.historyRefs ?? historyAccess?.refs;
+    const artifact = visual ? session.visuals.get(visual) : undefined;
+    if (artifact?.png && !images.some(item => item.type === "image")) images.push({ type: "image", mimeType: "image/png", data: artifact.png.split(",")[1] });
     return {
       content: [{ type: "text", text: `${text}\n[Stored result: ${result.id}]` } as ToolContent, ...images],
+      ...(artifact ? { structuredContent: { id: artifact.id, version: artifact.version, title: artifact.title } } : {}),
       isError: /^Error(?: executing |:)/.test(text),
     };
   } finally {

@@ -1,5 +1,5 @@
 import packageJson from "../../package.json";
-import { callChannelTool, cancelToolCall, closeToolSession, listChannelTools, resetToolChannel } from "./tool-channel";
+import { callChannelTool, cancelToolCall, closeToolSession, listChannelTools, listChannelResources, readChannelResource, resetToolChannel } from "./tool-channel";
 
 type ServerResponse = [number, string, string];
 const PATH = "/chatpdf/v2";
@@ -23,6 +23,8 @@ async function dispatch(op: string, raw: unknown): Promise<unknown> {
         enabled_tools: listChannelTools().tools.map(tool => tool.name),
       };
     case "tools.list": return listChannelTools();
+    case "resources.list": return listChannelResources();
+    case "resources.read": return readChannelResource(values.uri);
     case "tools.call": return callChannelTool(values);
     case "tools.cancel": cancelToolCall(values.client_id, values.request_id); return { cancelled: true };
     case "session.close": closeToolSession(values.client_id); return { closed: true };

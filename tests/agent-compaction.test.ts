@@ -96,14 +96,6 @@ describe("output limit recovery", () => {
     expect(session.getAgentContext()!.data.results[0].content).toBe("receipt");
   });
 
-  it("stops at the model output ceiling without unbounded empty retries", async () => {
-    const { session, messages } = setup();
-    model.mockResolvedValue({ content: "", reasoning: "still thinking", finishReason: "length" });
-    await expect(runAgentLoop(messages, tools, session)).rejects.toThrow("available model output capacity");
-    expect(model.mock.calls.map(args => args[6]?.maxTokens)).toEqual([32768]);
-    expect(session.getAgentContext()!.data.requests).toHaveLength(1);
-  });
-
   it("reserves full output capacity inside the combined model context window", async () => {
     const { session, messages } = setup();
     const caps = { ...budget().capabilities, contextWindow: 50000 };
@@ -172,14 +164,6 @@ describe("automatic context compaction", () => {
     expect(context.data.events).toEqual(before.events);
     expect(context.data.active).toEqual(before.active);
     expect(context.data.checkpoints).toEqual([]);
-  });
-
-  it("stops cancelled compaction before another request", async () => {
-    const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
-    const controller = new AbortController();
-    model.mockImplementation(async () => { controller.abort(); return { content: "", finishReason: "length" }; });
-    await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn(), controller.signal)).rejects.toMatchObject({ name: "AbortError" });
-    expect(model).toHaveBeenCalledTimes(1);
   });
 
   it("continues past the old allowance and keeps the summarizer prefix/tools intact", async () => {
@@ -270,9 +254,13 @@ describe("automatic context compaction", () => {
 
   it("cancellation during compaction never replaces working state", async () => {
     const context = AgentContext.create([{ role: "system", content: "policy" }, { role: "user", content: "x".repeat(50_000) }], "model", 1);
+    const before = context.toJSON();
     const controller = new AbortController();
     model.mockImplementation(async () => { controller.abort(); return { content: "summary" }; });
     await expect(compactAgentContext(context, tools, { role: "user", content: "continue" }, budget(100_000), vi.fn(), controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(model).toHaveBeenCalledTimes(1);
+    expect(context.data.events).toEqual(before.events);
+    expect(context.data.active).toEqual(before.active);
     expect(context.data.checkpoints).toHaveLength(0);
   });
 

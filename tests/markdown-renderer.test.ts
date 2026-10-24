@@ -11,25 +11,15 @@ describe("Markdown HTML sanitizer", () => {
     expect(target.querySelector("a")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
     expect(target.querySelector(".katex")).not.toBeNull();
     expect(target.querySelector("[onerror], script, a[href^='javascript:']")).toBeNull();
+    expect(target.textContent).not.toContain("bad()");
     renderMarkdownInto(target, "Replacement");
     expect(target.textContent).toBe("Replacement\n");
   });
-  it("removes scripts and their content", () => {
-    const html = sanitizeHtml("<p>safe</p><script>alert(1)</script>");
-    expect(html).toContain("safe");
-    expect(html).not.toContain("script");
-    expect(html).not.toContain("alert");
-  });
-
   it("removes inline event handlers and styles", () => {
     const html = sanitizeHtml('<img src="https://example.com/a.png" onerror="x" style="display:none">');
     expect(html).toContain("https://example.com/a.png");
     expect(html).not.toContain("onerror");
     expect(html).not.toContain("style");
-  });
-
-  it("blocks javascript links", () => {
-    expect(sanitizeHtml('<a href="javascript:alert(1)">click</a>')).not.toContain("href");
   });
 
   it("blocks encoded whitespace javascript links", () => {
@@ -59,10 +49,4 @@ describe("Markdown HTML sanitizer", () => {
     expect(renderMarkdown("line 1\n\n---\n\nline 2")).toContain("<hr/>");
   });
 
-  it("renders local KaTeX after sanitizing model HTML", () => {
-    const html = renderMarkdown("Equation $E=mc^2$ <script>bad()</script>");
-    expect(html).toContain("katex");
-    expect(html).not.toContain("script");
-    expect(html).not.toContain("bad()");
-  });
 });

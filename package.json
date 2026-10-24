@@ -26,7 +26,7 @@
   "scripts": {
     "start": "zotero-plugin serve",
     "build": "zotero-plugin build",
-    "typecheck": "tsc --noEmit --pretty false",
+    "typecheck": "tsc --noEmit --pretty false && tsc -p tsconfig.visual.json --pretty false",
     "lint": "eslint src tests scripts --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -47,6 +47,7 @@
     "@tiptap/suggestion": "^3.31.3",
     "katex": "^0.18.10",
     "marked": "^17.0.3",
+    "mermaid": "12.2.0",
     "zotero-plugin-toolkit": "^5.1.0-beta.13"
   },
   "devDependencies": {

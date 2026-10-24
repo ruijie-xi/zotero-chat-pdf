@@ -13,7 +13,9 @@ const capabilities: ModelCapabilities = { contextWindow: 10000, maxOutput: 4000,
 const counter = () => new TokenCounter(tokenizer, settings, capabilities);
 
 describe("local token accounting", () => {
-  it.each(fixtures)("matches the Rust reference for $text", fixture => {
+  // Small compatibility sample for the bundled vocabulary and JS tokenizer.
+  // Project accounting, calibration and paging behavior is tested below.
+  it.each(fixtures)("loads the bundled vocabulary compatibly for $text", fixture => {
     expect(tokenizer.encode(fixture.text, { add_special_tokens: false }).ids).toEqual(fixture.ids);
   });
   it("distinguishes equal character lengths and counts schemas/replay without changing the prefix", () => {

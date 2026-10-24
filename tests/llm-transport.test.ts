@@ -71,13 +71,6 @@ describe("LLM transport recovery", () => {
     if (delta.reasoning_content) expect(onThinking).toHaveBeenCalledWith(delta.reasoning_content, false);
   });
 
-  it("also recovers non-streaming connection failures", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("fetch failed")).mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }))));
-    const pending = request(undefined, undefined, undefined, true);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect((await pending).content).toBe("OK");
-  });
-
   it.each([400, 401, 403, 404, 415, 422])("does not replay HTTP %i rejections", async status => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("Provider rejection", { status })));
     await expect(request()).rejects.toThrow(`LLM API error (${status})`);

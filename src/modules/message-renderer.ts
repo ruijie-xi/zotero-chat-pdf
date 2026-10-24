@@ -5,6 +5,7 @@ import { sumTokenUsage, type ChatMessage, type IterationRecord, type TokenUsage 
 import { getPanelState, type StreamState } from "./panel-state";
 import { openPdfForSourceKey } from "./zotero-items";
 import { AssistantMessageView } from "./assistant-message-view";
+import { createVisualCard } from "./visual-view";
 import { enterEditMode } from "./message-editor";
 import { updateUsageBar } from "./usage-view";
 
@@ -36,7 +37,7 @@ export function appendMessage(root: HTMLElement, role: "user" | "assistant", con
   let row: HTMLElement;
   let bubble: HTMLElement;
   if (role === "assistant") {
-    const view = new AssistantMessageView(doc);
+    const view = new AssistantMessageView(doc, ref => createVisualCard(root, getPanelState(root).session, ref));
     view.update({ content, reasoning: iterations?.length ? undefined : reasoning, timestamp, modelLabel, iterations, usage, status });
     ({ row, bubble } = view);
   } else {
@@ -76,7 +77,7 @@ export function renderLiveStreamState(root: HTMLElement, stream: StreamState): v
   if (!messages) return;
   state.streamViewCleanup?.();
   const win = root.ownerDocument!.defaultView!;
-  const view = new AssistantMessageView(root.ownerDocument!);
+  const view = new AssistantMessageView(root.ownerDocument!, ref => createVisualCard(root, stream.session, ref));
   view.row.dataset.msgIndex = String(stream.session.getHistoryLength());
   messages.append(view.row);
   let timer: number | undefined;

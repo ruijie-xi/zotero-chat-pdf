@@ -1,4 +1,7 @@
 pref-title = ChatPDF 设置
+pref-tool-search-chat-history = 搜索历史会话
+pref-tool-read-chat-session = 阅读历史会话
+pref-tool-list-item-chats = 查找条目关联会话
 pref-vision-inputs-hint = PDF 转录需要支持图片输入的模型。聊天模型支持图片时，也可查看原图进行仔细复查。
 pref-section-models = 模型与已保存配置
 pref-section-behavior = 聊天行为

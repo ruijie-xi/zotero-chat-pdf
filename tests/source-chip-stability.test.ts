@@ -18,9 +18,7 @@ it("adds a PDF ready for on-demand reading and keeps controls attached through r
   refreshSourceChips(root);
   expect(source.status).toBe("ready");
   expect(root.querySelector(".chatpdf-chip-badge")?.textContent).toBe("PDF");
-  expect(root.querySelector(".chatpdf-chip-badge")?.getAttribute("title")).toMatch(/transcribed and cached|按需转录/);
   expect(root.querySelector("button.chatpdf-chip-title")?.textContent).toBe("Paper");
-  expect(root.querySelector('[data-action="convert-source"], [data-action="view-conversion"]')).toBeNull();
   const button = more(); button.focus();
   refreshSourceChips(root);
   expect(more()).toBe(button); expect(document.activeElement).toBe(button);
@@ -41,12 +39,11 @@ it("replaces removed source rows and persists removal while aborting its active 
   expect(abort).toHaveBeenCalledOnce();
   expect(saveSession).toHaveBeenCalledWith(expect.objectContaining({ sources: [] }));
 });
-it("offers a keyboard-dismissable source menu without conversion actions", () => {
+it("keeps a source menu stable across refresh and dismisses it with the keyboard", () => {
   mocks.state.session.addSource("PDF", "Paper", undefined, 1); refreshSourceChips(root);
   const chip = root.querySelector(".chatpdf-source-chip")!;
   chip.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
   const menu = root.querySelector(".chatpdf-source-menu")!;
-  expect(menu.textContent).not.toMatch(/Convert|Process|转换/);
   refreshSourceChips(root); expect(root.querySelector(".chatpdf-source-chip")).toBe(chip);
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(menu.isConnected).toBe(false);

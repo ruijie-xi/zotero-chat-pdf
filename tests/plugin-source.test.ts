@@ -72,7 +72,5 @@ describe("installed plugin source tools", () => {
       expect(toolResultSourceIds(name, {}, context)).toEqual([]);
     }
     expect(await executeTool("read_plugin_source", { path: file.path }, context)).toContain("Energy transfer");
-    const prompt = context.session.buildAgentMessages("Debug plugin")[0].content;
-    expect(prompt).toContain("read_plugin_source"); expect(prompt).toContain("reproduced bug");
   });
 });

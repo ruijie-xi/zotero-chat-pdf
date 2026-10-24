@@ -4,6 +4,7 @@ import { ContextBudget } from "./context-budget";
 import { ProviderMessage, VisionContent, Tool, chatWithTools, StreamCallback, TokenUsage, IterationRecord, ChatResult, ProviderContextError, sumTokenUsage, getLLMSettings, type LLMSettings } from "./llm-client";
 import { ImageInput } from "./image-input";
 import { executeTool, getToolMetadata, ToolExecutionContext } from "./tools";
+import { toolResultSourceIds } from "./tool-sources";
 import { ChatSession } from "./chat-session";
 import { getPref } from "../utils/prefs";
 import { ContextMessage, COMPACT_PROMPT } from "./agent-context";
@@ -243,8 +244,13 @@ export async function runAgentLoop(
       callbacks.onToolCallStart?.(tc.function.name, args);
       const started = Date.now();
       const images: ImageInput[] = [];
+      let visual: import("./visual-model").VisualRef | undefined;
       let retrievedRange: { id: string; start: number; end: number } | undefined;
+      let historyAccess: { refs: import("./history-query").HistoryRef[]; sources: string[] } | undefined;
       const text = await executeTool(tc.function.name, args, { ...toolContext,
+        recordHistoryAccess(refs, sources) { historyAccess = { refs, sources }; },
+        callId: tc.id,
+        deliverVisual(ref) { if (tc.function.name !== "inspect_visual") visual = { id: ref.id, version: ref.version }; },
         readStoredResult(id, start, length, allowed) {
           const page = context.readResultPage(id, start, length, allowed, content => budget.fits([
             ...context.messages, assistantMessage(result), ...calls.map(call => ({ role: "tool" as const, tool_call_id: call.tc.id,
@@ -254,15 +260,13 @@ export async function runAgentLoop(
           return page.content;
         }, deliverImage(image) {
         check();
-        imageSources.add(image.sourceId); images.push(image);
+        if (image.sourceId) imageSources.add(image.sourceId); images.push(image);
       } });
       const durationMs = Date.now() - started;
       const original = tc.function.name === "read_tool_result" ? context.data.results.find(item => item.id === args.result_id) : undefined;
-      const scoped = ["list_images", "read_image", "read_pdf_text", "read_pdf_page", "inspect_pdf_page", "get_document_status"].includes(tc.function.name);
-      const identifier = String(args.key || args.source_key || "");
-      const source = scoped && identifier ? session.getSource(identifier) : undefined;
-      const sourceIds = original?.sourceIds ?? (source ? [source.id] : tc.function.name === "list_sources" ? [...toolContext.turnScope] : []);
+      const sourceIds = original?.sourceIds ?? historyAccess?.sources ?? toolResultSourceIds(tc.function.name, args, toolContext);
       const stored = context.storeResult(text, tc.function.name, sourceIds);
+      stored.historyRefs = original?.historyRefs ?? historyAccess?.refs;
       stored.mutating = !getToolMetadata(tc.function.name).readOnly;
       if (retrievedRange) stored.parentRange = retrievedRange;
       context.data.pending!.completed.push({ callId: tc.id, resultId: stored.id });
@@ -271,7 +275,7 @@ export async function runAgentLoop(
       return {
         images,
         message: { role: "tool" as const, content: text, tool_call_id: tc.id, name: tc.function.name, resultId: stored.id },
-        record: { toolName: tc.function.name, args, result: text, resultId: stored.id, durationMs } as IterationRecord["toolCalls"][number],
+        record: { toolName: tc.function.name, args, result: text, resultId: stored.id, durationMs, ...(visual ? { visual } : {}) } as IterationRecord["toolCalls"][number],
       };
     };
     if (calls.every(({ tc }) => getToolMetadata(tc.function.name).readOnly)) {

@@ -1,4 +1,5 @@
 import { installCitationLinks } from "./source-citation";
+import { installHistoryCitationLinks } from "./history-preview";
 import { config } from "../../package.json";
 import { getPref, setPref } from "../utils/prefs";
 import { XUL_NS, preserveBottomScroll } from "../utils/dom";
@@ -94,6 +95,7 @@ export function injectChatPanel(win: Window): void {
   const root = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLElement;
   root.id = "chatpdf-root";
   installCitationLinks(root);
+  installHistoryCitationLinks(root);
   root.dataset.chatpdfWindowId = state.windowId;
   vbox.appendChild(root);
 
@@ -357,7 +359,8 @@ export function registerContextMenu(): void {
           if (!item) return;
           const parentKey = item.isRegularItem?.() ? item.key : (item.parentItem?.key || item.key);
           const title = getItemTitle(item);
-          showFilteredHistory(parentKey, title);
+          const ids = (context.items || []).map(selected => `${selected.libraryID}:${selected.isRegularItem?.() ? selected.key : selected.parentItem?.key || selected.key}`);
+          showFilteredHistory(`${item.libraryID}:${parentKey}`, ids.length > 1 ? `${title} + ${ids.length - 1}` : title, ids);
         },
       },
     ],

@@ -30,6 +30,9 @@ export function formatMsgTime(timestamp: number): string {
 
 /** Format a tool call name + args into a human-readable status string. */
 export function formatToolStatus(name: string, args: Record<string, unknown>, session: import("../modules/chat-session").ChatSession): string {
+  if (name === "create_visual" || name === "update_visual") return uiText(`Rendering visual: ${args.title || ""}`, `正在绘制图解：${args.title || ""}`);
+  if (name === "inspect_visual") return uiText("Checking visual rendering…", "正在检查图解显示效果…");
+  if (name === "read_visual") return uiText("Reading saved visual…", "正在读取已保存的图解…");
   if (name === "list_sources") return uiText("Listing sources…", "正在查看来源…");
   if (name === "read_pdf_page" || name === "inspect_pdf_page" || name === "read_pdf_text") {
     const key = args.key as string | undefined;

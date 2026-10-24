@@ -109,9 +109,13 @@ describe("local PDF text and page evidence", () => {
     expect(renderer.render).toHaveBeenCalledOnce(); modified = 8;
     await readPdfPage(item, 1); expect(renderer.render).toHaveBeenCalledTimes(2);
   });
-  it("merges overlapping snippets and rejects invalid limits/cursors", async () => {
+  it("preserves merged/distant snippet text and offsets and rejects invalid limits/cursors", async () => {
     expect(textMatches("energy", "", 100)).toEqual([]);
-    expect(textMatches("energy and energy", "energy", 100)).toHaveLength(1);
+    const text = "before alpha match shared context another match after";
+    expect(textMatches(text, "match", 50)).toEqual([{ offset: 0, text }]);
+    expect(textMatches("match" + ".".repeat(100) + "MATCH", "match", 5)).toEqual([
+      { offset: 0, text: "match" }, { offset: 105, text: "MATCH" },
+    ]);
     await expect(searchPdfText({ query: "energy", page_size: 0 })).rejects.toThrow("positive");
     await expect(searchPdfText({ query: "energy", cursor: '{"document":0}' })).rejects.toThrow("cursor");
   });

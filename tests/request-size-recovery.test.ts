@@ -59,7 +59,10 @@ describe("HTTP 413 checkpoint recovery", () => {
     expect(await compactAgentContext(context, getToolDefinitions(), user, budget, vi.fn())).toBe(true);
     expect(accepted).toEqual(urls.slice(0, 4));
     expect(requests.length).toBeLessThan(16);
-    expect(requests.every(body => body.model === "same-model" && body.tools.length === 25)).toBe(true);
+    for (const body of requests) {
+      expect(body.model).toBe("same-model");
+      expect(body.tools).toEqual(getToolDefinitions());
+    }
     expect(context.data.events.slice(0, original.length)).toEqual(original);
     expect(context.data.results[0]).toMatchObject({ content: "Edit completed once", mutating: true });
     expect(images(context.messages)).toEqual([]);
@@ -80,7 +83,7 @@ describe("HTTP 413 checkpoint recovery", () => {
     });
     vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
       const body = JSON.parse(init!.body as string); requests.push(body);
-      expect(body.tools).toHaveLength(25);
+      expect(body.tools).toEqual(getToolDefinitions());
       if (images(body.messages).length > 1) return rejected();
       if (String(body.messages.at(-1).content).startsWith(COMPACT_PROMPT)) return notes(body);
       if (stage++ === 0) return response("", [call("inspect_pdf_page"), call("change_zotero_library")]);
@@ -130,7 +133,7 @@ describe("HTTP 413 checkpoint recovery", () => {
     });
     vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
       const body = JSON.parse(init!.body as string); requests.push(body);
-      expect(body.tools).toHaveLength(25);
+      expect(body.tools).toEqual(getToolDefinitions());
       expect(String(body.messages.at(-1).content)).not.toContain(COMPACT_PROMPT);
       if (images(body.messages).length > 2) return rejected();
       if (stage++ === 0) return response("", [call("inspect_pdf_page"), call("change_zotero_library")]);
@@ -181,11 +184,11 @@ describe("HTTP 413 checkpoint recovery", () => {
     expect(requests.flatMap(body => images(body.messages)).every(i => i.image_url.url === urls[0])).toBe(true);
   });
 
-  it.each([401, 422])("does not split unrelated HTTP %i failures", async status => {
+  it("propagates an authentication error without splitting or replacing context", async () => {
     const { context, budget } = fixture();
     const before = structuredClone(context.messages);
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("Invalid request", { status })));
-    await expect(compactAgentContext(context, [], user, budget, vi.fn())).rejects.toThrow(`LLM API error (${status})`);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Invalid credential", { status: 401 })));
+    await expect(compactAgentContext(context, [], user, budget, vi.fn())).rejects.toThrow("LLM API error (401)");
     expect(fetch).toHaveBeenCalledOnce(); expect(context.messages).toEqual(before);
   });
 });

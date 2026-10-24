@@ -10,6 +10,7 @@ export type ContextMessage = ProviderMessage & {
 };
 
 export interface StoredResult {
+  historyRefs?: import("./history-query").HistoryRef[];
   id: string;
   content: string;
   sourceIds: string[];

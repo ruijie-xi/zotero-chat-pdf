@@ -1,4 +1,8 @@
 import { ChatSession } from "./chat-session";
+import { executeHistoryTool } from "./history-tools";
+import { assertHistoryRefs, type HistoryRef } from "./history-query";
+import { executeVisualTool } from "./visual-tools";
+export { toolResultSourceIds } from "./tool-sources";
 import { ImageInput, IMAGE_INPUT_HELP, listSourceImages, readSourceImage } from "./image-input";
 import { getPref } from "../utils/prefs";
 import { getToolDefinitions, getToolMetadata } from "./tool-registry";
@@ -44,6 +48,9 @@ function countLabel(returned: number, total: number): string {
 }
 
 export interface ToolExecutionContext {
+  recordHistoryAccess?: (refs: HistoryRef[], sources: string[]) => void;
+  callId?: string;
+  deliverVisual?: (ref: import("./visual-model").VisualRef) => void;
   llmSettings?: import("./llm-client").LLMSettings;
   onPdfConversionUsage?: (event: import("./pdf-transcription").PdfConversionUsage) => void;
   imageInputRejected?: boolean;
@@ -57,14 +64,6 @@ export interface ToolExecutionContext {
   turnScope: Set<string>;
   libraryAccess?: LibraryAccess;
   approveLibraryChanges?: (plan: LibraryChangeSet, undo?: boolean) => Promise<boolean>;
-}
-
-export function toolResultSourceIds(name: string, args: Record<string, unknown>, context: ToolExecutionContext): string[] {
-  const documentTools = new Set(["list_images", "read_image", "read_pdf_text", "read_pdf_page", "inspect_pdf_page", "locate_pdf_content", "get_document_status"]);
-  if (name === "list_sources") return [...context.turnScope];
-  if (!documentTools.has(name)) return [];
-  const source = context.session.getSource(String(args.key || args.source_key || ""));
-  return source ? [source.id] : [];
 }
 
 export async function executeTool(
@@ -86,9 +85,17 @@ export async function executeTool(
     let result: string;
 
     switch (name) {
+      case "create_visual":
+      case "read_visual":
+      case "update_visual":
+      case "inspect_visual":
+        result = await executeVisualTool(name, args, context);
+        break;
       case "read_tool_result": {
         const memory = session.getAgentContext();
         if (!memory) throw new Error("No stored results are available in this session.");
+        const original = memory.data.results.find(result => result.id === args.result_id);
+        if (original?.historyRefs) await assertHistoryRefs(original.historyRefs, context.signal);
         const start = args.start === undefined ? 0 : Number(args.start);
         const requested = args.max_chars === undefined ? Number.MAX_SAFE_INTEGER : Number(args.max_chars);
         if (!Number.isSafeInteger(requested) || requested <= 0) throw new Error("max_chars must be a positive integer.");
@@ -144,7 +151,8 @@ export async function executeTool(
         result = await executeWebFetch(args, context.signal);
         break;
       default:
-        result = await executePluginSourceTool(name, args, context.signal)
+        result = await executeHistoryTool(name, args, context)
+          ?? await executePluginSourceTool(name, args, context.signal)
           ?? await executeResearchTool(name, args, context) ?? `Unknown tool: ${name}`;
     }
 

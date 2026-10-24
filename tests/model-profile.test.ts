@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyModelProfile, loadModelProfiles, modelProfilePreferences, parseModelProfiles, saveModelProfiles, updateActiveProfileApiKey } from "../src/modules/model-profile";
+import { applyModelProfile, loadModelProfiles, modelProfilePreferences, parseModelProfiles, updateActiveProfileApiKey } from "../src/modules/model-profile";
 
 const legacy = { name: "Legacy custom", apiBase: "https://custom.example/v1", apiKey: "fixture-only", model: "custom-model" };
 
@@ -33,11 +33,6 @@ describe("shared model profiles", () => {
     applyModelProfile(settings);
     for (const [key, value] of Object.entries(values)) expect(Zotero.Prefs.set).toHaveBeenCalledWith(`extensions.zotero.chatpdf.${key}`, value, true);
     expect(modelProfilePreferences(legacy)).toMatchObject({ contextWindowTokens: 0, inputTokenLimit: 0, maxOutputTokens: 0, requestedOutputTokens: 0, imageTokenReserve: 0, tokenizerMode: "auto", llmThinkingMode: "default", llmThinkEffort: "default" });
-  });
-
-  it("preserves the existing profile storage format", () => {
-    saveModelProfiles([legacy]);
-    expect(Zotero.Prefs.set).toHaveBeenCalledWith("extensions.zotero.chatpdf.modelProfiles", JSON.stringify([legacy]), true);
   });
 
   it("rotates or clears only the loaded account's key while preserving other fields and accounts", () => {

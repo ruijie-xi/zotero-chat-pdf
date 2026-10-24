@@ -7,5 +7,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src", "typings"],
-  "exclude": ["build", "addon"]
+  "exclude": ["build", "addon", "src/visual"]
 }

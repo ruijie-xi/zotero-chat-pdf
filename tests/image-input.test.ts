@@ -89,11 +89,10 @@ describe("image sources", () => {
     expect(session.getSource("4:IMAGE")).toMatchObject({ kind: "image", parentKey: "PAPER", status: "ready" });
   });
 
-  it("routes PDFs to original page reading and does not expose retired extracted figures", async () => {
+  it("rejects PDFs passed to standalone-image readers before touching the filesystem", async () => {
     const session = new ChatSession(), source = session.addSource("PDF", "Paper", undefined, 2);
-    files.set("/cache/documents/2-PDF/assets/fig.png", png);
     expect(await listSourceImages(source)).toEqual([]);
-    await expect(readSourceImage(source, "assets/fig.png")).rejects.toThrow("inspect_pdf_page");
+    await expect(readSourceImage(source, "page-1.png")).rejects.toThrow("inspect_pdf_page");
     expect(IOUtils.read).not.toHaveBeenCalled();
   });
   it("rejects linked standalone image cache directories", async () => {

@@ -65,7 +65,9 @@ Optional settings include thinking controls, iteration limits, context/output bu
 
 The same model handles conversation and page reading. All enabled tools are available without a vision confirmation step. An explicit image-input rejection switches the current native session/model to text, with a visible notice. Current fields take effect immediately. Replacing or clearing the API key of a loaded profile also updates that profile, so switching away and back does not restore its old key. Other named-profile edits and system prompts have explicit save controls.
 
-History searches chat and paper titles, supports durable pins and an empty-chat filter, and shows 50 entries at a time. Existing chat history remains available; old conversion states migrate to direct reading.
+History searches chat/paper titles and visible message text, shows matching excerpts, and opens read-only message previews without replacing the active chat or draft. Durable pins, item associations and an empty-chat filter remain available, with 50 entries at a time. The agent can search across saved chats, read their original messages and find chats related to selected Zotero items. See [history retrieval](docs/chat-history-search.md).
+
+The agent can also draw static SVG, Mermaid and TikZ images directly in chat. Click a drawing to enlarge it, inspect its source, or export PNG, SVG and source files. Renderers and TeX fonts are bundled for offline use; older interactive drawings retain their saved image snapshots. See [drawing tools](docs/learning-visuals.md).
 
 ## Quick Start
 

@@ -1,0 +1,731 @@
+{
+  "retrieved": "2026-10-24",
+  "upstream": "https://github.com/kisonecat/tikzjax",
+  "files": [
+    {
+      "file": "core.dump.gz",
+      "url": "https://tikzjax.com/b565ab0b474e8e557d954694b7379a57db669ac9.gz",
+      "sha256": "61f5c7f2aac2f68c9f08ddbaf10c41ea6986a498305b136e44991d12cb81d40e"
+    },
+    {
+      "file": "fonts/cmb10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmb10.ttf",
+      "sha256": "074497b50c43ea57597181591f9893d38fc12a87e95104f5657fc2481f61a23a"
+    },
+    {
+      "file": "fonts/cmbsy10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbsy10.ttf",
+      "sha256": "9c4d9af63dd10b4aea6355bd80ed316c8022d8ade58ef1a7417fe1d875a0aeb9"
+    },
+    {
+      "file": "fonts/cmbsy6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbsy6.ttf",
+      "sha256": "f2baaa408b7b1002e8b70b4affa84cab42133ff5c1c82ffc9875ae2881adcc2f"
+    },
+    {
+      "file": "fonts/cmbsy7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbsy7.ttf",
+      "sha256": "1623a482649cc79b84e985a26d57890131e863612594cf4e47e6418545fc07af"
+    },
+    {
+      "file": "fonts/cmbsy8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbsy8.ttf",
+      "sha256": "7c3363061dda0189f88b0ec256ec5df4fb6136b9c7360564e64fece9156fc7f6"
+    },
+    {
+      "file": "fonts/cmbsy9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbsy9.ttf",
+      "sha256": "dafb3da31f80f01450e076a5731202c60c4a476e8639d8432273dcd24c08a2a6"
+    },
+    {
+      "file": "fonts/cmbx10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbx10.ttf",
+      "sha256": "84b774183cd38acae80275a4410105556c098a455e26588d11d913e9b1718f98"
+    },
+    {
+      "file": "fonts/cmbx12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbx12.ttf",
+      "sha256": "31f8936be1eb54d3a03bffa506069d565d6a602b2b1b83d01f372794d543ecd2"
+    },
+    {
+      "file": "fonts/cmbx5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbx5.ttf",
+      "sha256": "96d67e777aa5459ff06042f76edb7d04471e2d382f72e7d0926356749efe6787"
+    },
+    {
+      "file": "fonts/cmbx6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbx6.ttf",
+      "sha256": "a4af5614b3a2c9f343c2dbb0980d0cb33be5bf9e1dd99141276fbe05fb2135d4"
+    },
+    {
+      "file": "fonts/cmbx7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbx7.ttf",
+      "sha256": "02e7cea52472f5b0431204b5ec0e562ca8980e30ccd0a1e2d6153bdf80db9546"
+    },
+    {
+      "file": "fonts/cmbx8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbx8.ttf",
+      "sha256": "eeb5f2710fd82cd9f56f83a5585a1845ea21bb2d8b811af03e6843c76c3507cc"
+    },
+    {
+      "file": "fonts/cmbx9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbx9.ttf",
+      "sha256": "ccd680bead0045e4b5881c6d381544f2b01075e99b23e0726cc9ffdc5cf0ef7b"
+    },
+    {
+      "file": "fonts/cmbxsl10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbxsl10.ttf",
+      "sha256": "bc0d7397683b18bde1e1f9d153e6ad1c983bfdf77643afaea13c7af5ce538338"
+    },
+    {
+      "file": "fonts/cmbxti10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmbxti10.ttf",
+      "sha256": "b130239ceb16b8fb8ee2f06c8c75a61d799a10a27f83060f7a5a64c8cf898edc"
+    },
+    {
+      "file": "fonts/cmcsc10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmcsc10.ttf",
+      "sha256": "0e0f858679212de3c6d7af95f4a4f461c37a6bbaa8e1dbc786c14f3f82bc8383"
+    },
+    {
+      "file": "fonts/cmcsc8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmcsc8.ttf",
+      "sha256": "9d99fbac2ce31c404f020b8c0acce54f90a4b41b717f54abc6c510b3d2d4edc6"
+    },
+    {
+      "file": "fonts/cmcsc9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmcsc9.ttf",
+      "sha256": "ba416a37b662294641072f4affd0328e80937ce9a079a39d8504e3e8744b630f"
+    },
+    {
+      "file": "fonts/cmdunh10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmdunh10.ttf",
+      "sha256": "7693137024d9111687612bc57c2350efb6f998d69741f29d3798ea9c537c870b"
+    },
+    {
+      "file": "fonts/cmex10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmex10.ttf",
+      "sha256": "af28f0c170723ac776a71bfa595aca09e98d15ae5c3d54ce19afd5619c96a905"
+    },
+    {
+      "file": "fonts/cmex7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmex7.ttf",
+      "sha256": "69b51742b8a8c3519707641e9e68d2f388ea0bc64f3408b0b65373d904d08af1"
+    },
+    {
+      "file": "fonts/cmex8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmex8.ttf",
+      "sha256": "d85dff4e2e71e1f376a720c7d860ac0698d9f99ea4eef04df574876312790363"
+    },
+    {
+      "file": "fonts/cmex9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmex9.ttf",
+      "sha256": "4831e72d271efecb087f66929305f501cf910c22491ed26ecdab588dbe75ebca"
+    },
+    {
+      "file": "fonts/cmff10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmff10.ttf",
+      "sha256": "84654d4167b20e695de5739c9d33380eba7f38b32de85e61814f6d43ffe9ff1a"
+    },
+    {
+      "file": "fonts/cmfi10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmfi10.ttf",
+      "sha256": "2623d935faad1451fe1202754ba1606666827d95caf6c76cd756f628f9a7be2a"
+    },
+    {
+      "file": "fonts/cmfib8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmfib8.ttf",
+      "sha256": "1b6efcdff3fe8f76c9ae6b1aaaba5430b1965effe3d2273f73fe41d19603492a"
+    },
+    {
+      "file": "fonts/cminch.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cminch.ttf",
+      "sha256": "03aacbe19eac7d117019b6a6bf05197086f9de1a63cb4140ff830c40efebac63"
+    },
+    {
+      "file": "fonts/cmitt10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmitt10.ttf",
+      "sha256": "04447e7729dbd08b547d263b0c80d0d2b3c576f06104fe9ff5c96ec333458bf3"
+    },
+    {
+      "file": "fonts/cmmi10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmi10.ttf",
+      "sha256": "3092965b8811fd6a6765799664845181fc1dd1330b937f915808c485d316234d"
+    },
+    {
+      "file": "fonts/cmmi12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmi12.ttf",
+      "sha256": "8e18d6d488401564e0c34f1bda4b8be37176d00d2d4eb6edb803d7f2648b8f71"
+    },
+    {
+      "file": "fonts/cmmi5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmi5.ttf",
+      "sha256": "4f5d32439674d0e0c49be63b54360fcac5bb33163d102429c5a75ef422c178b9"
+    },
+    {
+      "file": "fonts/cmmi6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmi6.ttf",
+      "sha256": "b2a433dd11345b47d29cd13dcb655b39787578e557600383887002beca419395"
+    },
+    {
+      "file": "fonts/cmmi7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmi7.ttf",
+      "sha256": "ded8f3ce95b0344e880cb38fe26d002397353f8f1faaf5688527464f4bdde37c"
+    },
+    {
+      "file": "fonts/cmmi8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmi8.ttf",
+      "sha256": "cc02e6b8241357d97f9239e49a5325ae366c0945c08db5fb5bdd6be63ba8b215"
+    },
+    {
+      "file": "fonts/cmmi9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmi9.ttf",
+      "sha256": "da5ad6cc5759f7c435075e374b7b05a58d1d5eacc245305572eead84da9cb097"
+    },
+    {
+      "file": "fonts/cmmib10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmib10.ttf",
+      "sha256": "a0bca7adcaa2abc011f1e98d19456a5d9d7d8b7c5f301e3b3f44bbed9b321f27"
+    },
+    {
+      "file": "fonts/cmmib6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmib6.ttf",
+      "sha256": "f821b96fa33b94f75245035ac36f55b695ce044dfb619c08af2aec66ac838274"
+    },
+    {
+      "file": "fonts/cmmib7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmib7.ttf",
+      "sha256": "3d507935ed557393a1fa1834920069dba9a93b34695b46d6fcb93b804cfe339f"
+    },
+    {
+      "file": "fonts/cmmib8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmib8.ttf",
+      "sha256": "6b247f8d522444c18916855ed98da1db563fe6e3c572f7be774602b2a0039a15"
+    },
+    {
+      "file": "fonts/cmmib9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmmib9.ttf",
+      "sha256": "91bcebad90c833f36d9e1afc15eac886d95e7b277a4d47d08030c01eca3a6fad"
+    },
+    {
+      "file": "fonts/cmr10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr10.ttf",
+      "sha256": "4dd9761b058c009db9b2145f55ee6617d093c273dd3d6c5b3e43ff6110fa9bf6"
+    },
+    {
+      "file": "fonts/cmr12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr12.ttf",
+      "sha256": "b4808f60ef3cd5197ce3d4331bace298cf95185073bf449420d2cb6018872f51"
+    },
+    {
+      "file": "fonts/cmr17.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr17.ttf",
+      "sha256": "9b53a046293b5975313f95d5e1c3f452e62282a6d1688d0e01989d6602ca02e4"
+    },
+    {
+      "file": "fonts/cmr5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr5.ttf",
+      "sha256": "efa1e8df35ac1dfa1276a63b3a3018400eb78d5e2de6bbd0e4a3188b19daef34"
+    },
+    {
+      "file": "fonts/cmr6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr6.ttf",
+      "sha256": "f90a4d26fc06a2381b81af1074cfb507c3e5be5ed7332d75b68ce54cf7cea9ad"
+    },
+    {
+      "file": "fonts/cmr7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr7.ttf",
+      "sha256": "1c8823e8f57be0be875095b07db79bcb8bccd7a10c25425c53a14c786b1b5107"
+    },
+    {
+      "file": "fonts/cmr8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr8.ttf",
+      "sha256": "3f4eedc72e185605d1be8cf6fc36f1be96e21c98f5f2b6fcee65a6da4c141a11"
+    },
+    {
+      "file": "fonts/cmr9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmr9.ttf",
+      "sha256": "834dc7eb9747c1e8eebf7cc6f38f889e3ba82ecfa115ef7e97f2bde6a8a347e2"
+    },
+    {
+      "file": "fonts/cmsl10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsl10.ttf",
+      "sha256": "4aca9f21f00bc991d7e72073cfdefd7ce19c2c42593e26487d22df6ec6833962"
+    },
+    {
+      "file": "fonts/cmsl12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsl12.ttf",
+      "sha256": "8115549a442d46dc50564208017669f67278674c91fbf7c9da62a3d6a2cb5662"
+    },
+    {
+      "file": "fonts/cmsl8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsl8.ttf",
+      "sha256": "d6b0c0059a5372f7fd11eeb201e2f889b6bc4bc9148495a7de1fa52229f6f80f"
+    },
+    {
+      "file": "fonts/cmsl9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsl9.ttf",
+      "sha256": "2371d3fa2cb826f2b6a17e28b32e417424de3fd36cedb5b4f439dee8960ae8cf"
+    },
+    {
+      "file": "fonts/cmsltt10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsltt10.ttf",
+      "sha256": "4cc7ba077effb021684528eea229b8046c0f50693112208e049038bcbb6e7ffb"
+    },
+    {
+      "file": "fonts/cmss10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmss10.ttf",
+      "sha256": "7df91a83d05b2e471ec638cb0b435a360a3c792b09fc42a7da67e91f2e79115a"
+    },
+    {
+      "file": "fonts/cmss12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmss12.ttf",
+      "sha256": "60807100eb1a184c83ec3c5a802a4661cff1e6eac379dc7f34e63a92893d070a"
+    },
+    {
+      "file": "fonts/cmss17.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmss17.ttf",
+      "sha256": "c9360f53a5dea01ceabdcdc5bd87715a93188bf02023828b7cb1c2ec1a4597df"
+    },
+    {
+      "file": "fonts/cmss8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmss8.ttf",
+      "sha256": "edbb74f2c04b5d9258f1ecfff22032240c36725c651d512ba116f1e2c860239c"
+    },
+    {
+      "file": "fonts/cmss9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmss9.ttf",
+      "sha256": "6756637d4d44cd6082c35dd83165d682f6d7d54ae4718f9d84e8e12ddf396867"
+    },
+    {
+      "file": "fonts/cmssbx10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssbx10.ttf",
+      "sha256": "ea2712b09929e37470c1b8727d4524d9a3b1755bf539c03748e7be0a148f4966"
+    },
+    {
+      "file": "fonts/cmssdc10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssdc10.ttf",
+      "sha256": "25120c0c27407528c66466fac50144bcac87297dd9700aa7d5d366761dce7b47"
+    },
+    {
+      "file": "fonts/cmssi10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssi10.ttf",
+      "sha256": "d59333a61ce35712782949af628f84157648310fb96f8184a47004b1ee9e61b3"
+    },
+    {
+      "file": "fonts/cmssi12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssi12.ttf",
+      "sha256": "26afd2e0fe8cd62194341f5d88083c0c01fb1e63838179f5293a43a1b2ef7695"
+    },
+    {
+      "file": "fonts/cmssi17.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssi17.ttf",
+      "sha256": "0a01e56c3eaf83b4793fec078aa6188d277e96582cb0e8218ac5bad8d5fc186f"
+    },
+    {
+      "file": "fonts/cmssi8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssi8.ttf",
+      "sha256": "31a2fbd9e127854ef94ef880439986f34fd1b9ebe11b03a894e35a4b7be48926"
+    },
+    {
+      "file": "fonts/cmssi9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssi9.ttf",
+      "sha256": "ee54094e93e4ed2a827391e7e0daceed7df8ea22fdb03ea39f29858fb9c07a7f"
+    },
+    {
+      "file": "fonts/cmssq8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssq8.ttf",
+      "sha256": "cd174f3c0ad2cf289382c58b271dc3ed3a8ca283dc0baf385c22fbb7a1bf0cbb"
+    },
+    {
+      "file": "fonts/cmssqi8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmssqi8.ttf",
+      "sha256": "ec58523f646c5284bb75563c39d0153224d59e575871b3d1683a456990882a60"
+    },
+    {
+      "file": "fonts/cmsy10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsy10.ttf",
+      "sha256": "bb226ed932f3f100cd0e52f5e4912ee553b41b69e7bfdb8d3854db0eb6605232"
+    },
+    {
+      "file": "fonts/cmsy5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsy5.ttf",
+      "sha256": "9e871e8550a9965d5abe1bea09107ec99643b09b0a33ee2c3593b7d9d1afd2bb"
+    },
+    {
+      "file": "fonts/cmsy6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsy6.ttf",
+      "sha256": "dfb1de10251100cd1974921c7de8d6bc5ba6cfb35aa8ee3e0fb19e1615e86e9d"
+    },
+    {
+      "file": "fonts/cmsy7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsy7.ttf",
+      "sha256": "b56fee66dd209f2e919446ba2c6b901f0e1c5cc2aeeef20f2e1260724140537c"
+    },
+    {
+      "file": "fonts/cmsy8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsy8.ttf",
+      "sha256": "b0b7cc2fc333e4e760d969a172a0b8b465f9a3bba6917e7ba0e86071c98d270a"
+    },
+    {
+      "file": "fonts/cmsy9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmsy9.ttf",
+      "sha256": "8c3d4087889322f7a409c20ecf33614077e8232aa4815ea85c51eebbd250c55c"
+    },
+    {
+      "file": "fonts/cmtcsc10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtcsc10.ttf",
+      "sha256": "328a544b3ba6a30c00659fe0844a79b00fbf1d113c8b1ad800576da5b1b08b1b"
+    },
+    {
+      "file": "fonts/cmtex10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtex10.ttf",
+      "sha256": "e500d301a36804d1f7fbc7501ef58c75bd77e8db6dc50d456db9478fb9c3957e"
+    },
+    {
+      "file": "fonts/cmtex8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtex8.ttf",
+      "sha256": "7af516742ff97dc0f40d3ade1879e1dfdc4a521ff18a1515af4afb5f7d592c13"
+    },
+    {
+      "file": "fonts/cmtex9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtex9.ttf",
+      "sha256": "5841752e2e1e6d6fa339a54f0ce6256904cb7f436a58cd3b38edbf8189cbe0f3"
+    },
+    {
+      "file": "fonts/cmti10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmti10.ttf",
+      "sha256": "f9f1f9f654308ae82f7be4441ae89b080896b34cc220bbea173c5e9adcfe3ef7"
+    },
+    {
+      "file": "fonts/cmti12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmti12.ttf",
+      "sha256": "a143bc23031ab77c03522ad896ae9a057c8fa3bd7d8bacedf6fa9dab43a408fe"
+    },
+    {
+      "file": "fonts/cmti7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmti7.ttf",
+      "sha256": "98f3e1e865a42bc0ad7124d33579ba54f955aab99734a64f4f8ad755769afcb2"
+    },
+    {
+      "file": "fonts/cmti8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmti8.ttf",
+      "sha256": "ea8d8d89123ff7cce62ab4d2599cbdf084ec92a829b39b4f6904374c4f7007ca"
+    },
+    {
+      "file": "fonts/cmti9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmti9.ttf",
+      "sha256": "a5d890a2e5c61d12716a402c5cd8a98b9593a98629ff86061689817183f11ea6"
+    },
+    {
+      "file": "fonts/cmtt10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtt10.ttf",
+      "sha256": "6211f09ae93599991afda970c24669dad1a77e253d915624fbf212f702f071d7"
+    },
+    {
+      "file": "fonts/cmtt12.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtt12.ttf",
+      "sha256": "35cb43db0649d759676e9636ea136130cb7ed0b77b0ed739ed0d3404841490f7"
+    },
+    {
+      "file": "fonts/cmtt8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtt8.ttf",
+      "sha256": "d7e0c85dda5918e2b547beb54f59d14633edfdd81cdc58569d0bef85765368b8"
+    },
+    {
+      "file": "fonts/cmtt9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmtt9.ttf",
+      "sha256": "19c93c6742e195c0bb8f8f308f1aa772975d71f5a69ca9653efd543f6364c1c5"
+    },
+    {
+      "file": "fonts/cmu10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmu10.ttf",
+      "sha256": "b9e4693186098daf11bc3264af7b264a9192aa3f6bc34217d4d5b3b8dace2127"
+    },
+    {
+      "file": "fonts/cmvtt10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/cmvtt10.ttf",
+      "sha256": "4d2a523126273d0482a184c3cf15b025db30b3bf14e5d5b9c26e9b6aa00ef3ad"
+    },
+    {
+      "file": "fonts/euex10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/euex10.ttf",
+      "sha256": "5070851be6263095033ba745f4a0fcbcd30f49b2c4b07a5dbbfe52230dbc0e9d"
+    },
+    {
+      "file": "fonts/euex7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/euex7.ttf",
+      "sha256": "c48112c6e7ebafbc6d9be750ddd51e9c3ab95f0344799b12b55a659253053863"
+    },
+    {
+      "file": "fonts/euex8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/euex8.ttf",
+      "sha256": "15c8ae31004364e86e84543477fb4278ad0c710571282debb82002c06168f03a"
+    },
+    {
+      "file": "fonts/euex9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/euex9.ttf",
+      "sha256": "a3d916350889766731f3bcc6c3fd555c3f63e78ad94808fca1fa21c8eea1b92d"
+    },
+    {
+      "file": "fonts/eufb10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufb10.ttf",
+      "sha256": "6a5d84ae700df0c89a7142cd39908a777f496dbcee32444062157ed6c04d12d0"
+    },
+    {
+      "file": "fonts/eufb5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufb5.ttf",
+      "sha256": "d1a318a75030b20ad5241a1d93b36b0d703ac947a9271d4ce57fde88cd694d8b"
+    },
+    {
+      "file": "fonts/eufb6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufb6.ttf",
+      "sha256": "72caeeefc1e1eb0503d4eb6f4715ab5356b15316603984bc40390f145aaeaf30"
+    },
+    {
+      "file": "fonts/eufb7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufb7.ttf",
+      "sha256": "a8522f8251c128e95498bbbe16f1eca4ced2ad7ebfd7d3eede9a966af59d6736"
+    },
+    {
+      "file": "fonts/eufb8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufb8.ttf",
+      "sha256": "b0d761bdfb7f53f73cd76feef3a9d056ba01349edba29dba04c4eabbbe0d3cf9"
+    },
+    {
+      "file": "fonts/eufb9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufb9.ttf",
+      "sha256": "fa2a08b6f44539fd03debc192b3f237e92b927c69ede04332731cc2aa824cf55"
+    },
+    {
+      "file": "fonts/eufm10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufm10.ttf",
+      "sha256": "5b8254e719df340f95ed5065e1dfa0f4d58b18828c1dd7cef6049271bde26776"
+    },
+    {
+      "file": "fonts/eufm5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufm5.ttf",
+      "sha256": "ad3c8528feb33f0d0184bf67edd9be109c5ccca362313592e616a9c7da4c3415"
+    },
+    {
+      "file": "fonts/eufm6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufm6.ttf",
+      "sha256": "eebd7e1b778d744f2a6d8b673397d7432b83c96fa7597e06b17b2cc13dad2a15"
+    },
+    {
+      "file": "fonts/eufm7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufm7.ttf",
+      "sha256": "89aec5b07a1c9bcbbe99eab494f46a3b7fe5b812186057d44216b6513a1015c6"
+    },
+    {
+      "file": "fonts/eufm8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufm8.ttf",
+      "sha256": "98daadde98942480b96723faf088e11692cb2e6d69bafa8527a4c83b7fe34134"
+    },
+    {
+      "file": "fonts/eufm9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eufm9.ttf",
+      "sha256": "5090aef36e492748f6888678964ff9a363d1c43606e678c1f2d5ebef14c2a7f5"
+    },
+    {
+      "file": "fonts/eurb10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurb10.ttf",
+      "sha256": "c33402e835f7b5c4810e248752be80d12363d153a65c1a1a640e97124fb2f11a"
+    },
+    {
+      "file": "fonts/eurb5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurb5.ttf",
+      "sha256": "58ae4013c03b86b5263debb28173c601c559d0517fca8c49d531ad386f36f850"
+    },
+    {
+      "file": "fonts/eurb6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurb6.ttf",
+      "sha256": "cb113d6904010eafad86a390b2766ea8aa4bc5e70292d9500227f41380fb7693"
+    },
+    {
+      "file": "fonts/eurb7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurb7.ttf",
+      "sha256": "80680499ca66a8810fc42e08935ec9eae0f6342a442c84cfe2280ae4fb916c5f"
+    },
+    {
+      "file": "fonts/eurb8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurb8.ttf",
+      "sha256": "f54c5da93f2a4263851d82aedd1f9fd458a1a1641867a6ae0b38492292559730"
+    },
+    {
+      "file": "fonts/eurb9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurb9.ttf",
+      "sha256": "6a881f7e200f1b5d7f0fa56a53c3fab0e82cbd17a7a7341468d8bccde7c666dc"
+    },
+    {
+      "file": "fonts/eurm10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurm10.ttf",
+      "sha256": "ee3c8c202492a2c0522e99e2e7720ad35f429108ca4628735f42e6a1d0cc630a"
+    },
+    {
+      "file": "fonts/eurm5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurm5.ttf",
+      "sha256": "80517ebbcad769046aa7e16797f223dcdabaa600ccfb91773f28d79187fcac5c"
+    },
+    {
+      "file": "fonts/eurm6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurm6.ttf",
+      "sha256": "696b48ab1523c42562afbc0a053cd9374a24d5c987383fe8147bd5f6e3fa5360"
+    },
+    {
+      "file": "fonts/eurm7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurm7.ttf",
+      "sha256": "a32fe2aca5ebabcf17884beda6b1af8ce79d072f20b5c041e04df238652a5cad"
+    },
+    {
+      "file": "fonts/eurm8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurm8.ttf",
+      "sha256": "31f581f5b2cb2ef67d230e322806fdf0ddd2ebbd3d33fd807120a8762705c9f5"
+    },
+    {
+      "file": "fonts/eurm9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eurm9.ttf",
+      "sha256": "61d35c2f0d7b810a2564b2e36f6b408031b20acb90e058802b0c9ad78fdf1c7a"
+    },
+    {
+      "file": "fonts/eusb10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusb10.ttf",
+      "sha256": "a3a48ae11d2605adf39e2407ebaa28008725139381254f7c825bf95a9fd3e819"
+    },
+    {
+      "file": "fonts/eusb5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusb5.ttf",
+      "sha256": "6fe041880b22f3455ed73a131bee1de27aed86aae99f15b7359901280f0306cb"
+    },
+    {
+      "file": "fonts/eusb6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusb6.ttf",
+      "sha256": "c7e6e6b0b17b61041904d7737e0fb763e5388fe5aae5a89bdeb771869df35934"
+    },
+    {
+      "file": "fonts/eusb7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusb7.ttf",
+      "sha256": "c9b167498d1a786b1178c2ba789e3513fa76857d34745f98236c8b5a8b028679"
+    },
+    {
+      "file": "fonts/eusb8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusb8.ttf",
+      "sha256": "7f4da84c65eb06748211e152705ab588110e8a95ae6cfecc92a49e2cae856e73"
+    },
+    {
+      "file": "fonts/eusb9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusb9.ttf",
+      "sha256": "04755688de3640ee9217325bf6539515e362a463cb6cdf3cc8db2b1112090b22"
+    },
+    {
+      "file": "fonts/eusm10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusm10.ttf",
+      "sha256": "22d7c4e0989dd83f771aeea3af2e3da399c60cab78b74738eeef6ce9ad629a45"
+    },
+    {
+      "file": "fonts/eusm5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusm5.ttf",
+      "sha256": "6db445b330dfc993efb59afd3016b13a02bfc9730392cf905953d646db723076"
+    },
+    {
+      "file": "fonts/eusm6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusm6.ttf",
+      "sha256": "7651555dd5fe964d2b20e21138d4ff092f6e81c042409c1992e16e98717b109c"
+    },
+    {
+      "file": "fonts/eusm7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusm7.ttf",
+      "sha256": "1baf23b1a259b0f98307c1781a2971520e40323dfc88ab0643a6bd2931b8abb4"
+    },
+    {
+      "file": "fonts/eusm8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusm8.ttf",
+      "sha256": "2536773d8cf574d503fc27caeeee6a3886d5b520476d3fe7bf7663eb9733654b"
+    },
+    {
+      "file": "fonts/eusm9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/eusm9.ttf",
+      "sha256": "e1607f5c154b024a96ea1548a1a405d289d6cfe5145cdca2635086117786b30d"
+    },
+    {
+      "file": "fonts/LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/matplotlib/matplotlib/main/LICENSE/LICENSE_BAKOMA",
+      "sha256": "93adb2b53c02b7ce06b26bff41358c21248f42fed287b633ec4c31038377cdbb"
+    },
+    {
+      "file": "fonts/msam10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msam10.ttf",
+      "sha256": "65aec9970083af4675e1e843e89100f31841133032d98f5256a8045eadea49b4"
+    },
+    {
+      "file": "fonts/msam5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msam5.ttf",
+      "sha256": "c385538684e98ddca2d47e9d400ae16f8d41b707a73d034bfec6fb87c51f30f5"
+    },
+    {
+      "file": "fonts/msam6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msam6.ttf",
+      "sha256": "01247f9b501354b2e7bc58a0d42b9845eda0ee1ea85933e41e73496ebcbe1ec4"
+    },
+    {
+      "file": "fonts/msam7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msam7.ttf",
+      "sha256": "8ee3c6c0a698239cde4430248ed27257270944bfa8231fa49becc5488a8b24d8"
+    },
+    {
+      "file": "fonts/msam8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msam8.ttf",
+      "sha256": "f220e51d4dc2475ebc792db6687efb451cd941e9ead7c9ee7ef5a4bdfc89fb1a"
+    },
+    {
+      "file": "fonts/msam9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msam9.ttf",
+      "sha256": "38e95aded2943b752771b14caeb21618c5c234b369ad0e4b06620e1ba62ff460"
+    },
+    {
+      "file": "fonts/msbm10.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msbm10.ttf",
+      "sha256": "451ad403d05a245d32862388ed6e24c5007ffd639c282e24bbaf0344c1f4ef06"
+    },
+    {
+      "file": "fonts/msbm5.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msbm5.ttf",
+      "sha256": "44b480f1ad89c7413a75d4c02317bd245c3d9dfc2802c5c432920599522869e5"
+    },
+    {
+      "file": "fonts/msbm6.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msbm6.ttf",
+      "sha256": "8e243d22d5728c3fecc1f87bdc3b75de8f3dedf4f4537dcc6d0015f57831d88c"
+    },
+    {
+      "file": "fonts/msbm7.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msbm7.ttf",
+      "sha256": "706c27eb93c64cd31992f42ba85e2346b1a657bdf07eb10fd98f1f8a9ddd8279"
+    },
+    {
+      "file": "fonts/msbm8.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msbm8.ttf",
+      "sha256": "3c966e17fa1b7fabf651f3a855d277f3e0620857a3f37eb6ab200da76e8561a9"
+    },
+    {
+      "file": "fonts/msbm9.ttf",
+      "url": "https://tikzjax.com/bakoma/ttf/msbm9.ttf",
+      "sha256": "8b888c5c19b8cb32fb91269ed8223fab2e7c768e137749e2caeda1f20fb32a0f"
+    },
+    {
+      "file": "LICENSE.md",
+      "url": "https://raw.githubusercontent.com/kisonecat/tikzjax/master/LICENSE.md",
+      "sha256": "e2d6c65a4e13a140cc3240db182b02cd1ab96c066c0d3c0b5ba4311e3afcb45a"
+    },
+    {
+      "file": "tex.wasm",
+      "url": "https://tikzjax.com/3f69afb974a1e83f66a36f7618f88a38c254034b.wasm",
+      "sha256": "c9c33f593ed444a47fd4f2fd2566c7598b786d4f7ead84422155fdf0f7c46291"
+    },
+    {
+      "file": "tikzjax.js",
+      "url": "https://tikzjax.com/v1/tikzjax.js",
+      "sha256": "48917188eb3485e7a22954d979ea36414a2c8d4fd81a7c69cd90a78c2126b21c"
+    }
+  ]
+}
