@@ -20,7 +20,7 @@ Earlier interactive/HTML versions restore as `snapshot` records using their save
 
 ## Renderer and MCP
 
-Fixed public renderer assets use the content-accessible `chrome://chatpdf-visual/` package; other resources retain their registration. A trusted shell embeds an opaque-origin sandbox connected by a private MessageChannel. Its CSP denies network, forms, objects and nested frames. SVG is sanitized and TikZ runs in a terminable worker. Closing/cancellation removes the temporary renderer. Viewing a saved image creates no live renderer. Raw model markup never enters Zotero's privileged DOM.
+The dedicated `chrome://chatpdf-visual/` package contains the fixed renderer assets. ChatPDF registers it with the `contentaccessible` flag on hosts that support the flag. A trusted shell embeds an opaque-origin sandbox connected by a private MessageChannel. Its CSP denies network, forms, objects and nested frames. SVG is sanitized and TikZ runs in a terminable worker. Closing/cancellation removes the temporary renderer. Viewing a saved image creates no live renderer. Raw model markup never enters Zotero's privileged DOM.
 
 MCP returns complete text and PNG content plus compact structured drawing identifiers. There is no MCP App resource, UI metadata, SDK or custom external interface. Compatibility resource listing is empty for previously connected adapters. The companion adapter remains a thin transport. Reconnect existing external MCP clients after updating it.
 

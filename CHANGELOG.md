@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3
+
+- Update Zotero Plugin Toolkit to 6.0.0 so ChatPDF no longer registers the global plugin installation and debugging links. Restart Zotero after updating to clear handlers loaded by the previous version.
+- Restore startup on Zotero 7 and create a fresh ChatPDF instance when the plugin is re-enabled or upgraded.
+
 ## 0.10.2
 
 - Search saved conversations by paper/chat titles and visible message text with the shared `search_chat_history`, `read_chat_session` and `list_item_chats` tools. Read original historical messages with explicit pagination and versioned citations, and find conversations associated with one or more Zotero items.

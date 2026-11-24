@@ -7,14 +7,22 @@ async function startup({ id, version, resourceURI, rootURI }, reason) {
     "@mozilla.org/addons/addon-manager-startup;1"
   ].getService(Components.interfaces.amIAddonManagerStartup);
   var manifestURI = Services.io.newURI(rootURI + "manifest.json");
-  chromeHandle = aomStartup.registerChrome(manifestURI, [
+  var visualContent = ["content", "chatpdf-visual", rootURI + "content/visual/", "contentaccessible=yes"];
+  var locations = [
     ["content", "__addonRef__", rootURI + "content/"],
-    // Only the fixed renderer assets are loadable by isolated content documents.
-    ["content", "chatpdf-visual", rootURI + "content/visual/", "contentaccessible=yes"],
+    visualContent,
     ["locale", "__addonRef__", "en-US", rootURI + "locale/en-US/"],
-  ]);
+  ];
+  try {
+    chromeHandle = aomStartup.registerChrome(manifestURI, locations);
+  } catch (error) {
+    if (error.result !== Components.results.NS_ERROR_INVALID_ARG) throw error;
+    // Zotero 7's Gecko 115 rejects flags on dynamic content entries.
+    visualContent.pop();
+    chromeHandle = aomStartup.registerChrome(manifestURI, locations);
+  }
 
-  const ctx = { rootURI };
+  const ctx = { rootURI, Zotero };
   ctx._globalThis = ctx;
 
   Services.scriptloader.loadSubScript(

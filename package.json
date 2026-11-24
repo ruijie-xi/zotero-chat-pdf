@@ -1,7 +1,7 @@
 {
   "name": "zotero-plugin-chatpdf",
   "type": "module",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Chat with your PDFs using LLMs in Zotero",
   "repository": {
     "type": "git",
@@ -48,7 +48,7 @@
     "katex": "^0.18.10",
     "marked": "^17.0.3",
     "mermaid": "12.2.0",
-    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+    "zotero-plugin-toolkit": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
